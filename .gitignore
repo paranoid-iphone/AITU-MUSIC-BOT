@@ -1,0 +1,15 @@
+.env
+.git/
+.git-local/
+.agents/
+.codex/
+.uv-cache/
+outputs/
+work/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+postgres_data/

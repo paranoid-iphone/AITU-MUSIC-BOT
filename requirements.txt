@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+aiogram==3.15.0
+SQLAlchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+pydantic-settings==2.7.0
+python-multipart==0.0.20
+httpx==0.28.1
+APScheduler==3.11.0
+openpyxl==3.1.5
+greenlet==3.1.1
+redis==5.2.1
+Pillow==10.4.0

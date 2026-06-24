@@ -1,0 +1,18 @@
+{
+  "welcome": "Welcome to AITU Music Club! Let's fill your profile.",
+  "ask_first_name": "Enter your first name:",
+  "ask_last_name": "Enter your last name:",
+  "ask_study_group": "Enter your study group:",
+  "choose_language": "Choose language:",
+  "profile_saved": "Profile saved.",
+  "main_menu": "Main menu",
+  "profile": "Profile",
+  "bands": "My bands",
+  "create_band": "Create band",
+  "join_band": "Join by code",
+  "book": "Book room",
+  "events": "Events",
+  "admin": "Admin",
+  "settings": "Settings",
+  "unknown": "Choose an action from the menu."
+}
