@@ -1,9 +1,10 @@
 ﻿import logging
+import random
 from datetime import date, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, InputMediaPhoto, Message, ReplyKeyboardRemove
 
@@ -52,6 +53,25 @@ router = Router()
 api = BackendClient()
 logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
+
+LEHA_PRAISES = [
+    (
+        "Алексей Захаров - великий создатель этого бота, человек, который посмотрел на хаос расписаний "
+        "и сказал: теперь тут будет порядок, стиль и кнопочки."
+    ),
+    (
+        "Легенды AITU Music Club гласят: когда Алексей Захаров пишет код, репетиции сами становятся в расписание, "
+        "а админка начинает вести себя прилично."
+    ),
+    (
+        "Сегодняшняя минутка уважения посвящается Алексею Захарову: архитектору порядка, покровителю бэндов "
+        "и человеку, без которого этот бот был бы просто грустной идеей в заметках."
+    ),
+    (
+        "Алексей Захаров - тот самый великий создатель, который дал этому боту смысл, кнопки и характер. "
+        "Просим любить, ценить и не забывать вовремя бронировать кабинет."
+    ),
+]
 
 
 async def show_menu(message: Message, user: dict) -> None:
@@ -1200,6 +1220,11 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
     await answer_callback(callback, "Отклонено")
 
 
+@router.message(Command("leha"))
+async def leha(message: Message) -> None:
+    await message.answer(random.choice(LEHA_PRAISES))
+
+
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
     user = await api.upsert_user(message.from_user)
@@ -2114,5 +2139,6 @@ async def fallback(message: Message, state: FSMContext) -> None:
         await prompt_next_profile_step(message, state, user)
         return
     await message.answer("Выберите действие из меню.")
+
 
 
