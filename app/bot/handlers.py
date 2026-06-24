@@ -2131,14 +2131,39 @@ async def back(message: Message, state: FSMContext) -> None:
 
 @router.message()
 async def fallback(message: Message, state: FSMContext) -> None:
-    try:
-        user = await api.get_user(message.from_user.id)
-    except Exception:
-        user = await api.upsert_user(message.from_user)
+    user = await api.upsert_user(message.from_user)
     if not user["profile_completed"]:
         await prompt_next_profile_step(message, state, user)
         return
-    await message.answer("Выберите действие из меню.")
+    if user["status"] == "pending":
+        await notify_admins_about_registration(message, user)
+        await send_pending_notice(message)
+        return
+    if user["status"] == "rejected":
+        try:
+            user = await api.resubmit_registration(message.from_user.id)
+        except RuntimeError:
+            retry_after = user.get("registration_retry_after")
+            reason = user.get("moderation_reason") or "без причины"
+            if retry_after:
+                await message.answer(
+                    "Ваша заявка была отклонена, но это не бан.\n"
+                    f"Причина: {reason}\n"
+                    f"Повторно подать заявку можно после: {retry_after}"
+                )
+            else:
+                await message.answer(
+                    "Ваша заявка была отклонена, но это не бан. Попробуйте подать заявку позже или обратитесь к админам."
+                )
+            return
+        await notify_admins_about_registration(message, user, force=True)
+        await message.answer("Заявка отправлена повторно.")
+        await send_pending_notice(message)
+        return
+    if user["status"] in {"banned", "deleted"}:
+        await message.answer("Ваш аккаунт не имеет доступа к боту. Обратитесь к админам AITU Music Club.")
+        return
+    await show_menu(message, user)
 
 
 
