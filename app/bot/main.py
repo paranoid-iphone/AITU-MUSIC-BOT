@@ -15,6 +15,7 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
     dispatcher.include_router(router)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dispatcher.start_polling(bot)
 
 
