@@ -249,6 +249,7 @@ def admin_inline_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Концерты", callback_data="admin_section:events"),
             ],
+            [InlineKeyboardButton(text="Управление админами", callback_data="admin_section:admins")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
@@ -282,9 +283,17 @@ def admin_users_manual_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Удалить", callback_data="admin:delete_user"),
         ],
     ]
-    rows.append([InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="admin_section:users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_admins_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")],
+            [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
+        ]
+    )
 
 
 def admin_user_list_keyboard(users: list[dict], status: str, page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:

@@ -12,6 +12,7 @@ from app.bot.api_client import BackendClient
 from app.bot.i18n import t
 from app.bot.keyboards import (
     admin_actions_keyboard,
+    admin_admins_keyboard,
     admin_booking_delete_confirm_keyboard,
     admin_booking_delete_list_keyboard,
     admin_event_detail_keyboard,
@@ -155,6 +156,18 @@ def format_user_card(user: dict) -> str:
         f"Причина: {user.get('moderation_reason') or '-'}\n"
         f"Повторная подача: {user.get('registration_retry_after') or '-'}"
     )
+
+
+def format_admins_list(users: list[dict]) -> str:
+    admins = [user for user in users if user.get("role") == "admin" and user.get("status") == "approved"]
+    if not admins:
+        return "Управление админами\n\nАдминов пока не найдено."
+    lines = ["Управление админами", "", "Текущие админы:"]
+    for index, user in enumerate(admins, start=1):
+        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
+        username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
+        lines.append(f"{index}. {name or username} | {username}")
+    return "\n".join(lines)
 
 
 def format_booking_card(booking: dict) -> str:
@@ -901,6 +914,9 @@ async def inline_admin_section(callback: CallbackQuery) -> None:
         events = await api.list_events()
         text = "Концерты" if events else "Концертов пока нет."
         await edit_screen(callback, text, admin_events_keyboard(events))
+    elif section == "admins":
+        users = await api.list_users(callback.from_user.id, "approved")
+        await edit_screen(callback, format_admins_list(users), admin_admins_keyboard())
     else:
         await edit_screen(callback, "Админ-меню", admin_inline_keyboard())
     await answer_callback(callback)
@@ -1772,7 +1788,7 @@ async def add_admin_save(message: Message, state: FSMContext) -> None:
     await state.clear()
     name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
     username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
-    await message.answer(f"Админ добавлен: {name or username}", reply_markup=admin_users_keyboard())
+    await message.answer(f"Админ добавлен: {name or username}", reply_markup=admin_admins_keyboard())
     try:
         await message.bot.send_message(user["telegram_id"], "Вам выдали права админа в AITU Music Club Bot.")
     except Exception:
