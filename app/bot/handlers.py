@@ -911,7 +911,7 @@ async def inline_admin_users_manual(callback: CallbackQuery) -> None:
     await edit_screen(
         callback,
         "Ручное действие по @username или Telegram ID",
-        admin_users_manual_keyboard(callback.from_user.id in settings.initial_admin_ids),
+        admin_users_manual_keyboard(),
     )
     await answer_callback(callback)
 
@@ -1046,9 +1046,6 @@ async def inline_delete_user_start(callback: CallbackQuery, state: FSMContext) -
 
 @router.callback_query(F.data == "admin:add_admin")
 async def inline_add_admin_start(callback: CallbackQuery, state: FSMContext) -> None:
-    if callback.from_user.id not in settings.initial_admin_ids:
-        await answer_callback(callback, "Добавлять админов могут только initial admins.", show_alert=True)
-        return
     await state.set_state(AdminFlow.add_admin)
     await callback.message.answer("Введите @username или Telegram ID пользователя, которому нужно выдать админку:", reply_markup=flow_cancel_keyboard())
     await answer_callback(callback)
@@ -1741,9 +1738,6 @@ async def approve_user_start(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == "Добавить админа")
 async def add_admin_start(message: Message, state: FSMContext) -> None:
-    if message.from_user.id not in settings.initial_admin_ids:
-        await message.answer("Добавлять админов могут только initial admins.")
-        return
     await state.set_state(AdminFlow.add_admin)
     await message.answer("Введите @username или Telegram ID пользователя, которому нужно выдать админку:", reply_markup=flow_cancel_keyboard())
 

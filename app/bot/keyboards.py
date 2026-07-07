@@ -271,7 +271,7 @@ def admin_users_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def admin_users_manual_keyboard(can_add_admin: bool = False) -> InlineKeyboardMarkup:
+def admin_users_manual_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(text="Одобрить", callback_data="admin:approve_user"),
@@ -282,8 +282,7 @@ def admin_users_manual_keyboard(can_add_admin: bool = False) -> InlineKeyboardMa
             InlineKeyboardButton(text="Удалить", callback_data="admin:delete_user"),
         ],
     ]
-    if can_add_admin:
-        rows.append([InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")])
+    rows.append([InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="admin_section:users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

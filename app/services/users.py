@@ -153,8 +153,6 @@ async def promote_to_admin(session: AsyncSession, admin_telegram_id: int, target
     if admin is None or target is None:
         raise NotFoundError("User not found")
     require_admin(admin)
-    if admin.telegram_id not in settings.initial_admin_ids:
-        raise ForbiddenError("Only initial admins can add admins")
     if target.status == UserStatus.BANNED.value:
         raise ForbiddenError("User is banned")
 
