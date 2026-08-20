@@ -194,6 +194,7 @@ def profile_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Изменить имя"), KeyboardButton(text="Изменить фамилию")],
             [KeyboardButton(text="Изменить группу"), KeyboardButton(text="Изменить язык")],
             [KeyboardButton(text="Уведомления вкл/выкл")],
+            [KeyboardButton(text="История мероприятий")],
             [KeyboardButton(text="Назад")],
         ],
         resize_keyboard=True,
@@ -212,7 +213,17 @@ def profile_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Изменить язык", callback_data="profile:language"),
             ],
             [InlineKeyboardButton(text="Уведомления вкл/выкл", callback_data="profile:notifications")],
+            [InlineKeyboardButton(text="История мероприятий", callback_data="profile:event_history")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
+        ]
+    )
+
+
+def profile_event_history_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к профилю", callback_data="menu:profile")],
+            [InlineKeyboardButton(text="В меню", callback_data="menu:back")],
         ]
     )
 

@@ -21,6 +21,11 @@ async def list_events(session: AsyncSession = Depends(get_session)):
     return await events.list_events(session)
 
 
+@router.get("/history")
+async def event_history(telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.list_user_event_history(session, telegram_id)
+
+
 @router.patch("/{event_id}", response_model=EventRead)
 async def update_event(event_id: int, payload: EventUpdate, session: AsyncSession = Depends(get_session)):
     data = payload.model_dump(exclude={"telegram_id"}, exclude_unset=True)

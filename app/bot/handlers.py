@@ -42,6 +42,7 @@ from app.bot.keyboards import (
     main_menu,
     main_menu_inline,
     profile_inline_keyboard,
+    profile_event_history_keyboard,
     profile_keyboard,
     rehearsals_menu_keyboard,
     registration_review_keyboard,
@@ -170,6 +171,27 @@ def format_admins_list(users: list[dict]) -> str:
         name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
         username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
         lines.append(f"{index}. {name or username} | {username}")
+    return "\n".join(lines)
+
+
+def format_event_history(rows: list[dict]) -> str:
+    if not rows:
+        return (
+            "История мероприятий\n\n"
+            "Пока нет мероприятий, где вы указаны в составе номера."
+        )
+    lines = ["История мероприятий"]
+    for index, item in enumerate(rows[:30], start=1):
+        location = f" | {item['event_location']}" if item.get("event_location") else ""
+        song = item.get("song_title") or "песня не указана"
+        lines.append(
+            f"\n{index}. {item['event_date']} | {item['event_title']}{location}\n"
+            f"Песня: {song}\n"
+            f"Коллектив: {item['band_name']}\n"
+            f"Роль: {item['instrument_role']}"
+        )
+    if len(rows) > 30:
+        lines.append(f"\nПоказаны последние 30 из {len(rows)} мероприятий.")
     return "\n".join(lines)
 
 
@@ -914,6 +936,15 @@ async def inline_toggle_notifications(callback: CallbackQuery) -> None:
     await answer_callback(callback)
 
 
+@router.callback_query(F.data == "profile:event_history")
+async def inline_event_history(callback: CallbackQuery) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    rows = await api.event_history(callback.from_user.id)
+    await edit_screen(callback, format_event_history(rows), profile_event_history_keyboard())
+    await answer_callback(callback)
+
+
 @router.callback_query(F.data == "admin:pending_users")
 async def inline_pending_users(callback: CallbackQuery) -> None:
     users = await api.list_users(callback.from_user.id, "pending")
@@ -1383,6 +1414,14 @@ async def profile(message: Message) -> None:
         f"Уведомления: {'включены' if user['notifications_enabled'] else 'выключены'}"
     )
     await message.answer(text, reply_markup=profile_inline_keyboard())
+
+
+@router.message(F.text == "История мероприятий")
+async def event_history(message: Message) -> None:
+    if not await has_full_access(message):
+        return
+    rows = await api.event_history(message.from_user.id)
+    await message.answer(format_event_history(rows), reply_markup=profile_event_history_keyboard())
 
 
 @router.message(F.text == "Изменить имя")

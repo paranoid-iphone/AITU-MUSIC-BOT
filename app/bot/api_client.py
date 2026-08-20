@@ -172,6 +172,9 @@ class BackendClient:
     async def list_event_applications(self, telegram_id: int, event_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", f"/events/{event_id}/applications", params={"telegram_id": telegram_id})
 
+    async def event_history(self, telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/events/history", params={"telegram_id": telegram_id})
+
     async def update_day(self, telegram_id: int, day_of_week: int, is_enabled: bool) -> dict[str, Any]:
         return await self.request(
             "PUT",

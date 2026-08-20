@@ -165,6 +165,43 @@ async def list_event_applications(session: AsyncSession, telegram_id: int, event
     return rows
 
 
+async def list_user_event_history(session: AsyncSession, telegram_id: int) -> list[dict]:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    result = await session.execute(
+        select(EventApplicationMember)
+        .join(EventApplication, EventApplicationMember.application_id == EventApplication.id)
+        .join(Event, EventApplication.event_id == Event.id)
+        .where(EventApplicationMember.user_id == user.id)
+        .options(
+            selectinload(EventApplicationMember.application).selectinload(EventApplication.event),
+            selectinload(EventApplicationMember.application).selectinload(EventApplication.band),
+        )
+        .order_by(Event.event_date.desc(), EventApplication.submitted_at.desc())
+    )
+    rows = []
+    for member in result.scalars().unique():
+        application = member.application
+        event = application.event
+        rows.append(
+            {
+                "event_id": event.id,
+                "event_title": event.title,
+                "event_date": event.event_date.isoformat(),
+                "event_location": event.location,
+                "event_status": event.status,
+                "band_id": application.band_id,
+                "band_name": application.band.name,
+                "song_title": application.song_title,
+                "instrument_role": member.instrument_role,
+                "submitted_at": application.submitted_at.isoformat(),
+            }
+        )
+    return rows
+
+
 async def export_event_applications(session: AsyncSession, event_id: int) -> bytes:
     result = await session.execute(
         select(EventApplication)
