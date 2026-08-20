@@ -8,13 +8,13 @@ from textwrap import wrap
 from PIL import Image, ImageDraw, ImageFont
 
 
-WIDTH = 1600
-LEFT_GUTTER = 112
-RIGHT_PAD = 36
-TOP_PAD = 34
-TITLE_H = 82
-HEADER_H = 74
-ROW_H = 48
+WIDTH = 1280
+LEFT_GUTTER = 90
+RIGHT_PAD = 28
+TOP_PAD = 28
+TITLE_H = 66
+HEADER_H = 60
+ROW_H = 38
 START_HOUR = 8
 END_HOUR = 21
 DAYS = 7
@@ -47,14 +47,14 @@ def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.I
     return ImageFont.load_default()
 
 
-FONT_TITLE = _font(34, True)
-FONT_DAY = _font(22, True)
-FONT_DATE = _font(18)
-FONT_TIME = _font(17)
-FONT_CARD_TITLE = _font(18, True)
-FONT_CARD_BAND = _font(15, True)
-FONT_CARD_META = _font(14)
-FONT_SMALL = _font(13)
+FONT_TITLE = _font(28, True)
+FONT_DAY = _font(18, True)
+FONT_DATE = _font(15)
+FONT_TIME = _font(14)
+FONT_CARD_TITLE = _font(15, True)
+FONT_CARD_BAND = _font(13, True)
+FONT_CARD_META = _font(12)
+FONT_SMALL = _font(11)
 
 
 def _parse_time(value: str) -> time:
@@ -146,9 +146,9 @@ def render_schedule_image(bookings: list[dict], generated_at: datetime | None = 
     _round_rect(draw, (24, 20, WIDTH - 24, height - 20), PANEL, radius=24)
     draw.text((LEFT_GUTTER, TOP_PAD), "AITU Music Club", fill=TEXT, font=FONT_TITLE)
     draw.text((LEFT_GUTTER, TOP_PAD + 42), "Расписание кабинета на ближайшие 7 дней", fill=MUTED, font=FONT_DATE)
-    draw.text((WIDTH - 320, TOP_PAD + 14), f"обновлено {now.strftime('%d.%m %H:%M')}", fill=MUTED, font=FONT_DATE)
-    legend_x = WIDTH - 520
-    legend_y = TOP_PAD + 48
+    draw.text((WIDTH - 260, TOP_PAD + 12), f"обновлено {now.strftime('%d.%m %H:%M')}", fill=MUTED, font=FONT_DATE)
+    legend_x = WIDTH - 420
+    legend_y = TOP_PAD + 40
     for label, color in (("для себя", SELF), ("к концерту", CONCERT), ("стафф", STAFF)):
         legend_w = _draw_pill(draw, legend_x, legend_y, label, color)
         legend_x += legend_w + 8
@@ -237,5 +237,5 @@ def render_schedule_image(bookings: list[dict], generated_at: datetime | None = 
                     draw.text((x1 + 16, y), line, fill=MUTED, font=FONT_SMALL)
 
     buffer = BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    image.save(buffer, format="JPEG", quality=78, optimize=True, progressive=True)
     return buffer.getvalue()

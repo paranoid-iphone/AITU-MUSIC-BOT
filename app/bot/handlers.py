@@ -1,4 +1,6 @@
-﻿import logging
+import logging
+import hashlib
+import json
 import random
 from datetime import date, datetime, timedelta
 
@@ -58,6 +60,7 @@ redis = Redis.from_url(settings.redis_url, decode_responses=True)
 logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
 SCHEDULE_MENU_MESSAGES_KEY = "bot:schedule_menu_messages"
+SCHEDULE_IMAGE_FILE_ID_PREFIX = "bot:schedule_image_file_id:"
 bot_username_cache: str | None = None
 
 LEHA_PRAISES = [
@@ -325,8 +328,38 @@ async def get_schedule_text() -> str:
     return "\n".join(lines)
 
 
-async def get_schedule_image() -> bytes:
-    return render_schedule_image(await api.schedule())
+def schedule_fingerprint(rows: list[dict]) -> str:
+    payload = [
+        {
+            "id": item.get("id"),
+            "band_name": item.get("band_name"),
+            "booking_date": item.get("booking_date"),
+            "start_time": item.get("start_time"),
+            "end_time": item.get("end_time"),
+            "purpose": item.get("purpose"),
+            "song_title": item.get("song_title"),
+            "status": item.get("status"),
+        }
+        for item in rows
+    ]
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def get_schedule_image_media() -> tuple[str | BufferedInputFile, str, bool]:
+    rows = await api.schedule()
+    fingerprint = schedule_fingerprint(rows)
+    cached_file_id = await redis.get(f"{SCHEDULE_IMAGE_FILE_ID_PREFIX}{fingerprint}")
+    if cached_file_id:
+        return cached_file_id, fingerprint, True
+    image = render_schedule_image(rows)
+    return BufferedInputFile(image, filename="schedule.jpg"), fingerprint, False
+
+
+async def remember_schedule_file_id(fingerprint: str, message: Message | None) -> None:
+    if message is None or not message.photo:
+        return
+    await redis.set(f"{SCHEDULE_IMAGE_FILE_ID_PREFIX}{fingerprint}", message.photo[-1].file_id, ex=60 * 60 * 24 * 14)
 
 
 async def remember_schedule_menu(chat_id: int, message_id: int, is_admin: bool) -> None:
@@ -341,7 +374,7 @@ async def refresh_all_schedule_menus(bot, caption: str = "Главное мен�
     stored_messages = await redis.hgetall(SCHEDULE_MENU_MESSAGES_KEY)
     if not stored_messages:
         return
-    image = await get_schedule_image()
+    image_media, fingerprint, is_cached = await get_schedule_image_media()
     for chat_id_raw, payload in stored_messages.items():
         try:
             message_id_raw, is_admin_raw = payload.split(":", maxsplit=1)
@@ -351,14 +384,18 @@ async def refresh_all_schedule_menus(bot, caption: str = "Главное мен�
         except (ValueError, AttributeError):
             await redis.hdel(SCHEDULE_MENU_MESSAGES_KEY, chat_id_raw)
             continue
-        media = InputMediaPhoto(media=BufferedInputFile(image, filename="schedule.png"), caption=caption)
+        media = InputMediaPhoto(media=image_media, caption=caption)
         try:
-            await bot.edit_message_media(
+            updated = await bot.edit_message_media(
                 chat_id=chat_id,
                 message_id=message_id,
                 media=media,
                 reply_markup=main_menu_inline(is_admin),
             )
+            if not is_cached and isinstance(updated, Message):
+                await remember_schedule_file_id(fingerprint, updated)
+                image_media = updated.photo[-1].file_id
+                is_cached = True
         except Exception as exc:
             text = str(exc).lower()
             if "message is not modified" not in text:
@@ -368,25 +405,31 @@ async def refresh_all_schedule_menus(bot, caption: str = "Главное мен�
 
 
 async def send_schedule(message: Message) -> None:
-    image = await get_schedule_image()
-    await message.answer_photo(BufferedInputFile(image, filename="schedule.png"), caption="Расписание на ближайшие 7 дней")
+    image_media, fingerprint, is_cached = await get_schedule_image_media()
+    sent = await message.answer_photo(image_media, caption="Расписание на ближайшие 7 дней")
+    if not is_cached:
+        await remember_schedule_file_id(fingerprint, sent)
 
 
 async def send_schedule_menu(message: Message, user: dict, caption: str | None = None) -> None:
-    image = await get_schedule_image()
+    image_media, fingerprint, is_cached = await get_schedule_image_media()
     sent = await message.answer_photo(
-        BufferedInputFile(image, filename="schedule.png"),
+        image_media,
         caption=caption or "Главное меню",
         reply_markup=main_menu_inline(user.get("role") == "admin"),
     )
+    if not is_cached:
+        await remember_schedule_file_id(fingerprint, sent)
     await remember_schedule_menu(sent.chat.id, sent.message_id, user.get("role") == "admin")
 
 
 async def edit_schedule_menu(callback: CallbackQuery, user: dict, caption: str | None = None) -> None:
-    image = await get_schedule_image()
-    media = InputMediaPhoto(media=BufferedInputFile(image, filename="schedule.png"), caption=caption or "Главное меню")
+    image_media, fingerprint, is_cached = await get_schedule_image_media()
+    media = InputMediaPhoto(media=image_media, caption=caption or "Главное меню")
     try:
-        await callback.message.edit_media(media=media, reply_markup=main_menu_inline(user.get("role") == "admin"))
+        updated = await callback.message.edit_media(media=media, reply_markup=main_menu_inline(user.get("role") == "admin"))
+        if not is_cached and isinstance(updated, Message):
+            await remember_schedule_file_id(fingerprint, updated)
         await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, user.get("role") == "admin")
     except Exception:
         try:
@@ -2313,6 +2356,7 @@ async def fallback(message: Message, state: FSMContext) -> None:
         await message.answer("Ваш аккаунт не имеет доступа к боту. Обратитесь к админам AITU Music Club.")
         return
     await show_menu(message, user)
+
 
 
 
