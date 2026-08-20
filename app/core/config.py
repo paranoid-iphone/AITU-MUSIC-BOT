@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://aitu:aitu@localhost:5432/aitu_music"
     bot_token: str = ""
     backend_base_url: str = "http://localhost:8000"
+    webapp_base_url: str = ""
     internal_api_token: str = "change-me"
     redis_url: str = "redis://localhost:6379/0"
     initial_admin_telegram_ids: str = ""

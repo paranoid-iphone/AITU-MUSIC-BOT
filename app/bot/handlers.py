@@ -58,6 +58,7 @@ redis = Redis.from_url(settings.redis_url, decode_responses=True)
 logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
 SCHEDULE_MENU_MESSAGES_KEY = "bot:schedule_menu_messages"
+bot_username_cache: str | None = None
 
 LEHA_PRAISES = [
     (
@@ -82,6 +83,54 @@ LEHA_PRAISES = [
 async def show_menu(message: Message, user: dict) -> None:
     language = user.get("language", "ru")
     await send_schedule_menu(message, user, t(language, "main_menu"))
+
+
+def extract_join_code_from_start(message: Message) -> str | None:
+    parts = (message.text or "").strip().split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if payload.startswith("join_"):
+        code = payload.removeprefix("join_").strip()
+        return code or None
+    return None
+
+
+async def get_bot_username(bot) -> str:
+    global bot_username_cache
+    if bot_username_cache is None:
+        me = await bot.get_me()
+        bot_username_cache = me.username
+    return bot_username_cache
+
+
+async def build_band_invite_link(bot, invite_code: str) -> str:
+    username = await get_bot_username(bot)
+    return f"https://t.me/{username}?start=join_{invite_code}"
+
+
+async def format_bands_list(bot, bands: list[dict]) -> str:
+    lines = []
+    for band in bands:
+        invite_link = await build_band_invite_link(bot, band["invite_code"])
+        lines.append(f"{band['id']}. {band['name']}")
+        lines.append(f"Код: {band['invite_code']}")
+        lines.append(f"Ссылка: {invite_link}")
+        for member in band["members"]:
+            u = member["user"]
+            lines.append(f"  - {u['last_name'] or ''} {u['first_name'] or ''} | {u['study_group'] or '-'} | {member['instrument_role']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+async def start_join_by_code(message: Message, state: FSMContext, invite_code: str) -> None:
+    await state.update_data(invite_code=invite_code)
+    await state.set_state(BandFlow.join_role)
+    await message.answer(
+        "Ссылка на вступление в коллектив открыта.\n"
+        "Напишите вашу роль в коллективе: гитарист, вокалист, барабанщик или другое.",
+        reply_markup=flow_cancel_keyboard(),
+    )
 
 
 async def edit_screen(callback: CallbackQuery, text: str, reply_markup=None) -> None:
@@ -514,14 +563,8 @@ async def inline_bands(callback: CallbackQuery) -> None:
         await edit_screen(callback, "У вас пока нет коллективов.", main_menu_inline(user.get("role") == "admin"))
         await answer_callback(callback)
         return
-    lines = []
-    for band in bands:
-        lines.append(f"{band['id']}. {band['name']} | код: {band['invite_code']}")
-        for member in band["members"]:
-            u = member["user"]
-            lines.append(f"  - {u['last_name'] or ''} {u['first_name'] or ''} | {u['study_group'] or '-'} | {member['instrument_role']}")
     user = await api.get_user(callback.from_user.id)
-    await edit_screen(callback, "\n".join(lines), main_menu_inline(user.get("role") == "admin"))
+    await edit_screen(callback, await format_bands_list(callback.message.bot, bands), main_menu_inline(user.get("role") == "admin"))
     await answer_callback(callback)
 
 
@@ -1316,13 +1359,18 @@ async def leha(message: Message) -> None:
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
+    invite_code = extract_join_code_from_start(message)
     user = await api.upsert_user(message.from_user)
     if not user["profile_completed"]:
+        if invite_code:
+            await state.update_data(pending_invite_code=invite_code)
         await prompt_next_profile_step(message, state, user, show_welcome=True)
         return
     if user["status"] == "pending":
         await notify_admins_about_registration(message, user)
         await send_pending_notice(message)
+        if invite_code:
+            await message.answer("После одобрения нажмите ссылку вступления ещё раз.")
         return
     if user["status"] == "rejected":
         try:
@@ -1347,6 +1395,9 @@ async def start(message: Message, state: FSMContext) -> None:
         return
     if user["status"] in {"banned", "deleted"}:
         await message.answer("Ваш аккаунт не имеет доступа к боту. Обратитесь к админам AITU Music Club.")
+        return
+    if invite_code:
+        await start_join_by_code(message, state, invite_code)
         return
     await show_menu(message, user)
 
@@ -1390,12 +1441,19 @@ async def onboarding_language(message: Message, state: FSMContext) -> None:
     if language not in {"ru", "kz", "en"}:
         await message.answer("Выберите ru, kz или en.", reply_markup=language_keyboard())
         return
+    data = await state.get_data()
     user = await api.update_settings(message.from_user.id, {"language": language})
     await state.clear()
     if user["status"] == "pending":
         await notify_admins_about_registration(message, user, force=True)
         await message.answer(t(language, "profile_saved"))
         await send_pending_notice(message)
+        if data.get("pending_invite_code"):
+            await message.answer("После одобрения нажмите ссылку вступления ещё раз.")
+        return
+    if data.get("pending_invite_code"):
+        await message.answer(t(language, "profile_saved"))
+        await start_join_by_code(message, state, data["pending_invite_code"])
         return
     await send_schedule_menu(message, user, t(language, "profile_saved"))
 
@@ -1510,11 +1568,12 @@ async def create_band_role(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     band = await api.create_band(message.from_user.id, data["name"], message.text.strip())
     user = await api.get_user(message.from_user.id)
+    invite_link = await build_band_invite_link(message.bot, band["invite_code"])
     await state.clear()
     await send_schedule_menu(
         message,
         user,
-        f"Коллектив создан: {band['name']}\nКод приглашения: {band['invite_code']}",
+        f"Коллектив создан: {band['name']}\nКод приглашения: {band['invite_code']}\nСсылка: {invite_link}",
     )
 
 
@@ -1550,13 +1609,7 @@ async def my_bands(message: Message) -> None:
     if not bands:
         await message.answer("У вас пока нет коллективов.")
         return
-    lines = []
-    for band in bands:
-        lines.append(f"{band['id']}. {band['name']} | код: {band['invite_code']}")
-        for member in band["members"]:
-            u = member["user"]
-            lines.append(f"  - {u['last_name'] or ''} {u['first_name'] or ''} | {u['study_group'] or '-'} | {member['instrument_role']}")
-    await message.answer("\n".join(lines))
+    await message.answer(await format_bands_list(message.bot, bands))
 
 
 @router.message(F.text == "📋 Расписание")
