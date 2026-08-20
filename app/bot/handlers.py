@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, InputMediaPhoto, Message, ReplyKeyboardRemove
+from redis.asyncio import Redis
 
 from app.bot.api_client import BackendClient
 from app.bot.i18n import t
@@ -52,8 +53,10 @@ from app.core.config import settings
 
 router = Router()
 api = BackendClient()
+redis = Redis.from_url(settings.redis_url, decode_responses=True)
 logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
+SCHEDULE_MENU_MESSAGES_KEY = "bot:schedule_menu_messages"
 
 LEHA_PRAISES = [
     (
@@ -255,6 +258,44 @@ async def get_schedule_image() -> bytes:
     return render_schedule_image(await api.schedule())
 
 
+async def remember_schedule_menu(chat_id: int, message_id: int, is_admin: bool) -> None:
+    await redis.hset(SCHEDULE_MENU_MESSAGES_KEY, str(chat_id), f"{message_id}:{int(is_admin)}")
+
+
+async def forget_schedule_menu(chat_id: int) -> None:
+    await redis.hdel(SCHEDULE_MENU_MESSAGES_KEY, str(chat_id))
+
+
+async def refresh_all_schedule_menus(bot, caption: str = "Главное меню") -> None:
+    stored_messages = await redis.hgetall(SCHEDULE_MENU_MESSAGES_KEY)
+    if not stored_messages:
+        return
+    image = await get_schedule_image()
+    for chat_id_raw, payload in stored_messages.items():
+        try:
+            message_id_raw, is_admin_raw = payload.split(":", maxsplit=1)
+            chat_id = int(chat_id_raw)
+            message_id = int(message_id_raw)
+            is_admin = is_admin_raw == "1"
+        except (ValueError, AttributeError):
+            await redis.hdel(SCHEDULE_MENU_MESSAGES_KEY, chat_id_raw)
+            continue
+        media = InputMediaPhoto(media=BufferedInputFile(image, filename="schedule.png"), caption=caption)
+        try:
+            await bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=media,
+                reply_markup=main_menu_inline(is_admin),
+            )
+        except Exception as exc:
+            text = str(exc).lower()
+            if "message is not modified" not in text:
+                logger.info("Could not refresh schedule menu for chat %s: %s", chat_id, exc)
+            if "message to edit not found" in text or "bot was blocked" in text or "chat not found" in text:
+                await forget_schedule_menu(chat_id)
+
+
 async def send_schedule(message: Message) -> None:
     image = await get_schedule_image()
     await message.answer_photo(BufferedInputFile(image, filename="schedule.png"), caption="Расписание на ближайшие 7 дней")
@@ -262,11 +303,12 @@ async def send_schedule(message: Message) -> None:
 
 async def send_schedule_menu(message: Message, user: dict, caption: str | None = None) -> None:
     image = await get_schedule_image()
-    await message.answer_photo(
+    sent = await message.answer_photo(
         BufferedInputFile(image, filename="schedule.png"),
         caption=caption or "Главное меню",
         reply_markup=main_menu_inline(user.get("role") == "admin"),
     )
+    await remember_schedule_menu(sent.chat.id, sent.message_id, user.get("role") == "admin")
 
 
 async def edit_schedule_menu(callback: CallbackQuery, user: dict, caption: str | None = None) -> None:
@@ -274,9 +316,11 @@ async def edit_schedule_menu(callback: CallbackQuery, user: dict, caption: str |
     media = InputMediaPhoto(media=BufferedInputFile(image, filename="schedule.png"), caption=caption or "Главное меню")
     try:
         await callback.message.edit_media(media=media, reply_markup=main_menu_inline(user.get("role") == "admin"))
+        await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, user.get("role") == "admin")
     except Exception:
         try:
             await callback.message.edit_caption(caption=caption or "Главное меню", reply_markup=main_menu_inline(user.get("role") == "admin"))
+            await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, user.get("role") == "admin")
         except Exception:
             await send_schedule_menu(callback.message, user, caption)
 
@@ -1153,6 +1197,7 @@ async def inline_admin_booking_delete_confirm(callback: CallbackQuery, state: FS
         await answer_callback(callback)
         return
     await state.update_data(admin_delete_bookings=await api.schedule())
+    await refresh_all_schedule_menus(callback.message.bot)
     await edit_screen(
         callback,
         f"Бронь удалена: {deleted['booking_date']} {deleted['start_time'][:5]}-{deleted['end_time'][:5]} | {deleted['band_name']}",
@@ -1622,6 +1667,7 @@ async def booking_song(message: Message, state: FSMContext) -> None:
         await send_schedule_menu(message, user, f"Не получилось создать бронь: {exc}")
         return
     await state.clear()
+    await refresh_all_schedule_menus(message.bot)
     await send_schedule_menu(
         message,
         user,
@@ -1991,6 +2037,7 @@ async def staff_booking_title_save(message: Message, state: FSMContext) -> None:
         await message.answer(f"Не получилось занять кабинет: {exc}", reply_markup=admin_schedule_keyboard())
         return
     await state.clear()
+    await refresh_all_schedule_menus(message.bot)
     await message.answer(
         f"Кабинет занят: {booking['booking_date']} {booking['start_time'][:5]}-{booking['end_time'][:5]} | {title}",
         reply_markup=admin_schedule_keyboard(),
