@@ -162,7 +162,7 @@ async def answer_callback(callback: CallbackQuery, text: str | None = None, show
 
 
 def format_purpose(value: str) -> str:
-    return {"concert": "к концерту", "self": "для себя", "staff": "ивент / стафф"}.get(value, value)
+    return {"concert": "к концерту", "self": "для себя", "staff": "ивент / стафф", "personal": "личная репетиция"}.get(value, value)
 
 
 def format_hours(minutes: int) -> str:
@@ -254,6 +254,7 @@ def admin_guide_text() -> str:
         "Инструкция админа\n\n"
         "Заявки: проверяй имя, фамилию и группу. Отклонение не банит пользователя, он сможет подать заявку позже.\n\n"
         "Репетиции: можно занять кабинет под стафф/ивент, изменить дату, время, песню или цель любой брони, а также удалить бронь.\n\n"
+        "Личные репетиции: в настройках можно включить или выключить бронь без коллектива.\n\n"
         "Коллективы: можно переименовать коллектив, поменять лидера, отредактировать роли участников или удалить участника из коллектива.\n\n"
         "Концерты: создай концерт, открой прием номеров, затем смотри заявки номеров со списками участников.\n\n"
         "Админы: добавляй админа по @username или Telegram ID. Initial admins защищены от снятия роли.\n\n"
@@ -316,7 +317,7 @@ def parse_booking_window(value: str) -> tuple[datetime, datetime] | None:
     return parsed[0], parsed[1]
 
 
-async def get_end_time_options(target_date: str, start_time: str, band_id: int) -> list[dict]:
+async def get_end_time_options(target_date: str, start_time: str, band_id: int | None) -> list[dict]:
     options = []
     parsed_date = date.fromisoformat(target_date)
     for duration in range(30, 24 * 60 + 1, 30):
@@ -329,13 +330,19 @@ async def get_end_time_options(target_date: str, start_time: str, band_id: int) 
     return options
 
 
-def build_end_time_text(target_date: str, start_time: str, limit_status: dict, end_options: list[dict]) -> str:
+def build_end_time_text(target_date: str, start_time: str, limit_status: dict | None, end_options: list[dict]) -> str:
     text = (
         f"{format_booking_date(target_date)}\n"
         f"Начало: {start_time[:5]}\n"
-        f"{format_limit_status(limit_status)}\n"
         "Выберите время окончания:"
     )
+    if limit_status is not None:
+        text = (
+            f"{format_booking_date(target_date)}\n"
+            f"Начало: {start_time[:5]}\n"
+            f"{format_limit_status(limit_status)}\n"
+            "Выберите время окончания:"
+        )
     if end_options:
         max_duration = int(
             (
@@ -344,7 +351,7 @@ def build_end_time_text(target_date: str, start_time: str, limit_status: dict, e
             ).total_seconds()
             // 60
         )
-        if max_duration < limit_status["remaining_minutes"]:
+        if limit_status is not None and max_duration < limit_status["remaining_minutes"]:
             text += "\nДальше уже занято или выходит за часы кабинета."
     return text
 
@@ -476,13 +483,15 @@ async def edit_schedule_menu(callback: CallbackQuery, user: dict, caption: str |
 
 async def start_booking_flow(message: Message, state: FSMContext, telegram_id: int) -> None:
     bands = await api.list_bands(telegram_id)
-    if not bands:
+    personal_settings = await api.personal_booking_settings()
+    allow_personal = bool(personal_settings.get("personal_bookings_enabled"))
+    if not bands and not allow_personal:
         await message.answer("Сначала создайте коллектив или вступите в него.")
         return
     bands = sorted(bands, key=lambda item: item.get("created_at", ""), reverse=True)
-    await state.update_data(booking_bands=bands)
+    await state.update_data(booking_bands=bands, allow_personal_booking=allow_personal)
     await state.set_state(BookingFlow.band_id)
-    await message.answer("Выберите коллектив:", reply_markup=booking_bands_keyboard(bands))
+    await message.answer("Выберите коллектив или личную репетицию:", reply_markup=booking_bands_keyboard(bands, allow_personal=allow_personal))
 
 
 async def send_pending_notice(message: Message) -> None:
@@ -669,14 +678,16 @@ async def inline_booking(callback: CallbackQuery, state: FSMContext) -> None:
     if not await has_full_access_for_callback(callback):
         return
     bands = await api.list_bands(callback.from_user.id)
-    if not bands:
+    personal_settings = await api.personal_booking_settings()
+    allow_personal = bool(personal_settings.get("personal_bookings_enabled"))
+    if not bands and not allow_personal:
         await edit_screen(callback, "Сначала создайте коллектив или вступите в него.", main_menu_inline(False))
         await answer_callback(callback)
         return
     bands = sorted(bands, key=lambda item: item.get("created_at", ""), reverse=True)
-    await state.update_data(booking_bands=bands)
+    await state.update_data(booking_bands=bands, allow_personal_booking=allow_personal)
     await state.set_state(BookingFlow.band_id)
-    await edit_screen(callback, "Выберите коллектив:", booking_bands_keyboard(bands))
+    await edit_screen(callback, "Выберите коллектив или личную репетицию:", booking_bands_keyboard(bands, allow_personal=allow_personal))
     await answer_callback(callback)
 
 
@@ -688,7 +699,40 @@ async def inline_booking_bands_page(callback: CallbackQuery, state: FSMContext) 
         await inline_booking(callback, state)
         return
     page = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    await edit_screen(callback, "Выберите коллектив:", booking_bands_keyboard(bands, page))
+    await edit_screen(callback, "Выберите коллектив или личную репетицию:", booking_bands_keyboard(bands, page, allow_personal=data.get("allow_personal_booking", False)))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data == "booking:personal")
+async def inline_booking_personal(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if not data.get("allow_personal_booking", False):
+        settings = await api.personal_booking_settings()
+        if not settings.get("personal_bookings_enabled"):
+            await answer_callback(callback, "Личные репетиции сейчас выключены админами.", show_alert=True)
+            return
+    await state.update_data(band_id=None, band_name="Личная репетиция", is_personal_booking=True, purpose="personal")
+    days = []
+    today = datetime.now().date()
+    for offset in range(8):
+        target_date = today + timedelta(days=offset)
+        day_slots = await api.available_slots(target_date, 30)
+        if day_slots:
+            days.append(
+                {
+                    "date": target_date.isoformat(),
+                    "label": format_booking_day_button(target_date, len(day_slots)),
+                }
+            )
+    if not days:
+        await state.clear()
+        user = await api.get_user(callback.from_user.id)
+        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.", main_menu_inline(user.get("role") == "admin"))
+        await answer_callback(callback)
+        return
+    await state.update_data(booking_dates=days)
+    await state.set_state(BookingFlow.booking_date)
+    await edit_screen(callback, "Личная репетиция\nВыберите день:", booking_days_keyboard(days))
     await answer_callback(callback)
 
 
@@ -701,7 +745,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
     if band is None:
         await answer_callback(callback, "Коллектив не найден, начните заново.", show_alert=True)
         return
-    await state.update_data(band_id=band_id, band_name=band["name"])
+    await state.update_data(band_id=band_id, band_name=band["name"], is_personal_booking=False)
     days = []
     today = datetime.now().date()
     for offset in range(8):
@@ -734,7 +778,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
 async def inline_booking_date(callback: CallbackQuery, state: FSMContext) -> None:
     selected_date = callback.data.rsplit(":", maxsplit=1)[-1]
     data = await state.get_data()
-    band_id = data["band_id"]
+    band_id = data.get("band_id")
     slots = [
         {"date": selected_date, **slot}
         for slot in await api.available_slots(date.fromisoformat(selected_date), 30, band_id)
@@ -770,12 +814,12 @@ async def inline_booking_slot(callback: CallbackQuery, state: FSMContext) -> Non
         await answer_callback(callback, "Слот не найден.", show_alert=True)
         return
     slot = slots[index]
-    band_id = data["band_id"]
+    band_id = data.get("band_id")
     end_options = await get_end_time_options(slot["date"], slot["start_time"], band_id)
     if not end_options:
         await answer_callback(callback, "Для этого старта нет доступного окончания.", show_alert=True)
         return
-    limit_status = await api.booking_limit_status(callback.from_user.id, band_id, date.fromisoformat(slot["date"]))
+    limit_status = None if band_id is None else await api.booking_limit_status(callback.from_user.id, band_id, date.fromisoformat(slot["date"]))
     await state.update_data(selected_start_slot=slot, end_options=end_options)
     await state.set_state(BookingFlow.end_time)
     await edit_screen(
@@ -794,7 +838,8 @@ async def inline_booking_end_times_page(callback: CallbackQuery, state: FSMConte
     if not start_slot or not end_options:
         await answer_callback(callback, "Слоты устарели, начните заново.", show_alert=True)
         return
-    limit_status = await api.booking_limit_status(callback.from_user.id, data["band_id"], date.fromisoformat(start_slot["date"]))
+    band_id = data.get("band_id")
+    limit_status = None if band_id is None else await api.booking_limit_status(callback.from_user.id, band_id, date.fromisoformat(start_slot["date"]))
     page = int(callback.data.rsplit(":", maxsplit=1)[-1])
     await edit_screen(
         callback,
@@ -814,6 +859,12 @@ async def inline_booking_end_time(callback: CallbackQuery, state: FSMContext) ->
         return
     slot = end_options[index]
     await state.update_data(selected_slot=slot)
+    if data.get("is_personal_booking"):
+        await state.update_data(purpose="personal")
+        await state.set_state(BookingFlow.song_title)
+        await edit_screen(callback, "Что будете репетировать? Если пока не ясно, отправьте '-'.", booking_song_keyboard())
+        await answer_callback(callback)
+        return
     await state.set_state(BookingFlow.purpose)
     await edit_screen(
         callback,
@@ -846,7 +897,7 @@ async def inline_booking_back(callback: CallbackQuery, state: FSMContext) -> Non
             await inline_booking(callback, state)
             return
         await state.set_state(BookingFlow.band_id)
-        await edit_screen(callback, "Выберите коллектив:", booking_bands_keyboard(bands))
+        await edit_screen(callback, "Выберите коллектив или личную репетицию:", booking_bands_keyboard(bands, allow_personal=data.get("allow_personal_booking", False)))
     elif step == "days":
         days = data.get("booking_dates", [])
         band_name = data.get("band_name", "коллектив")
@@ -869,7 +920,8 @@ async def inline_booking_back(callback: CallbackQuery, state: FSMContext) -> Non
         if not start_slot or not end_options:
             await answer_callback(callback, "Время устарело, начните заново.", show_alert=True)
             return
-        limit_status = await api.booking_limit_status(callback.from_user.id, data["band_id"], date.fromisoformat(start_slot["date"]))
+        band_id = data.get("band_id")
+        limit_status = None if band_id is None else await api.booking_limit_status(callback.from_user.id, band_id, date.fromisoformat(start_slot["date"]))
         await state.set_state(BookingFlow.end_time)
         await edit_screen(
             callback,
@@ -880,6 +932,20 @@ async def inline_booking_back(callback: CallbackQuery, state: FSMContext) -> Non
         slot = data.get("selected_slot")
         if not slot:
             await answer_callback(callback, "Выбор устарел, начните заново.", show_alert=True)
+            return
+        if data.get("is_personal_booking"):
+            start_slot = data.get("selected_start_slot")
+            end_options = data.get("end_options", [])
+            if not start_slot or not end_options:
+                await answer_callback(callback, "Время устарело, начните заново.", show_alert=True)
+                return
+            await state.set_state(BookingFlow.end_time)
+            await edit_screen(
+                callback,
+                build_end_time_text(start_slot["date"], start_slot["start_time"], None, end_options),
+                booking_end_times_keyboard(end_options),
+            )
+            await answer_callback(callback)
             return
         await state.set_state(BookingFlow.purpose)
         await edit_screen(
@@ -1109,7 +1175,9 @@ async def inline_admin_section(callback: CallbackQuery) -> None:
         text = "Коллективы" if bands else "Коллективов пока нет."
         await edit_screen(callback, text, admin_bands_keyboard(bands))
     elif section == "settings":
-        await edit_screen(callback, "Настройки бронирования", admin_settings_keyboard())
+        personal = await api.get_personal_bookings_enabled(callback.from_user.id)
+        status = "включены" if personal.get("personal_bookings_enabled") else "выключены"
+        await edit_screen(callback, f"Настройки бронирования\n\nЛичные репетиции: {status}", admin_settings_keyboard())
     elif section == "events":
         events = await api.list_events()
         text = "Концерты" if events else "Концертов пока нет."
@@ -1386,6 +1454,15 @@ async def inline_daily_booking_limit_start(callback: CallbackQuery, state: FSMCo
         reply_markup=flow_cancel_keyboard(),
     )
     await answer_callback(callback)
+
+
+@router.callback_query(F.data == "admin:personal_bookings_toggle")
+async def inline_personal_bookings_toggle(callback: CallbackQuery) -> None:
+    current = await api.get_personal_bookings_enabled(callback.from_user.id)
+    updated = await api.update_personal_bookings_enabled(callback.from_user.id, not current.get("personal_bookings_enabled"))
+    status = "включены" if updated.get("personal_bookings_enabled") else "выключены"
+    await edit_screen(callback, f"Настройки бронирования\n\nЛичные репетиции: {status}", admin_settings_keyboard())
+    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data == "admin:booking_window")
@@ -1934,11 +2011,12 @@ async def booking_slot(message: Message, state: FSMContext) -> None:
     except (ValueError, IndexError):
         await message.answer("Введите номер слота из списка.", reply_markup=flow_cancel_keyboard())
         return
-    end_options = await get_end_time_options(slot["date"], slot["start_time"], data["band_id"])
+    band_id = data.get("band_id")
+    end_options = await get_end_time_options(slot["date"], slot["start_time"], band_id)
     if not end_options:
         await message.answer("Для этого старта нет доступного окончания.", reply_markup=flow_cancel_keyboard())
         return
-    limit_status = await api.booking_limit_status(message.from_user.id, data["band_id"], date.fromisoformat(slot["date"]))
+    limit_status = None if band_id is None else await api.booking_limit_status(message.from_user.id, band_id, date.fromisoformat(slot["date"]))
     await state.update_data(selected_start_slot=slot, end_options=end_options)
     await state.set_state(BookingFlow.end_time)
     text = build_end_time_text(slot["date"], slot["start_time"], limit_status, end_options) + "\n" + "\n".join(
@@ -1957,6 +2035,11 @@ async def booking_end_time(message: Message, state: FSMContext) -> None:
         await message.answer("Введите номер окончания из списка.", reply_markup=flow_cancel_keyboard())
         return
     await state.update_data(selected_slot=slot)
+    if data.get("is_personal_booking"):
+        await state.update_data(purpose="personal")
+        await state.set_state(BookingFlow.song_title)
+        await message.answer("Что будете репетировать? Если пока не ясно, отправьте '-'.", reply_markup=booking_song_keyboard())
+        return
     await state.set_state(BookingFlow.purpose)
     await message.answer(
         f"Выбрано: {format_booking_date(slot['date'])} {slot['start_time'][:5]}-{slot['end_time'][:5]}\n"

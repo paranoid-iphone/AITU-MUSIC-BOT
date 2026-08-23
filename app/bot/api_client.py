@@ -140,10 +140,13 @@ class BackendClient:
     async def schedule(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/schedule")
 
+    async def personal_booking_settings(self) -> dict[str, Any]:
+        return await self.request("GET", "/bookings/settings/personal-bookings")
+
     async def create_booking(
         self,
         telegram_id: int,
-        band_id: int,
+        band_id: int | None,
         target_date: date,
         start: time,
         end: time,
@@ -182,6 +185,16 @@ class BackendClient:
                 "end_time": end.isoformat(),
                 "title": title,
             },
+        )
+
+    async def get_personal_bookings_enabled(self, telegram_id: int) -> dict[str, Any]:
+        return await self.request("GET", "/admin/settings/personal-bookings", params={"telegram_id": telegram_id})
+
+    async def update_personal_bookings_enabled(self, telegram_id: int, is_enabled: bool) -> dict[str, Any]:
+        return await self.request(
+            "PUT",
+            "/admin/settings/personal-bookings",
+            json={"telegram_id": telegram_id, "is_enabled": is_enabled},
         )
 
     async def delete_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:

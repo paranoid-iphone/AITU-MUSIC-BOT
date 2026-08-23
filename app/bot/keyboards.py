@@ -89,7 +89,7 @@ def flow_cancel_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def booking_bands_keyboard(bands: list[dict], page: int = 0, page_size: int = 5) -> InlineKeyboardMarkup:
+def booking_bands_keyboard(bands: list[dict], page: int = 0, page_size: int = 5, allow_personal: bool = False) -> InlineKeyboardMarkup:
     pages = max(1, (len(bands) + page_size - 1) // page_size)
     page = max(0, min(page, pages - 1))
     start = page * page_size
@@ -104,6 +104,8 @@ def booking_bands_keyboard(bands: list[dict], page: int = 0, page_size: int = 5)
         nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"booking:bands:{page + 1}"))
     if nav:
         rows.append(nav)
+    if allow_personal:
+        rows.append([InlineKeyboardButton(text="Личная репетиция", callback_data="booking:personal")])
     rows.append([InlineKeyboardButton(text="Назад в меню", callback_data="flow:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -509,7 +511,10 @@ def admin_booking_purpose_keyboard(booking_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="К концерту", callback_data=f"admin_booking_purpose:{booking_id}:concert"),
                 InlineKeyboardButton(text="Для себя", callback_data=f"admin_booking_purpose:{booking_id}:self"),
             ],
-            [InlineKeyboardButton(text="Стафф / ивент", callback_data=f"admin_booking_purpose:{booking_id}:staff")],
+            [
+                InlineKeyboardButton(text="Стафф / ивент", callback_data=f"admin_booking_purpose:{booking_id}:staff"),
+                InlineKeyboardButton(text="Личная", callback_data=f"admin_booking_purpose:{booking_id}:personal"),
+            ],
             [InlineKeyboardButton(text="Назад", callback_data=f"admin_booking_manage:{booking_id}")],
         ]
     )
@@ -522,6 +527,7 @@ def admin_settings_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Лимит в неделю", callback_data="admin:weekly_booking_limit"),
                 InlineKeyboardButton(text="Лимит в день", callback_data="admin:daily_booking_limit"),
             ],
+            [InlineKeyboardButton(text="Личные репетиции вкл/выкл", callback_data="admin:personal_bookings_toggle")],
             [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
         ]
     )

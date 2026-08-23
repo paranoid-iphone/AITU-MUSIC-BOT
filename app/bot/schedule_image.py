@@ -81,7 +81,7 @@ def _fit_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
 
 
 def _purpose_label(value: str) -> str:
-    return {"concert": "к концерту", "self": "для себя", "staff": "стафф"}.get(value, value)
+    return {"concert": "к концерту", "self": "для себя", "staff": "стафф", "personal": "личная"}.get(value, value)
 
 
 def _card_color(value: str) -> str:
@@ -89,6 +89,8 @@ def _card_color(value: str) -> str:
         return CONCERT
     if value == "staff":
         return STAFF
+    if value == "personal":
+        return "#f5ead7"
     return SELF
 
 
@@ -149,7 +151,7 @@ def render_schedule_image(bookings: list[dict], generated_at: datetime | None = 
     draw.text((WIDTH - 260, TOP_PAD + 12), f"обновлено {now.strftime('%d.%m %H:%M')}", fill=MUTED, font=FONT_DATE)
     legend_x = WIDTH - 420
     legend_y = TOP_PAD + 40
-    for label, color in (("для себя", SELF), ("к концерту", CONCERT), ("стафф", STAFF)):
+    for label, color in (("для себя", SELF), ("к концерту", CONCERT), ("стафф", STAFF), ("личная", "#f5ead7")):
         legend_w = _draw_pill(draw, legend_x, legend_y, label, color)
         legend_x += legend_w + 8
 

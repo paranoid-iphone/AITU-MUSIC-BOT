@@ -37,6 +37,20 @@ def _overlaps(start_time: time, end_time: time, booked_start: time, booked_end: 
     return start_time < booked_end and end_time > booked_start
 
 
+def _booking_owner_label(booking: Booking) -> str:
+    if booking.band is not None:
+        return booking.band.name
+    if booking.purpose == "personal":
+        created_by = booking.created_by
+        name = (
+            f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
+            or created_by.telegram_username
+            or str(created_by.telegram_id)
+        )
+        return f"Личная репетиция | {name}"
+    return "Стафф / кабинет"
+
+
 async def _ensure_booking_time_available(
     session: AsyncSession,
     booking_date: date,
@@ -102,6 +116,12 @@ async def get_booking_window_minutes(session: AsyncSession) -> tuple[int, int]:
     if start < 0 or end > 24 * 60 or start >= end:
         return 480, 1260
     return start, end
+
+
+async def personal_bookings_are_enabled(session: AsyncSession) -> bool:
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "personal_bookings_enabled"))
+    setting = result.scalar_one_or_none()
+    return setting is None or setting.value == "1"
 
 
 async def list_available_slots(session: AsyncSession, target_date: date, duration_minutes: int = 60, band_id: int | None = None) -> list[dict]:
@@ -215,7 +235,7 @@ async def get_booking_limit_status(session: AsyncSession, telegram_id: int, band
 async def create_booking(
     session: AsyncSession,
     telegram_id: int,
-    band_id: int,
+    band_id: int | None,
     booking_date: date,
     start_time: time,
     end_time: time,
@@ -228,20 +248,29 @@ async def create_booking(
     if user is None:
         raise NotFoundError("User not found")
     require_approved(user)
-    member_result = await session.execute(select(BandMember).where(BandMember.band_id == band_id, BandMember.user_id == user.id))
-    if member_result.scalar_one_or_none() is None:
-        raise ForbiddenError("You are not a member of this band")
+    if band_id is None:
+        if purpose != "personal":
+            raise ConflictError("Personal booking must use personal purpose")
+        if not await personal_bookings_are_enabled(session):
+            raise ForbiddenError("Personal bookings are disabled")
+    else:
+        if purpose == "personal":
+            raise ConflictError("Band booking cannot use personal purpose")
+        member_result = await session.execute(select(BandMember).where(BandMember.band_id == band_id, BandMember.user_id == user.id))
+        if member_result.scalar_one_or_none() is None:
+            raise ForbiddenError("You are not a member of this band")
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
     slots = await list_available_slots(session, booking_date, duration, band_id)
     if not any(slot["start_time"] == start_time and slot["end_time"] == end_time for slot in slots):
         raise ConflictError("Slot is not available")
-    now = datetime.now()
-    weekly_limit = await get_weekly_booking_limit_minutes(session)
-    used_minutes = await get_band_booked_minutes_in_window(session, band_id, now)
-    if used_minutes + duration > weekly_limit:
-        raise ConflictError(f"Weekly booking limit exceeded: {weekly_limit / 60:g}h per band")
+    if band_id is not None:
+        now = datetime.now()
+        weekly_limit = await get_weekly_booking_limit_minutes(session)
+        used_minutes = await get_band_booked_minutes_in_window(session, band_id, now)
+        if used_minutes + duration > weekly_limit:
+            raise ConflictError(f"Weekly booking limit exceeded: {weekly_limit / 60:g}h per band")
     booking = Booking(
         band_id=band_id,
         created_by_id=user.id,
@@ -259,7 +288,7 @@ async def create_booking(
         "booking.create",
         "booking",
         booking.id,
-        f"Создал бронь: коллектив #{band_id}, {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {song_title or 'песня не указана'}",
+        f"Создал бронь: {'личная' if band_id is None else f'коллектив #{band_id}'}, {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {song_title or 'песня не указана'}",
     )
     await session.commit()
     await session.refresh(booking)
@@ -325,7 +354,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     booking = result.scalar_one_or_none()
     if booking is None:
         raise NotFoundError("Booking not found")
-    band_name = booking.band.name if booking.band is not None else "Стафф / кабинет"
+    band_name = _booking_owner_label(booking)
     created_by = (
         f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
         or booking.created_by.telegram_username
@@ -436,7 +465,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
         rows.append(
             {
                 "id": booking.id,
-                "band_name": booking.band.name if booking.band is not None else "Стафф / кабинет",
+                "band_name": _booking_owner_label(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
                 or str(created_by.telegram_id),

@@ -35,3 +35,8 @@ class BookingWindowUpdate(BaseModel):
     telegram_id: int
     start_time: time
     end_time: time
+
+
+class PersonalBookingToggle(BaseModel):
+    telegram_id: int
+    is_enabled: bool

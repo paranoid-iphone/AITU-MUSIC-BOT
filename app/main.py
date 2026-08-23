@@ -72,7 +72,7 @@ async def schedule_webapp() -> str:
       return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
     });
     const dayNames = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
-    const purposeMap = { concert: "к концерту", self: "для себя", staff: "ивент / стафф" };
+    const purposeMap = { concert: "к концерту", self: "для себя", staff: "ивент / стафф", personal: "личная репетиция" };
     function nextDays() {
       const now = new Date();
       return Array.from({length: 7}, (_, i) => {

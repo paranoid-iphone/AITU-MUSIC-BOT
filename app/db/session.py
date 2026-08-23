@@ -51,6 +51,12 @@ async def create_db_and_tables() -> None:
                 "ON CONFLICT (key) DO NOTHING"
             )
         )
+        await conn.execute(
+            text(
+                "INSERT INTO club_settings (key, value) VALUES ('personal_bookings_enabled', '1') "
+                "ON CONFLICT (key) DO NOTHING"
+            )
+        )
         for admin_id in settings.initial_admin_ids:
             await conn.execute(
                 text("UPDATE users SET role = 'admin', status = 'approved' WHERE telegram_id = :telegram_id"),

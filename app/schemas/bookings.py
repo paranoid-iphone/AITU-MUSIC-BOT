@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field
 
 class BookingCreate(BaseModel):
     telegram_id: int
-    band_id: int
+    band_id: int | None = None
     booking_date: date
     start_time: time
     end_time: time
-    purpose: str = Field(default="self", pattern="^(concert|self)$")
+    purpose: str = Field(default="self", pattern="^(concert|self|personal)$")
     song_title: str | None = Field(default=None, max_length=150)
 
 
@@ -18,7 +18,7 @@ class BookingUpdate(BaseModel):
     booking_date: date | None = None
     start_time: time | None = None
     end_time: time | None = None
-    purpose: str | None = Field(default=None, pattern="^(concert|self|staff)$")
+    purpose: str | None = Field(default=None, pattern="^(concert|self|staff|personal)$")
     song_title: str | None = Field(default=None, max_length=150)
 
 

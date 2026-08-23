@@ -7,6 +7,7 @@ from app.core.security import verify_internal_token
 from app.db.session import get_session
 from app.schemas.bookings import AvailableSlotRead, BookingCreate, BookingRead, BookingUpdate, ScheduleBookingRead, StaffBookingCreate
 from app.services import bookings
+from app.services import admin as admin_service
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
@@ -39,6 +40,11 @@ async def limit_status(
     session: AsyncSession = Depends(get_session),
 ):
     return await bookings.get_booking_limit_status(session, telegram_id, band_id, target_date)
+
+
+@router.get("/settings/personal-bookings")
+async def personal_booking_settings(session: AsyncSession = Depends(get_session)):
+    return await admin_service.get_personal_bookings_enabled(session)
 
 
 @router.post("", response_model=BookingRead)

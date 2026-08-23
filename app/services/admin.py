@@ -17,6 +17,20 @@ def _minutes_to_hhmm(value: int) -> str:
     return f"{value // 60:02d}:{value % 60:02d}"
 
 
+def _booking_owner_label(booking) -> str:
+    if booking.band is not None:
+        return booking.band.name
+    if booking.purpose == "personal":
+        created_by = booking.created_by
+        name = (
+            f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
+            or created_by.telegram_username
+            or str(created_by.telegram_id)
+        )
+        return f"Личная репетиция | {name}"
+    return "Стафф / кабинет"
+
+
 async def update_available_day(session: AsyncSession, telegram_id: int, day_of_week: int, is_enabled: bool) -> AvailableDay:
     from app.services.audit import log_action
 
@@ -224,6 +238,46 @@ async def update_booking_window(session: AsyncSession, telegram_id: int, start_t
     }
 
 
+async def get_personal_bookings_enabled(session: AsyncSession, telegram_id: int | None = None, require_admin_access: bool = False) -> dict:
+    if require_admin_access:
+        if telegram_id is None:
+            raise NotFoundError("Admin not found")
+        user = await get_user_by_telegram_id(session, telegram_id)
+        if user is None:
+            raise NotFoundError("Admin not found")
+        require_admin(user)
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "personal_bookings_enabled"))
+    setting = result.scalar_one_or_none()
+    is_enabled = setting is None or setting.value == "1"
+    return {"personal_bookings_enabled": is_enabled}
+
+
+async def update_personal_bookings_enabled(session: AsyncSession, telegram_id: int, is_enabled: bool) -> dict:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "personal_bookings_enabled"))
+    setting = result.scalar_one_or_none()
+    value = "1" if is_enabled else "0"
+    if setting is None:
+        session.add(ClubSetting(key="personal_bookings_enabled", value=value))
+    else:
+        setting.value = value
+    await log_action(
+        session,
+        user.id,
+        "settings.personal_bookings.update",
+        "club_setting",
+        "personal_bookings_enabled",
+        f"{'Включил' if is_enabled else 'Выключил'} личные репетиции",
+    )
+    await session.commit()
+    return {"personal_bookings_enabled": is_enabled}
+
+
 async def booking_history(session: AsyncSession, telegram_id: int) -> list[dict]:
     from app.db.models import Booking
 
@@ -242,7 +296,7 @@ async def booking_history(session: AsyncSession, telegram_id: int) -> list[dict]
             {
                 "id": booking.id,
                 "band_id": booking.band_id,
-                "band_name": booking.band.name if booking.band is not None else "Стафф / кабинет",
+                "band_name": _booking_owner_label(booking),
                 "created_by_id": booking.created_by_id,
                 "created_by": f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
                 or booking.created_by.telegram_username
