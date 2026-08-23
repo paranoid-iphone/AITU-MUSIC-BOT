@@ -32,6 +32,16 @@ services:
     ports:
       - "6379:6379"
 
+  ngrok:
+    image: ngrok/ngrok:3
+    command: http backend:8000 --log stdout
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - backend
+
   bot:
     build: .
     command: python -m app.bot.main
@@ -41,6 +51,7 @@ services:
     depends_on:
       - backend
       - redis
+      - ngrok
 
 volumes:
   postgres_data:

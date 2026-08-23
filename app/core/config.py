@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     bot_token: str = ""
     backend_base_url: str = "http://localhost:8000"
     webapp_base_url: str = ""
+    ngrok_api_url: str = "http://ngrok:4040/api/tunnels"
     internal_api_token: str = "change-me"
     redis_url: str = "redis://localhost:6379/0"
     initial_admin_telegram_ids: str = ""

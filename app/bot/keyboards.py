@@ -1,7 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
-from app.core.config import settings
-
 
 def language_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -41,17 +39,17 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def rehearsals_menu_keyboard() -> InlineKeyboardMarkup:
+def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
         [InlineKeyboardButton(text="📋 Открыть расписание", callback_data="menu:schedule")],
     ]
-    if settings.webapp_base_url:
+    if webapp_base_url:
         rows.append(
             [
                 InlineKeyboardButton(
                     text="📱 Расписание в миниапе",
-                    web_app=WebAppInfo(url=f"{settings.webapp_base_url.rstrip('/')}/webapp/schedule"),
+                    web_app=WebAppInfo(url=f"{webapp_base_url.rstrip('/')}/webapp/schedule"),
                 )
             ]
         )

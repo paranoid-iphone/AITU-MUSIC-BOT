@@ -52,6 +52,7 @@ from app.bot.keyboards import (
 )
 from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, BandFlow, BookingFlow, EventFlow, Onboarding, ProfileFlow
+from app.bot.webapp_url import get_webapp_base_url
 from app.core.config import settings
 
 router = Router()
@@ -550,7 +551,7 @@ async def inline_menu_section(callback: CallbackQuery) -> None:
         return
     section = callback.data.split(":", maxsplit=1)[1]
     if section == "rehearsals":
-        await edit_screen(callback, "Репетиции", rehearsals_menu_keyboard())
+        await edit_screen(callback, "Репетиции", rehearsals_menu_keyboard(await get_webapp_base_url()))
     elif section == "bands":
         await edit_screen(callback, "Коллективы", bands_menu_keyboard())
     elif section == "concerts":
