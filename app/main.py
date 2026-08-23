@@ -7,7 +7,7 @@ from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services.errors import AppError
-from app.services import bookings
+from app.services import bookings as booking_service
 
 app = FastAPI(title=settings.app_name)
 
@@ -125,7 +125,7 @@ async def schedule_webapp() -> str:
 @app.get("/webapp/schedule-data")
 async def schedule_webapp_data() -> list[dict]:
     async with AsyncSessionLocal() as session:
-        rows = await bookings.list_schedule(session)
+        rows = await booking_service.list_schedule(session)
     return [
         {
             **item,
