@@ -301,6 +301,30 @@ def admin_guide_text() -> str:
     )
 
 
+def user_help_text(is_approved: bool = True) -> str:
+    if not is_approved:
+        return (
+            "AITU Music Club Bot\n\n"
+            "Пока ваша регистрация ожидает одобрения админа, доступен просмотр расписания.\n"
+            "После одобрения откроются коллективы, бронирование, концерты и личная история мероприятий.\n\n"
+            "Если данные профиля введены неправильно, после одобрения их можно будет поменять в профиле."
+        )
+    return (
+        "AITU Music Club Bot: инструкция\n\n"
+        "Главное меню всегда показывает актуальную картинку расписания на ближайшие 7 дней. "
+        "Если нужно открыть её вручную, зайдите в Репетиции -> Расписание.\n\n"
+        "Репетиции: можно посмотреть свои брони, забронировать время для коллектива или личную репетицию, "
+        "а также изменить или удалить свою бронь.\n\n"
+        "Коллективы: можно создать коллектив, вступить по коду или ссылке, посмотреть участников. "
+        "Лидер коллектива может менять название, роли, состав и передавать лидерство.\n\n"
+        "Концерты: открытые концерты показывают, куда можно подать номер. Лидер выбирает коллектив, песню "
+        "и участников. В Моих заявках можно изменить песню/состав или отозвать заявку.\n\n"
+        "Профиль: можно изменить имя, фамилию, учебную группу, язык и уведомления.\n\n"
+        "История мероприятий: здесь видны события для social GPA. Клубные события добавляются из заявок на концерты, "
+        "а личные события можно добавить вручную и потом редактировать: название, дату, место и роль."
+    )
+
+
 def format_event_history(rows: list[dict]) -> str:
     if not rows:
         return (
@@ -2138,6 +2162,13 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
 @router.message(Command("leha"))
 async def leha(message: Message) -> None:
     await message.answer(random.choice(LEHA_PRAISES))
+
+
+@router.message(Command("help"))
+async def help_command(message: Message) -> None:
+    user = await api.upsert_user(message.from_user)
+    is_approved = user["role"] == "admin" or user["status"] == "approved"
+    await message.answer(user_help_text(is_approved))
 
 
 @router.message(CommandStart())

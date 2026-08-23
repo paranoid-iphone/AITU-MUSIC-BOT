@@ -43,6 +43,7 @@ def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboa
     rows = [
         [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
+        [InlineKeyboardButton(text="📋 Расписание", callback_data="menu:schedule")],
     ]
     if webapp_base_url:
         rows.append(
