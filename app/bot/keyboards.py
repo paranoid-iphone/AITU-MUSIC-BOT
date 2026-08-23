@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
 
 def language_keyboard() -> ReplyKeyboardMarkup:
@@ -44,6 +44,15 @@ def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboa
         [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
     ]
+    if webapp_base_url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="📱 Расписание в миниапе",
+                    web_app=WebAppInfo(url=f"{webapp_base_url.rstrip('/')}/webapp/schedule"),
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
     return InlineKeyboardMarkup(
         inline_keyboard=rows
