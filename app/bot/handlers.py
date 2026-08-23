@@ -71,7 +71,6 @@ from app.bot.keyboards import (
 )
 from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, BandFlow, BookingFlow, EventFlow, Onboarding, ProfileFlow
-from app.bot.webapp_url import get_webapp_base_url
 from app.core.config import settings
 
 router = Router()
@@ -311,8 +310,7 @@ def user_help_text(is_approved: bool = True) -> str:
         )
     return (
         "AITU Music Club Bot: инструкция\n\n"
-        "Главное меню всегда показывает актуальную картинку расписания на ближайшие 7 дней. "
-        "Если нужно открыть её вручную, зайдите в Репетиции -> Расписание.\n\n"
+        "Главное меню всегда показывает актуальную картинку расписания на ближайшие 7 дней.\n\n"
         "Репетиции: можно посмотреть свои брони, забронировать время для коллектива или личную репетицию, "
         "а также изменить или удалить свою бронь.\n\n"
         "Коллективы: можно создать коллектив, вступить по коду или ссылке, посмотреть участников. "
@@ -687,7 +685,7 @@ async def inline_menu_section(callback: CallbackQuery) -> None:
             text += "\n\nБлижайшие мои:\n" + preview
         else:
             text += "\n\nУ вас пока нет будущих репетиций."
-        await edit_screen(callback, text, rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await edit_screen(callback, text, rehearsals_menu_keyboard())
     elif section == "bands":
         bands = sorted(await api.list_bands(callback.from_user.id), key=lambda item: item.get("created_at", ""), reverse=True)
         preview = "\n".join(f"- {band['name']}" for band in bands[:5])
@@ -739,7 +737,7 @@ async def inline_user_bookings(callback: CallbackQuery, state: FSMContext) -> No
     rows = await api.my_bookings(callback.from_user.id)
     await state.update_data(user_bookings=rows)
     if not rows:
-        await edit_screen(callback, "У вас пока нет будущих репетиций.", rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await edit_screen(callback, "У вас пока нет будущих репетиций.", rehearsals_menu_keyboard())
         await answer_callback(callback)
         return
     await edit_screen(callback, "Мои репетиции", user_bookings_list_keyboard(rows, page))
@@ -798,7 +796,7 @@ async def inline_user_booking_delete_confirm(callback: CallbackQuery, state: FSM
     await edit_screen(
         callback,
         f"Бронь удалена: {deleted['booking_date']} {deleted['start_time'][:5]}-{deleted['end_time'][:5]} | {deleted['band_name']}",
-        rehearsals_menu_keyboard(await get_webapp_base_url()),
+        rehearsals_menu_keyboard(),
     )
     await answer_callback(callback, "Готово")
 
@@ -2583,7 +2581,7 @@ async def my_rehearsals_button(message: Message) -> None:
         return
     rows = await api.my_bookings(message.from_user.id)
     if not rows:
-        await message.answer("У вас пока нет будущих репетиций.", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await message.answer("У вас пока нет будущих репетиций.", reply_markup=rehearsals_menu_keyboard())
         return
     await message.answer("Мои репетиции", reply_markup=user_bookings_list_keyboard(rows))
 
@@ -2627,13 +2625,13 @@ async def user_booking_edit_save(message: Message, state: FSMContext) -> None:
         payload["song_title"] = None if raw == "-" else raw
     else:
         await state.clear()
-        await message.answer("Это поле нельзя редактировать.", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await message.answer("Это поле нельзя редактировать.", reply_markup=rehearsals_menu_keyboard())
         return
     try:
         updated = await api.update_booking(message.from_user.id, booking_id, payload)
     except RuntimeError as exc:
         await state.clear()
-        await message.answer(f"Не получилось обновить бронь: {exc}", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await message.answer(f"Не получилось обновить бронь: {exc}", reply_markup=rehearsals_menu_keyboard())
         return
     rows = await api.my_bookings(message.from_user.id)
     booking = next((item for item in rows if item["id"] == updated["id"]), None)

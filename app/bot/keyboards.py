@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
 def language_keyboard() -> ReplyKeyboardMarkup:
@@ -14,7 +14,7 @@ def language_keyboard() -> ReplyKeyboardMarkup:
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="🎵 Мои коллективы"), KeyboardButton(text="➕ Создать коллектив")],
-        [KeyboardButton(text="📋 Расписание"), KeyboardButton(text="📅 Забронировать")],
+        [KeyboardButton(text="📅 Забронировать")],
         [KeyboardButton(text="🔑 Вступить по коду")],
         [KeyboardButton(text="🎤 Концерты"), KeyboardButton(text="👤 Личный кабинет")],
     ]
@@ -43,17 +43,7 @@ def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboa
     rows = [
         [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
-        [InlineKeyboardButton(text="📋 Расписание", callback_data="menu:schedule")],
     ]
-    if webapp_base_url:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="📱 Расписание в миниапе",
-                    web_app=WebAppInfo(url=f"{webapp_base_url.rstrip('/')}/webapp/schedule"),
-                )
-            ]
-        )
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
     return InlineKeyboardMarkup(
         inline_keyboard=rows
@@ -321,7 +311,6 @@ def profile_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Изменить имя"), KeyboardButton(text="Изменить фамилию")],
             [KeyboardButton(text="Изменить группу"), KeyboardButton(text="Изменить язык")],
             [KeyboardButton(text="Уведомления вкл/выкл")],
-            [KeyboardButton(text="История мероприятий")],
             [KeyboardButton(text="Назад")],
         ],
         resize_keyboard=True,
@@ -340,7 +329,6 @@ def profile_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Изменить язык", callback_data="profile:language"),
             ],
             [InlineKeyboardButton(text="Уведомления вкл/выкл", callback_data="profile:notifications")],
-            [InlineKeyboardButton(text="История мероприятий", callback_data="profile:event_history")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
