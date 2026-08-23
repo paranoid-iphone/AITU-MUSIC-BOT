@@ -165,6 +165,170 @@ async def list_event_applications(session: AsyncSession, telegram_id: int, event
     return rows
 
 
+def _application_to_row(application: EventApplication) -> dict:
+    return {
+        "id": application.id,
+        "event_id": application.event_id,
+        "event_title": application.event.title,
+        "event_date": application.event.event_date.isoformat(),
+        "event_location": application.event.location,
+        "event_status": application.event.status,
+        "band_id": application.band_id,
+        "band_name": application.band.name,
+        "song_title": application.song_title,
+        "submitted_at": application.submitted_at.isoformat(),
+        "members": [
+            {
+                "id": member.id,
+                "instrument_role": member.instrument_role,
+                "user": {
+                    "telegram_id": member.user.telegram_id,
+                    "telegram_username": member.user.telegram_username,
+                    "first_name": member.user.first_name,
+                    "last_name": member.user.last_name,
+                    "study_group": member.user.study_group,
+                },
+            }
+            for member in application.members
+        ],
+    }
+
+
+async def _require_application_manager(session: AsyncSession, telegram_id: int, application: EventApplication):
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    owner_result = await session.execute(
+        select(BandMember).where(
+            BandMember.band_id == application.band_id,
+            BandMember.user_id == user.id,
+            BandMember.is_owner.is_(True),
+        )
+    )
+    if owner_result.scalar_one_or_none() is None:
+        raise ForbiddenError("Only band owner can manage this application")
+    return user
+
+
+async def list_my_applications(session: AsyncSession, telegram_id: int) -> list[dict]:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    result = await session.execute(
+        select(EventApplication)
+        .join(BandMember, BandMember.band_id == EventApplication.band_id)
+        .where(BandMember.user_id == user.id, BandMember.is_owner.is_(True))
+        .options(
+            selectinload(EventApplication.event),
+            selectinload(EventApplication.band),
+            selectinload(EventApplication.members).selectinload(EventApplicationMember.user),
+        )
+        .order_by(EventApplication.submitted_at.desc())
+    )
+    return [_application_to_row(application) for application in result.scalars().unique()]
+
+
+async def get_application_detail(session: AsyncSession, telegram_id: int, application_id: int) -> dict:
+    result = await session.execute(
+        select(EventApplication)
+        .where(EventApplication.id == application_id)
+        .options(
+            selectinload(EventApplication.event),
+            selectinload(EventApplication.band),
+            selectinload(EventApplication.members).selectinload(EventApplicationMember.user),
+        )
+    )
+    application = result.scalar_one_or_none()
+    if application is None:
+        raise NotFoundError("Application not found")
+    await _require_application_manager(session, telegram_id, application)
+    return _application_to_row(application)
+
+
+async def update_application(
+    session: AsyncSession,
+    application_id: int,
+    telegram_id: int,
+    song_title: str | None = None,
+    member_ids: list[int] | None = None,
+) -> EventApplication:
+    from app.services.audit import log_action
+
+    result = await session.execute(
+        select(EventApplication)
+        .where(EventApplication.id == application_id)
+        .options(selectinload(EventApplication.event), selectinload(EventApplication.band))
+    )
+    application = result.scalar_one_or_none()
+    if application is None:
+        raise NotFoundError("Application not found")
+    user = await _require_application_manager(session, telegram_id, application)
+    if song_title is not None:
+        application.song_title = song_title
+    if member_ids is not None:
+        members_result = await session.execute(
+            select(BandMember)
+            .where(BandMember.band_id == application.band_id, BandMember.id.in_(member_ids))
+            .options(selectinload(BandMember.user))
+        )
+        members = list(members_result.scalars())
+        if not members:
+            raise ConflictError("Choose at least one member")
+        incomplete = [m.user for m in members if not m.user.profile_completed]
+        if incomplete:
+            names = ", ".join(user.telegram_username or str(user.telegram_id) for user in incomplete)
+            raise ConflictError(f"Some members have incomplete profiles: {names}")
+        old_members = await session.execute(select(EventApplicationMember).where(EventApplicationMember.application_id == application.id))
+        for old_member in old_members.scalars():
+            await session.delete(old_member)
+        for member in members:
+            session.add(EventApplicationMember(application_id=application.id, user_id=member.user_id, instrument_role=member.instrument_role))
+    await log_action(
+        session,
+        user.id,
+        "event.application.update",
+        "event_application",
+        application.id,
+        f"Обновил заявку #{application.id}: {application.song_title or '-'}",
+    )
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+async def delete_application(session: AsyncSession, telegram_id: int, application_id: int) -> dict:
+    from app.services.audit import log_action
+
+    result = await session.execute(
+        select(EventApplication)
+        .where(EventApplication.id == application_id)
+        .options(selectinload(EventApplication.event), selectinload(EventApplication.band))
+    )
+    application = result.scalar_one_or_none()
+    if application is None:
+        raise NotFoundError("Application not found")
+    user = await _require_application_manager(session, telegram_id, application)
+    deleted = {
+        "id": application.id,
+        "event_title": application.event.title,
+        "band_name": application.band.name,
+        "song_title": application.song_title,
+    }
+    await log_action(
+        session,
+        user.id,
+        "event.application.delete",
+        "event_application",
+        application.id,
+        f"Отозвал заявку #{application.id}: {application.song_title or '-'}",
+    )
+    await session.delete(application)
+    await session.commit()
+    return deleted
+
+
 async def list_user_event_history(session: AsyncSession, telegram_id: int) -> list[dict]:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.events import EventApplicationCreate, EventApplicationRead, EventCreate, EventRead, EventUpdate
+from app.schemas.events import EventApplicationCreate, EventApplicationRead, EventApplicationUpdate, EventCreate, EventRead, EventUpdate
 from app.services import events
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -24,6 +24,27 @@ async def list_events(session: AsyncSession = Depends(get_session)):
 @router.get("/history")
 async def event_history(telegram_id: int, session: AsyncSession = Depends(get_session)):
     return await events.list_user_event_history(session, telegram_id)
+
+
+@router.get("/applications/mine")
+async def my_applications(telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.list_my_applications(session, telegram_id)
+
+
+@router.get("/applications/{application_id}")
+async def application_detail(application_id: int, telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.get_application_detail(session, telegram_id, application_id)
+
+
+@router.patch("/applications/{application_id}", response_model=EventApplicationRead)
+async def update_application(application_id: int, payload: EventApplicationUpdate, session: AsyncSession = Depends(get_session)):
+    data = payload.model_dump(exclude={"telegram_id"}, exclude_unset=True)
+    return await events.update_application(session, application_id, payload.telegram_id, **data)
+
+
+@router.delete("/applications/{application_id}")
+async def delete_application(application_id: int, telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.delete_application(session, telegram_id, application_id)
 
 
 @router.patch("/{event_id}", response_model=EventRead)

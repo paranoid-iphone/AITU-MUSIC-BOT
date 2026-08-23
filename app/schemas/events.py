@@ -38,6 +38,12 @@ class EventApplicationCreate(BaseModel):
     member_ids: list[int]
 
 
+class EventApplicationUpdate(BaseModel):
+    telegram_id: int
+    song_title: str | None = Field(default=None, min_length=1, max_length=150)
+    member_ids: list[int] | None = None
+
+
 class EventApplicationRead(BaseModel):
     id: int
     event_id: int

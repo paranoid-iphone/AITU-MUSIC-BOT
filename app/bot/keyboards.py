@@ -188,7 +188,9 @@ def user_member_remove_confirm_keyboard(band_id: int, member_id: int) -> InlineK
 def concerts_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🎤 Подать номер на концерт", callback_data="menu:events")],
+            [InlineKeyboardButton(text="🎤 Открытые концерты", callback_data="menu:events")],
+            [InlineKeyboardButton(text="📋 Мои заявки", callback_data="event_applications:0")],
+            [InlineKeyboardButton(text="🕘 История выступлений", callback_data="profile:event_history")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
@@ -678,6 +680,61 @@ def user_events_keyboard(events: list[dict]) -> InlineKeyboardMarkup:
     for event in events[:10]:
         rows.append([InlineKeyboardButton(text=f"{event['event_date']} | {event['title']}", callback_data=f"event_apply:{event['id']}")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def event_applications_keyboard(applications: list[dict], page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
+    pages = max(1, (len(applications) + page_size - 1) // page_size)
+    page = max(0, min(page, pages - 1))
+    start = page * page_size
+    rows = []
+    for application in applications[start : start + page_size]:
+        title = application.get("song_title") or "песня не указана"
+        text = f"{application['event_date']} | {title} | {application['band_name']}"
+        rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"event_application:{application['id']}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"event_applications:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"event_applications:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="К концертам", callback_data="menu_section:concerts")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def event_application_detail_keyboard(application_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Песня", callback_data=f"event_application_edit:{application_id}:song"),
+                InlineKeyboardButton(text="Участники", callback_data=f"event_application_edit:{application_id}:members"),
+            ],
+            [InlineKeyboardButton(text="Отозвать заявку", callback_data=f"event_application_delete:{application_id}")],
+            [InlineKeyboardButton(text="Назад к заявкам", callback_data="event_applications:0")],
+        ]
+    )
+
+
+def event_application_delete_confirm_keyboard(application_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Отозвать заявку", callback_data=f"event_application_delete_confirm:{application_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"event_application:{application_id}")],
+        ]
+    )
+
+
+def event_application_members_keyboard(members: list[dict], selected_ids: list[int], application_id: int) -> InlineKeyboardMarkup:
+    selected = set(selected_ids)
+    rows = []
+    for member in members:
+        user = member["user"]
+        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or user.get("telegram_username") or str(user["telegram_id"])
+        mark = "✓" if member["id"] in selected else "○"
+        rows.append([InlineKeyboardButton(text=f"{mark} {name} | {member['instrument_role']}", callback_data=f"event_application_member:{member['id']}")])
+    rows.append([InlineKeyboardButton(text="Сохранить участников", callback_data=f"event_application_members_save:{application_id}")])
+    rows.append([InlineKeyboardButton(text="Назад к заявке", callback_data=f"event_application:{application_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

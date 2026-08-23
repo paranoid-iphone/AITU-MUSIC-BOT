@@ -61,3 +61,5 @@ class EventFlow(StatesGroup):
     band_id = State()
     song_title = State()
     members = State()
+    application_song_title = State()
+    application_members = State()

@@ -224,6 +224,18 @@ class BackendClient:
             json={"telegram_id": telegram_id, "band_id": band_id, "song_title": song_title, "member_ids": member_ids},
         )
 
+    async def my_event_applications(self, telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/events/applications/mine", params={"telegram_id": telegram_id})
+
+    async def get_event_application(self, telegram_id: int, application_id: int) -> dict[str, Any]:
+        return await self.request("GET", f"/events/applications/{application_id}", params={"telegram_id": telegram_id})
+
+    async def update_event_application(self, telegram_id: int, application_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        return await self.request("PATCH", f"/events/applications/{application_id}", json={"telegram_id": telegram_id, **data})
+
+    async def delete_event_application(self, telegram_id: int, application_id: int) -> dict[str, Any]:
+        return await self.request("DELETE", f"/events/applications/{application_id}", params={"telegram_id": telegram_id})
+
     async def list_event_applications(self, telegram_id: int, event_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", f"/events/{event_id}/applications", params={"telegram_id": telegram_id})
 

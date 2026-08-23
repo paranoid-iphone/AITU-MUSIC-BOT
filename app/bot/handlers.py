@@ -44,6 +44,10 @@ from app.bot.keyboards import (
     booking_times_keyboard,
     concerts_menu_keyboard,
     event_bands_keyboard,
+    event_application_delete_confirm_keyboard,
+    event_application_detail_keyboard,
+    event_application_members_keyboard,
+    event_applications_keyboard,
     event_members_keyboard,
     flow_cancel_keyboard,
     language_keyboard,
@@ -211,6 +215,25 @@ def format_event_card(event: dict) -> str:
         f"Дедлайн списков: {event['submission_deadline'] or '-'}\n"
         f"Статус: {status}"
     )
+
+
+def format_application_card(application: dict) -> str:
+    lines = [
+        f"Заявка #{application['id']}",
+        f"Концерт: {application['event_title']} | {application['event_date']}",
+        f"Место: {application.get('event_location') or '-'}",
+        f"Коллектив: {application['band_name']}",
+        f"Песня/номер: {application.get('song_title') or 'песня не указана'}",
+        "",
+        "Участники:",
+    ]
+    for member in application.get("members", []):
+        user = member["user"]
+        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or f"@{user.get('telegram_username') or '-'}"
+        lines.append(f"- {name} | {user.get('study_group') or '-'} | {member['instrument_role']}")
+    lines.append("")
+    lines.append("Выберите действие:")
+    return "\n".join(lines)
 
 
 def format_user_card(user: dict) -> str:
@@ -609,11 +632,36 @@ async def inline_menu_section(callback: CallbackQuery) -> None:
         return
     section = callback.data.split(":", maxsplit=1)[1]
     if section == "rehearsals":
-        await edit_screen(callback, "Репетиции", rehearsals_menu_keyboard(await get_webapp_base_url()))
+        rows = await api.my_bookings(callback.from_user.id)
+        preview = "\n".join(
+            f"- {item['booking_date']} {item['start_time'][:5]}-{item['end_time'][:5]} | {item.get('song_title') or item['band_name']}"
+            for item in rows[:3]
+        )
+        text = "Репетиции"
+        if preview:
+            text += "\n\nБлижайшие мои:\n" + preview
+        else:
+            text += "\n\nУ вас пока нет будущих репетиций."
+        await edit_screen(callback, text, rehearsals_menu_keyboard(await get_webapp_base_url()))
     elif section == "bands":
-        await edit_screen(callback, "Коллективы", bands_menu_keyboard())
+        bands = sorted(await api.list_bands(callback.from_user.id), key=lambda item: item.get("created_at", ""), reverse=True)
+        preview = "\n".join(f"- {band['name']}" for band in bands[:5])
+        text = "Коллективы"
+        if preview:
+            text += "\n\nМои коллективы:\n" + preview
+        else:
+            text += "\n\nУ вас пока нет коллективов."
+        await edit_screen(callback, text, bands_menu_keyboard())
     elif section == "concerts":
-        await edit_screen(callback, "Концерты", concerts_menu_keyboard())
+        items = await api.list_events()
+        open_events = [item for item in items if item.get("status") == "open"]
+        preview = "\n".join(f"- {item['event_date']} | {item['title']}" for item in open_events[:3])
+        text = "Концерты"
+        if preview:
+            text += "\n\nОткрытые концерты:\n" + preview
+        else:
+            text += "\n\nСейчас нет открытых концертов."
+        await edit_screen(callback, text, concerts_menu_keyboard())
     elif section == "profile":
         await inline_profile(callback)
         return
@@ -1141,9 +1189,9 @@ async def inline_events(callback: CallbackQuery) -> None:
     if not await has_full_access_for_callback(callback):
         return
     items = await api.list_events()
+    items = [item for item in items if item.get("status") == "open"]
     if not items:
-        user = await api.get_user(callback.from_user.id)
-        await edit_screen(callback, "Пока нет концертов.", main_menu_inline(user.get("role") == "admin"))
+        await edit_screen(callback, "Сейчас нет открытых концертов.", concerts_menu_keyboard())
         await answer_callback(callback)
         return
     user = await api.get_user(callback.from_user.id)
@@ -1153,6 +1201,136 @@ async def inline_events(callback: CallbackQuery) -> None:
         user_events_keyboard(items),
     )
     await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_applications:"))
+async def inline_event_applications(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    page = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    applications = await api.my_event_applications(callback.from_user.id)
+    await state.update_data(event_applications=applications)
+    if not applications:
+        await edit_screen(callback, "У вас пока нет поданных заявок.", concerts_menu_keyboard())
+        await answer_callback(callback)
+        return
+    await edit_screen(callback, "Мои заявки на концерты", event_applications_keyboard(applications, page))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_application:"))
+async def inline_event_application_detail(callback: CallbackQuery, state: FSMContext) -> None:
+    application_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        application = await api.get_event_application(callback.from_user.id, application_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось открыть заявку: {exc}", concerts_menu_keyboard())
+        await answer_callback(callback)
+        return
+    await state.update_data(current_event_application=application)
+    await edit_screen(callback, format_application_card(application), event_application_detail_keyboard(application_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_application_edit:"))
+async def inline_event_application_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    _, application_id_raw, field = callback.data.split(":")
+    application_id = int(application_id_raw)
+    application = await api.get_event_application(callback.from_user.id, application_id)
+    if field == "song":
+        await state.update_data(event_application_edit_id=application_id)
+        await state.set_state(EventFlow.application_song_title)
+        await callback.message.answer("Введите новое название песни/номера:", reply_markup=flow_cancel_keyboard())
+    elif field == "members":
+        bands = await api.list_bands(callback.from_user.id)
+        band = next((item for item in bands if item["id"] == application["band_id"]), None)
+        if band is None:
+            await answer_callback(callback, "Коллектив не найден.", show_alert=True)
+            return
+        selected_ids = []
+        selected_telegram_ids = {member["user"]["telegram_id"] for member in application.get("members", [])}
+        for member in band["members"]:
+            if member["user"]["telegram_id"] in selected_telegram_ids:
+                selected_ids.append(member["id"])
+        await state.update_data(
+            event_application_edit_id=application_id,
+            event_application_members=band["members"],
+            event_application_selected_member_ids=selected_ids,
+        )
+        await state.set_state(EventFlow.application_members)
+        await edit_screen(
+            callback,
+            "Выберите участников номера. Нажмите на участника, чтобы убрать или вернуть его в список.",
+            event_application_members_keyboard(band["members"], selected_ids, application_id),
+        )
+    else:
+        await answer_callback(callback, "Поле не поддерживается.", show_alert=True)
+        return
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_application_member:"))
+async def inline_event_application_member_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    member_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    data = await state.get_data()
+    application_id = int(data["event_application_edit_id"])
+    selected = set(data.get("event_application_selected_member_ids", []))
+    if member_id in selected:
+        selected.remove(member_id)
+    else:
+        selected.add(member_id)
+    selected_ids = sorted(selected)
+    await state.update_data(event_application_selected_member_ids=selected_ids)
+    await edit_screen(
+        callback,
+        "Выберите участников номера. Нажмите на участника, чтобы убрать или вернуть его в список.",
+        event_application_members_keyboard(data.get("event_application_members", []), selected_ids, application_id),
+    )
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_application_members_save:"))
+async def inline_event_application_members_save(callback: CallbackQuery, state: FSMContext) -> None:
+    application_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    data = await state.get_data()
+    member_ids = data.get("event_application_selected_member_ids", [])
+    if not member_ids:
+        await answer_callback(callback, "Выберите хотя бы одного участника.", show_alert=True)
+        return
+    try:
+        await api.update_event_application(callback.from_user.id, application_id, {"member_ids": member_ids})
+        application = await api.get_event_application(callback.from_user.id, application_id)
+    except RuntimeError as exc:
+        await answer_callback(callback, f"Не получилось сохранить: {exc}", show_alert=True)
+        return
+    await state.clear()
+    await edit_screen(callback, "Заявка обновлена.\n\n" + format_application_card(application), event_application_detail_keyboard(application_id))
+    await answer_callback(callback, "Готово")
+
+
+@router.callback_query(F.data.startswith("event_application_delete:"))
+async def inline_event_application_delete(callback: CallbackQuery) -> None:
+    application_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    await edit_screen(callback, "Отозвать заявку на концерт?", event_application_delete_confirm_keyboard(application_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("event_application_delete_confirm:"))
+async def inline_event_application_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    application_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        deleted = await api.delete_event_application(callback.from_user.id, application_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось отозвать заявку: {exc}", event_application_detail_keyboard(application_id))
+        await answer_callback(callback)
+        return
+    await state.clear()
+    await edit_screen(
+        callback,
+        f"Заявка отозвана: {deleted['event_title']} | {deleted['band_name']} | {deleted.get('song_title') or '-'}",
+        concerts_menu_keyboard(),
+    )
+    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data == "menu:admin")
@@ -1211,6 +1389,31 @@ async def event_song_title(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Выберите участников номера. Нажмите на участника, чтобы убрать или вернуть его в список.",
         reply_markup=event_members_keyboard(data["members"], data.get("selected_member_ids", [])),
+    )
+
+
+@router.message(EventFlow.application_song_title)
+async def event_application_song_title_save(message: Message, state: FSMContext) -> None:
+    song_title = message.text.strip()
+    if not song_title:
+        await message.answer("Название не должно быть пустым.", reply_markup=flow_cancel_keyboard())
+        return
+    if len(song_title) > 150:
+        await message.answer("Название должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
+        return
+    data = await state.get_data()
+    application_id = int(data["event_application_edit_id"])
+    try:
+        await api.update_event_application(message.from_user.id, application_id, {"song_title": song_title})
+        application = await api.get_event_application(message.from_user.id, application_id)
+    except RuntimeError as exc:
+        await state.clear()
+        await message.answer(f"Не получилось обновить заявку: {exc}", reply_markup=concerts_menu_keyboard())
+        return
+    await state.clear()
+    await message.answer(
+        "Заявка обновлена.\n\n" + format_application_card(application),
+        reply_markup=event_application_detail_keyboard(application_id),
     )
 
 
@@ -2363,13 +2566,14 @@ async def events(message: Message) -> None:
     if not await has_full_access(message):
         return
     items = await api.list_events()
-    if not items:
-        await message.answer("Пока нет концертов.")
-        return
-    await message.answer(
-        "Выберите концерт, на который хотите подать номер:",
-        reply_markup=user_events_keyboard(items),
-    )
+    open_events = [item for item in items if item.get("status") == "open"]
+    preview = "\n".join(f"- {item['event_date']} | {item['title']}" for item in open_events[:3])
+    text = "Концерты"
+    if preview:
+        text += "\n\nОткрытые концерты:\n" + preview
+    else:
+        text += "\n\nСейчас нет открытых концертов."
+    await message.answer(text, reply_markup=concerts_menu_keyboard())
 
 
 @router.message(F.text == "Подать список")
