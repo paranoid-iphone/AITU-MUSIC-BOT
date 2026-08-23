@@ -139,13 +139,13 @@ def user_band_detail_keyboard(band_id: int, is_owner: bool, page: int = 0) -> In
     if is_owner:
         rows.extend(
             [
+                [InlineKeyboardButton(text="Редактировать коллектив", callback_data=f"user_band_edit:{band_id}:name")],
                 [
-                    InlineKeyboardButton(text="Название", callback_data=f"user_band_edit:{band_id}:name"),
-                    InlineKeyboardButton(text="Лидер", callback_data=f"user_band_members:{band_id}:owner:0"),
+                    InlineKeyboardButton(text="Сменить лидера", callback_data=f"user_band_members:{band_id}:owner:0"),
+                    InlineKeyboardButton(text="Роли участников", callback_data=f"user_band_members:{band_id}:role:0"),
                 ],
                 [
-                    InlineKeyboardButton(text="Роли", callback_data=f"user_band_members:{band_id}:role:0"),
-                    InlineKeyboardButton(text="Участники", callback_data=f"user_band_members:{band_id}:remove:0"),
+                    InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_members:{band_id}:remove:0"),
                 ],
             ]
         )
@@ -306,6 +306,7 @@ def booking_purpose_keyboard() -> InlineKeyboardMarkup:
 def booking_song_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="Песня не указана", callback_data="booking:song:skip")],
             [
                 InlineKeyboardButton(text="Назад", callback_data="booking:back:purpose"),
                 InlineKeyboardButton(text="В меню", callback_data="flow:cancel"),

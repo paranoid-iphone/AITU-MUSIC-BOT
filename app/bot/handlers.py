@@ -576,6 +576,20 @@ async def start_booking_flow(message: Message, state: FSMContext, telegram_id: i
     await message.answer("Выберите коллектив или личную репетицию:", reply_markup=booking_bands_keyboard(bands, allow_personal=allow_personal))
 
 
+async def create_booking_from_state(telegram_id: int, state: FSMContext, song_title: str | None) -> dict:
+    data = await state.get_data()
+    slot = data["selected_slot"]
+    return await api.create_booking(
+        telegram_id,
+        data["band_id"],
+        date.fromisoformat(slot["date"]),
+        datetime.strptime(slot["start_time"], "%H:%M:%S").time(),
+        datetime.strptime(slot["end_time"], "%H:%M:%S").time(),
+        data["purpose"],
+        song_title,
+    )
+
+
 async def send_pending_notice(message: Message) -> None:
     await send_schedule(message)
     await message.answer(
@@ -1130,7 +1144,7 @@ async def inline_booking_end_time(callback: CallbackQuery, state: FSMContext) ->
     if data.get("is_personal_booking"):
         await state.update_data(purpose="personal")
         await state.set_state(BookingFlow.song_title)
-        await edit_screen(callback, "Что будете репетировать? Если пока не ясно, отправьте '-'.", booking_song_keyboard())
+        await edit_screen(callback, "Что будете репетировать? Напишите название или нажмите «Песня не указана».", booking_song_keyboard())
         await answer_callback(callback)
         return
     await state.set_state(BookingFlow.purpose)
@@ -1151,8 +1165,28 @@ async def inline_booking_purpose(callback: CallbackQuery, state: FSMContext) -> 
         return
     await state.update_data(purpose=purpose)
     await state.set_state(BookingFlow.song_title)
-    await edit_screen(callback, "Какую песню репетируете? Если пока не ясно, отправьте '-'.", booking_song_keyboard())
+    await edit_screen(callback, "Какую песню репетируете? Напишите название или нажмите «Песня не указана».", booking_song_keyboard())
     await answer_callback(callback)
+
+
+@router.callback_query(F.data == "booking:song:skip")
+async def inline_booking_song_skip(callback: CallbackQuery, state: FSMContext) -> None:
+    user = await api.get_user(callback.from_user.id)
+    try:
+        booking = await create_booking_from_state(callback.from_user.id, state, None)
+    except RuntimeError as exc:
+        await state.clear()
+        await edit_schedule_menu(callback, user, f"Не получилось создать бронь: {exc}")
+        await answer_callback(callback)
+        return
+    await state.clear()
+    await refresh_all_schedule_menus(callback.message.bot)
+    await edit_schedule_menu(
+        callback,
+        user,
+        f"Бронь создана: {booking['booking_date']} {booking['start_time'][:5]}-{booking['end_time'][:5]}",
+    )
+    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data.startswith("booking:back:"))
@@ -2741,13 +2775,13 @@ async def booking_end_time(message: Message, state: FSMContext) -> None:
     if data.get("is_personal_booking"):
         await state.update_data(purpose="personal")
         await state.set_state(BookingFlow.song_title)
-        await message.answer("Что будете репетировать? Если пока не ясно, отправьте '-'.", reply_markup=booking_song_keyboard())
+        await message.answer("Что будете репетировать? Напишите название или нажмите «Песня не указана».", reply_markup=booking_song_keyboard())
         return
     await state.set_state(BookingFlow.purpose)
     await message.answer(
         f"Выбрано: {format_booking_date(slot['date'])} {slot['start_time'][:5]}-{slot['end_time'][:5]}\n"
-        "Цель репетиции? Напишите 'concert' если к концерту или 'self' если для себя.",
-        reply_markup=flow_cancel_keyboard(),
+        "Выберите цель репетиции:",
+        reply_markup=booking_purpose_keyboard(),
     )
 
 
@@ -2755,30 +2789,20 @@ async def booking_end_time(message: Message, state: FSMContext) -> None:
 async def booking_purpose(message: Message, state: FSMContext) -> None:
     purpose = message.text.strip().lower()
     if purpose not in {"concert", "self"}:
-        await message.answer("Введите concert или self.", reply_markup=flow_cancel_keyboard())
+        await message.answer("Выберите цель кнопкой ниже.", reply_markup=booking_purpose_keyboard())
         return
     await state.update_data(purpose=purpose)
     await state.set_state(BookingFlow.song_title)
-    await message.answer("Какую песню репетируете? Если пока не ясно, отправьте '-'.", reply_markup=booking_song_keyboard())
+    await message.answer("Какую песню репетируете? Напишите название или нажмите «Песня не указана».", reply_markup=booking_song_keyboard())
 
 
 @router.message(BookingFlow.song_title)
 async def booking_song(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    slot = data["selected_slot"]
     raw_song = message.text.strip()
     song_title = None if raw_song == "-" else raw_song
     user = await api.get_user(message.from_user.id)
     try:
-        booking = await api.create_booking(
-            message.from_user.id,
-            data["band_id"],
-            date.fromisoformat(slot["date"]),
-            datetime.strptime(slot["start_time"], "%H:%M:%S").time(),
-            datetime.strptime(slot["end_time"], "%H:%M:%S").time(),
-            data["purpose"],
-            song_title,
-        )
+        booking = await create_booking_from_state(message.from_user.id, state, song_title)
     except RuntimeError as exc:
         await state.clear()
         await send_schedule_menu(message, user, f"Не получилось создать бронь: {exc}")
