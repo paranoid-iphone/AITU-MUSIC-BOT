@@ -1,4 +1,6 @@
 .env
+ngrok.yml
+ngrok.yaml
 .git/
 .git-local/
 .agents/
