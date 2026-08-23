@@ -43,7 +43,6 @@ def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboa
     rows = [
         [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
-        [InlineKeyboardButton(text="📋 Открыть расписание", callback_data="menu:schedule")],
     ]
     if webapp_base_url:
         rows.append(
@@ -190,7 +189,7 @@ def concerts_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🎤 Открытые концерты", callback_data="menu:events")],
             [InlineKeyboardButton(text="📋 Мои заявки", callback_data="event_applications:0")],
-            [InlineKeyboardButton(text="🕘 История выступлений", callback_data="profile:event_history")],
+            [InlineKeyboardButton(text="🕘 История мероприятий", callback_data="profile:event_history")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
