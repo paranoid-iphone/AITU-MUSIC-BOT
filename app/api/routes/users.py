@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.users import UserModerationUpdate, UserProfileUpdate, UserRead, UserSettingsUpdate, UserTelegramUpsert
+from app.schemas.users import AdminRoleUpdate, UserModerationUpdate, UserProfileUpdate, UserRead, UserSettingsUpdate, UserTelegramUpsert
 from app.services import users
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -17,6 +17,46 @@ async def upsert_user(payload: UserTelegramUpsert, session: AsyncSession = Depen
         payload.telegram_username,
         payload.telegram_full_name,
     )
+
+
+@router.get("", response_model=list[UserRead])
+async def list_users(admin_telegram_id: int, status: str | None = None, session: AsyncSession = Depends(get_session)):
+    return await users.list_users_by_status(session, admin_telegram_id, status)
+
+
+@router.get("/admins/list", response_model=list[UserRead])
+async def list_admins(admin_telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await users.list_admins(session, admin_telegram_id)
+
+
+@router.post("/approve", response_model=UserRead)
+async def approve_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.approve_user(session, payload.admin_telegram_id, payload.target)
+
+
+@router.post("/promote-admin", response_model=UserRead)
+async def promote_admin(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.promote_to_admin(session, payload.admin_telegram_id, payload.target)
+
+
+@router.post("/demote-admin", response_model=UserRead)
+async def demote_admin(payload: AdminRoleUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.demote_admin(session, payload.admin_telegram_id, payload.target)
+
+
+@router.post("/reject", response_model=UserRead)
+async def reject_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.reject_user(session, payload.admin_telegram_id, payload.target, payload.reason)
+
+
+@router.post("/ban", response_model=UserRead)
+async def ban_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.ban_user(session, payload.admin_telegram_id, payload.target, payload.reason)
+
+
+@router.post("/delete", response_model=UserRead)
+async def delete_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.soft_delete_user(session, payload.admin_telegram_id, payload.target, payload.reason)
 
 
 @router.get("/{telegram_id}", response_model=UserRead)
@@ -43,33 +83,3 @@ async def update_settings(telegram_id: int, payload: UserSettingsUpdate, session
 @router.post("/{telegram_id}/resubmit", response_model=UserRead)
 async def resubmit_registration(telegram_id: int, session: AsyncSession = Depends(get_session)):
     return await users.resubmit_registration(session, telegram_id)
-
-
-@router.get("", response_model=list[UserRead])
-async def list_users(admin_telegram_id: int, status: str | None = None, session: AsyncSession = Depends(get_session)):
-    return await users.list_users_by_status(session, admin_telegram_id, status)
-
-
-@router.post("/approve", response_model=UserRead)
-async def approve_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.approve_user(session, payload.admin_telegram_id, payload.target)
-
-
-@router.post("/promote-admin", response_model=UserRead)
-async def promote_admin(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.promote_to_admin(session, payload.admin_telegram_id, payload.target)
-
-
-@router.post("/reject", response_model=UserRead)
-async def reject_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.reject_user(session, payload.admin_telegram_id, payload.target, payload.reason)
-
-
-@router.post("/ban", response_model=UserRead)
-async def ban_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.ban_user(session, payload.admin_telegram_id, payload.target, payload.reason)
-
-
-@router.post("/delete", response_model=UserRead)
-async def delete_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.soft_delete_user(session, payload.admin_telegram_id, payload.target, payload.reason)

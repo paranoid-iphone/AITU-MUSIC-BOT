@@ -37,6 +37,33 @@ def _overlaps(start_time: time, end_time: time, booked_start: time, booked_end: 
     return start_time < booked_end and end_time > booked_start
 
 
+async def _ensure_booking_time_available(
+    session: AsyncSession,
+    booking_date: date,
+    start_time: time,
+    end_time: time,
+    exclude_booking_id: int | None = None,
+) -> None:
+    now = datetime.now()
+    duration = _duration_minutes(start_time, end_time)
+    if duration <= 0 or duration % 30 != 0:
+        raise ConflictError("Booking duration must be a positive 30-minute step")
+    if booking_date < now.date() or booking_date > (now + timedelta(days=7)).date():
+        raise ConflictError("Booking date must be within the next 7 days")
+    window_start, window_finish = await get_booking_window_minutes(session)
+    if _time_to_minutes(start_time) < window_start or _time_to_minutes(end_time) > window_finish:
+        raise ConflictError("Booking is outside room working hours")
+    day_result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == booking_date.weekday(), AvailableDay.is_enabled.is_(True)))
+    if day_result.scalar_one_or_none() is None:
+        raise ConflictError("This day is not available")
+    stmt = select(Booking).where(Booking.booking_date == booking_date, Booking.status == BookingStatus.CONFIRMED.value)
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    booked_result = await session.execute(stmt)
+    if any(_overlaps(start_time, end_time, item.start_time, item.end_time) for item in booked_result.scalars()):
+        raise ConflictError("Slot is not available")
+
+
 async def get_weekly_booking_limit_minutes(session: AsyncSession) -> int:
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "weekly_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
@@ -325,6 +352,55 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     await session.delete(booking)
     await session.commit()
     return deleted
+
+
+async def update_booking(
+    session: AsyncSession,
+    telegram_id: int,
+    booking_id: int,
+    booking_date: date | None = None,
+    start_time: time | None = None,
+    end_time: time | None = None,
+    purpose: str | None = None,
+    song_title: str | None = None,
+) -> Booking:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    result = await session.execute(
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .options(selectinload(Booking.band), selectinload(Booking.created_by))
+    )
+    booking = result.scalar_one_or_none()
+    if booking is None:
+        raise NotFoundError("Booking not found")
+    new_date = booking_date or booking.booking_date
+    new_start = start_time or booking.start_time
+    new_end = end_time or booking.end_time
+    if booking_date is not None or start_time is not None or end_time is not None:
+        await _ensure_booking_time_available(session, new_date, new_start, new_end, booking.id)
+        booking.booking_date = new_date
+        booking.start_time = new_start
+        booking.end_time = new_end
+    if purpose is not None:
+        booking.purpose = purpose
+    if song_title is not None:
+        booking.song_title = song_title or None
+    await log_action(
+        session,
+        user.id,
+        "booking.update",
+        "booking",
+        booking.id,
+        f"Изменил бронь #{booking.id}: {booking.booking_date.isoformat()} {booking.start_time.strftime('%H:%M')}-{booking.end_time.strftime('%H:%M')}",
+    )
+    await session.commit()
+    await session.refresh(booking)
+    return booking
 
 
 async def list_bookings(session: AsyncSession, telegram_id: int | None = None) -> list[Booking]:

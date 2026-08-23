@@ -46,3 +46,8 @@ class UserModerationUpdate(BaseModel):
     admin_telegram_id: int
     target: str
     reason: str | None = Field(default=None, max_length=255)
+
+
+class AdminRoleUpdate(BaseModel):
+    admin_telegram_id: int
+    target: str

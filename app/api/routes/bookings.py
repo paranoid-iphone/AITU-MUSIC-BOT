@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.bookings import AvailableSlotRead, BookingCreate, BookingRead, ScheduleBookingRead, StaffBookingCreate
+from app.schemas.bookings import AvailableSlotRead, BookingCreate, BookingRead, BookingUpdate, ScheduleBookingRead, StaffBookingCreate
 from app.services import bookings
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -65,6 +65,13 @@ async def create_staff_booking(payload: StaffBookingCreate, session: AsyncSessio
         payload.end_time,
         payload.title,
     )
+
+
+@router.patch("/{booking_id}", response_model=BookingRead)
+async def update_booking(booking_id: int, payload: BookingUpdate, session: AsyncSession = Depends(get_session)):
+    data = payload.model_dump(exclude_unset=True)
+    telegram_id = data.pop("telegram_id")
+    return await bookings.update_booking(session, telegram_id, booking_id, **data)
 
 
 @router.delete("/{booking_id}")

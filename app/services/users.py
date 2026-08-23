@@ -175,6 +175,47 @@ async def promote_to_admin(session: AsyncSession, admin_telegram_id: int, target
     return target
 
 
+async def demote_admin(session: AsyncSession, admin_telegram_id: int, target_identifier: str) -> User:
+    from app.services.audit import log_action
+
+    admin = await get_user_by_telegram_id(session, admin_telegram_id)
+    target = await get_user_by_identifier(session, target_identifier)
+    if admin is None or target is None:
+        raise NotFoundError("User not found")
+    require_admin(admin)
+    if target.telegram_id in settings.initial_admin_ids:
+        raise ForbiddenError("Initial admin cannot be demoted")
+    if target.telegram_id == admin.telegram_id:
+        raise ForbiddenError("You cannot remove your own admin role")
+    target.role = UserRole.USER.value
+    if target.status != UserStatus.APPROVED.value:
+        target.status = UserStatus.APPROVED.value
+    await log_action(
+        session,
+        admin.id,
+        "admin.remove",
+        "user",
+        target.telegram_id,
+        f"Removed admin: @{target.telegram_username or target.telegram_id}",
+    )
+    await session.commit()
+    await session.refresh(target)
+    return target
+
+
+async def list_admins(session: AsyncSession, admin_telegram_id: int) -> list[User]:
+    admin = await get_user_by_telegram_id(session, admin_telegram_id)
+    if admin is None:
+        raise NotFoundError("Admin not found")
+    require_admin(admin)
+    result = await session.execute(
+        select(User)
+        .where(User.role == UserRole.ADMIN.value, User.status == UserStatus.APPROVED.value)
+        .order_by(User.created_at.desc())
+    )
+    return list(result.scalars())
+
+
 async def reject_user(session: AsyncSession, admin_telegram_id: int, target_identifier: str, reason: str | None) -> User:
     from app.services.audit import log_action
 

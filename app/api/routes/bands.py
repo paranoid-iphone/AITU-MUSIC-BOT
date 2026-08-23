@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.bands import BandCreate, BandDetail, BandJoin, BandRead, MemberRoleUpdate
+from app.schemas.bands import BandCreate, BandDetail, BandJoin, BandOwnerUpdate, BandRead, BandUpdate, MemberRoleUpdate
 from app.services import bands
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -19,6 +19,11 @@ async def list_my_bands(telegram_id: int, session: AsyncSession = Depends(get_se
     return await bands.list_user_bands(session, telegram_id)
 
 
+@router.get("/admin", response_model=list[BandDetail])
+async def list_all_bands(admin_telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await bands.list_all_bands(session, admin_telegram_id)
+
+
 @router.post("/join", response_model=BandDetail)
 async def join_band(payload: BandJoin, session: AsyncSession = Depends(get_session)):
     return await bands.join_band(session, payload.telegram_id, payload.invite_code, payload.instrument_role)
@@ -29,6 +34,16 @@ async def get_band(band_id: int, session: AsyncSession = Depends(get_session)):
     return await bands.get_band_detail(session, band_id)
 
 
+@router.patch("/{band_id}", response_model=BandDetail)
+async def update_band(band_id: int, payload: BandUpdate, session: AsyncSession = Depends(get_session)):
+    return await bands.update_band_name(session, band_id, payload.requester_telegram_id, payload.name)
+
+
+@router.patch("/{band_id}/owner", response_model=BandDetail)
+async def transfer_owner(band_id: int, payload: BandOwnerUpdate, session: AsyncSession = Depends(get_session)):
+    return await bands.transfer_band_owner(session, band_id, payload.requester_telegram_id, payload.member_id)
+
+
 @router.patch("/{band_id}/members/{member_id}/role")
 async def update_member_role(
     band_id: int,
@@ -37,3 +52,13 @@ async def update_member_role(
     session: AsyncSession = Depends(get_session),
 ):
     return await bands.update_member_role(session, band_id, member_id, payload.requester_telegram_id, payload.instrument_role)
+
+
+@router.delete("/{band_id}/members/{member_id}")
+async def remove_member(
+    band_id: int,
+    member_id: int,
+    requester_telegram_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    return await bands.remove_band_member(session, band_id, member_id, requester_telegram_id)

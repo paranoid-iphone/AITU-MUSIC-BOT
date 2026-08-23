@@ -13,6 +13,15 @@ class BookingCreate(BaseModel):
     song_title: str | None = Field(default=None, max_length=150)
 
 
+class BookingUpdate(BaseModel):
+    telegram_id: int
+    booking_date: date | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    purpose: str | None = Field(default=None, pattern="^(concert|self|staff)$")
+    song_title: str | None = Field(default=None, max_length=150)
+
+
 class BookingRead(BaseModel):
     id: int
     band_id: int | None

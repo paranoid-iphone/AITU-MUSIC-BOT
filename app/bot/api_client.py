@@ -68,6 +68,16 @@ class BackendClient:
             json={"admin_telegram_id": admin_telegram_id, "target": target},
         )
 
+    async def demote_admin(self, admin_telegram_id: int, target: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            "/users/demote-admin",
+            json={"admin_telegram_id": admin_telegram_id, "target": target},
+        )
+
+    async def list_admins(self, admin_telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/users/admins/list", params={"admin_telegram_id": admin_telegram_id})
+
     async def create_band(self, telegram_id: int, name: str, creator_role: str) -> dict[str, Any]:
         return await self.request(
             "POST",
@@ -77,6 +87,32 @@ class BackendClient:
 
     async def list_bands(self, telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/bands", params={"telegram_id": telegram_id})
+
+    async def list_all_bands(self, admin_telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/bands/admin", params={"admin_telegram_id": admin_telegram_id})
+
+    async def get_band(self, band_id: int) -> dict[str, Any]:
+        return await self.request("GET", f"/bands/{band_id}")
+
+    async def update_band(self, requester_telegram_id: int, band_id: int, name: str) -> dict[str, Any]:
+        return await self.request("PATCH", f"/bands/{band_id}", json={"requester_telegram_id": requester_telegram_id, "name": name})
+
+    async def update_band_member_role(self, requester_telegram_id: int, band_id: int, member_id: int, instrument_role: str) -> dict[str, Any]:
+        return await self.request(
+            "PATCH",
+            f"/bands/{band_id}/members/{member_id}/role",
+            json={"requester_telegram_id": requester_telegram_id, "instrument_role": instrument_role},
+        )
+
+    async def transfer_band_owner(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
+        return await self.request(
+            "PATCH",
+            f"/bands/{band_id}/owner",
+            json={"requester_telegram_id": requester_telegram_id, "member_id": member_id},
+        )
+
+    async def remove_band_member(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
+        return await self.request("DELETE", f"/bands/{band_id}/members/{member_id}", params={"requester_telegram_id": requester_telegram_id})
 
     async def join_band(self, telegram_id: int, invite_code: str, instrument_role: str) -> dict[str, Any]:
         return await self.request(
@@ -150,6 +186,9 @@ class BackendClient:
 
     async def delete_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/bookings/{booking_id}", params={"telegram_id": telegram_id})
+
+    async def update_booking(self, telegram_id: int, booking_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        return await self.request("PATCH", f"/bookings/{booking_id}", json={"telegram_id": telegram_id, **data})
 
     async def list_events(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/events")

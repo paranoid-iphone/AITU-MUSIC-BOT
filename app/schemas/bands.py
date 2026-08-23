@@ -22,6 +22,16 @@ class MemberRoleUpdate(BaseModel):
     instrument_role: str = Field(min_length=1, max_length=80)
 
 
+class BandUpdate(BaseModel):
+    requester_telegram_id: int
+    name: str = Field(min_length=1, max_length=150)
+
+
+class BandOwnerUpdate(BaseModel):
+    requester_telegram_id: int
+    member_id: int
+
+
 class BandMemberRead(BaseModel):
     id: int
     instrument_role: str

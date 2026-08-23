@@ -2,9 +2,27 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Band, BandMember
+from app.db.models import Band, BandMember, UserRole
 from app.services.errors import ForbiddenError, NotFoundError
-from app.services.users import get_user_by_telegram_id, require_approved
+from app.services.users import get_user_by_telegram_id, require_admin, require_approved
+
+
+async def _require_band_manager(session: AsyncSession, band_id: int, requester_telegram_id: int):
+    requester = await get_user_by_telegram_id(session, requester_telegram_id)
+    if requester is None:
+        raise NotFoundError("User not found")
+    if requester.role == UserRole.ADMIN.value:
+        return requester
+    owner_result = await session.execute(
+        select(BandMember).where(
+            BandMember.band_id == band_id,
+            BandMember.user_id == requester.id,
+            BandMember.is_owner.is_(True),
+        )
+    )
+    if owner_result.scalar_one_or_none() is None:
+        raise ForbiddenError("Only band owner or admin can manage this band")
+    return requester
 
 
 async def create_band(session: AsyncSession, creator_telegram_id: int, name: str, creator_role: str) -> Band:
@@ -29,6 +47,19 @@ async def list_user_bands(session: AsyncSession, telegram_id: int) -> list[Band]
         select(Band)
         .join(BandMember)
         .where(BandMember.user_id == user.id)
+        .options(selectinload(Band.members).selectinload(BandMember.user))
+        .order_by(Band.created_at.desc())
+    )
+    return list(result.scalars().unique())
+
+
+async def list_all_bands(session: AsyncSession, admin_telegram_id: int) -> list[Band]:
+    admin = await get_user_by_telegram_id(session, admin_telegram_id)
+    if admin is None:
+        raise NotFoundError("Admin not found")
+    require_admin(admin)
+    result = await session.execute(
+        select(Band)
         .options(selectinload(Band.members).selectinload(BandMember.user))
         .order_by(Band.created_at.desc())
     )
@@ -71,19 +102,97 @@ async def update_member_role(
     requester_telegram_id: int,
     instrument_role: str,
 ) -> BandMember:
-    requester = await get_user_by_telegram_id(session, requester_telegram_id)
-    if requester is None:
-        raise NotFoundError("User not found")
-    owner_result = await session.execute(
-        select(BandMember).where(BandMember.band_id == band_id, BandMember.user_id == requester.id, BandMember.is_owner.is_(True))
-    )
-    if owner_result.scalar_one_or_none() is None:
-        raise ForbiddenError("Only band owner can update roles")
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
     result = await session.execute(select(BandMember).where(BandMember.id == member_id, BandMember.band_id == band_id))
     member = result.scalar_one_or_none()
     if member is None:
         raise NotFoundError("Member not found")
     member.instrument_role = instrument_role
+    await log_action(
+        session,
+        requester.id,
+        "band.member_role",
+        "band_member",
+        member.id,
+        f"Изменил роль участника #{member.id} в коллективе #{band_id}: {instrument_role}",
+    )
     await session.commit()
     await session.refresh(member)
     return member
+
+
+async def update_band_name(session: AsyncSession, band_id: int, requester_telegram_id: int, name: str) -> Band:
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    band = await get_band_detail(session, band_id)
+    old_name = band.name
+    band.name = name
+    await log_action(
+        session,
+        requester.id,
+        "band.rename",
+        "band",
+        band.id,
+        f"Переименовал коллектив: {old_name} -> {name}",
+    )
+    await session.commit()
+    return await get_band_detail(session, band_id)
+
+
+async def transfer_band_owner(session: AsyncSession, band_id: int, requester_telegram_id: int, member_id: int) -> Band:
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    result = await session.execute(select(BandMember).where(BandMember.band_id == band_id))
+    members = list(result.scalars())
+    target = next((member for member in members if member.id == member_id), None)
+    if target is None:
+        raise NotFoundError("Member not found")
+    for member in members:
+        member.is_owner = member.id == member_id
+    band = await get_band_detail(session, band_id)
+    band.creator_id = target.user_id
+    await log_action(
+        session,
+        requester.id,
+        "band.owner",
+        "band",
+        band_id,
+        f"Назначил лидера коллектива #{band_id}: участник #{member_id}",
+    )
+    await session.commit()
+    return await get_band_detail(session, band_id)
+
+
+async def remove_band_member(session: AsyncSession, band_id: int, member_id: int, requester_telegram_id: int) -> dict:
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    result = await session.execute(
+        select(BandMember).where(BandMember.id == member_id, BandMember.band_id == band_id).options(selectinload(BandMember.user))
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise NotFoundError("Member not found")
+    if member.is_owner:
+        raise ForbiddenError("Transfer ownership before removing the band owner")
+    user_name = (
+        f"{member.user.last_name or ''} {member.user.first_name or ''}".strip()
+        or member.user.telegram_username
+        or str(member.user.telegram_id)
+    )
+    deleted = {"member_id": member.id, "band_id": band_id, "user_name": user_name}
+    await log_action(
+        session,
+        requester.id,
+        "band.member_remove",
+        "band_member",
+        member.id,
+        f"Удалил участника из коллектива #{band_id}: {user_name}",
+    )
+    await session.delete(member)
+    await session.commit()
+    return deleted
