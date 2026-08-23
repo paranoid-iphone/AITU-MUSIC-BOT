@@ -52,3 +52,29 @@ class EventApplicationRead(BaseModel):
     submitted_by_id: int
 
     model_config = {"from_attributes": True}
+
+
+class PersonalEventHistoryCreate(BaseModel):
+    telegram_id: int
+    title: str = Field(min_length=1, max_length=150)
+    event_date: date
+    location: str | None = Field(default=None, max_length=150)
+    role_at_event: str = Field(min_length=1, max_length=100)
+
+
+class PersonalEventHistoryUpdate(BaseModel):
+    telegram_id: int
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    event_date: date | None = None
+    location: str | None = Field(default=None, max_length=150)
+    role_at_event: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class PersonalEventHistoryRead(BaseModel):
+    id: int
+    title: str
+    event_date: date
+    location: str | None
+    role_at_event: str
+
+    model_config = {"from_attributes": True}

@@ -55,6 +55,8 @@ from app.bot.keyboards import (
     main_menu_inline,
     profile_inline_keyboard,
     profile_event_history_keyboard,
+    profile_personal_event_delete_confirm_keyboard,
+    profile_personal_event_detail_keyboard,
     profile_keyboard,
     rehearsals_menu_keyboard,
     registration_review_keyboard,
@@ -303,21 +305,40 @@ def format_event_history(rows: list[dict]) -> str:
     if not rows:
         return (
             "История мероприятий\n\n"
-            "Пока нет мероприятий, где вы указаны в составе номера."
+            "Пока нет мероприятий. Можно добавить личное событие вручную."
         )
     lines = ["История мероприятий"]
     for index, item in enumerate(rows[:30], start=1):
-        location = f" | {item['event_location']}" if item.get("event_location") else ""
+        source = item.get("source_label") or ("личный" if item.get("source") == "personal" else "клубный")
+        location = item.get("event_location") or "-"
         song = item.get("song_title") or "песня не указана"
+        band = item.get("band_name") or "личное событие"
         lines.append(
-            f"\n{index}. {item['event_date']} | {item['event_title']}{location}\n"
+            f"\n{index}. {item['event_date']} | {item['event_title']}\n"
+            f"Источник: {source}\n"
+            f"Место: {location}\n"
             f"Песня: {song}\n"
-            f"Коллектив: {item['band_name']}\n"
+            f"Коллектив: {band}\n"
             f"Роль: {item['instrument_role']}"
         )
     if len(rows) > 30:
         lines.append(f"\nПоказаны последние 30 из {len(rows)} мероприятий.")
     return "\n".join(lines)
+
+
+def format_personal_event_card(item: dict) -> str:
+    title = item.get("event_title") or item.get("title") or "-"
+    event_date_value = item.get("event_date") or "-"
+    location = item.get("event_location") if "event_location" in item else item.get("location")
+    role = item.get("instrument_role") or item.get("role_at_event") or "-"
+    return (
+        f"Личное событие #{item['id']}\n"
+        f"Название: {title}\n"
+        f"Дата: {event_date_value}\n"
+        f"Место: {location or '-'}\n"
+        f"Роль: {role}\n\n"
+        "Выберите действие:"
+    )
 
 
 def format_booking_card(booking: dict) -> str:
@@ -1507,8 +1528,75 @@ async def inline_event_history(callback: CallbackQuery) -> None:
     if not await has_full_access_for_callback(callback):
         return
     rows = await api.event_history(callback.from_user.id)
-    await edit_screen(callback, format_event_history(rows), profile_event_history_keyboard())
+    await edit_screen(callback, format_event_history(rows), profile_event_history_keyboard(rows))
     await answer_callback(callback)
+
+
+@router.callback_query(F.data == "profile_event_history:add")
+async def inline_personal_event_add(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    await state.set_state(ProfileFlow.personal_event_title)
+    await callback.message.answer("Введите название события:", reply_markup=flow_cancel_keyboard())
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("profile_personal_event:"))
+async def inline_personal_event_detail(callback: CallbackQuery) -> None:
+    item_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        item = await api.get_personal_event_history(callback.from_user.id, item_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось открыть событие: {exc}", profile_event_history_keyboard())
+        await answer_callback(callback)
+        return
+    await edit_screen(callback, format_personal_event_card(item), profile_personal_event_detail_keyboard(item_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("profile_personal_event_edit:"))
+async def inline_personal_event_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    _, item_id_raw, field = callback.data.split(":")
+    item_id = int(item_id_raw)
+    labels = {
+        "title": "Введите новое название события:",
+        "event_date": "Введите новую дату в формате YYYY-MM-DD:",
+        "location": "Введите новое место. Для пустого значения отправьте '-'.",
+        "role_at_event": "Введите вашу роль на событии. Например: вокалист, гитарист, организатор.",
+    }
+    if field not in labels:
+        await answer_callback(callback, "Поле не поддерживается.", show_alert=True)
+        return
+    await state.update_data(personal_event_edit_id=item_id, personal_event_edit_field=field)
+    await state.set_state(ProfileFlow.personal_event_edit_value)
+    await callback.message.answer(labels[field], reply_markup=flow_cancel_keyboard())
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("profile_personal_event_delete:"))
+async def inline_personal_event_delete(callback: CallbackQuery) -> None:
+    item_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    await edit_screen(callback, "Удалить личное событие из истории?", profile_personal_event_delete_confirm_keyboard(item_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("profile_personal_event_delete_confirm:"))
+async def inline_personal_event_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    item_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        deleted = await api.delete_personal_event_history(callback.from_user.id, item_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось удалить событие: {exc}", profile_event_history_keyboard())
+        await answer_callback(callback)
+        return
+    await state.clear()
+    rows = await api.event_history(callback.from_user.id)
+    await edit_screen(
+        callback,
+        f"Событие удалено: {deleted['event_date']} | {deleted['event_title']}\n\n{format_event_history(rows)}",
+        profile_event_history_keyboard(rows),
+    )
+    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data == "admin:pending_users")
@@ -2174,13 +2262,126 @@ async def event_history(message: Message) -> None:
     if not await has_full_access(message):
         return
     rows = await api.event_history(message.from_user.id)
-    await message.answer(format_event_history(rows), reply_markup=profile_event_history_keyboard())
+    await message.answer(format_event_history(rows), reply_markup=profile_event_history_keyboard(rows))
 
 
 @router.message(F.text == "Изменить имя")
 async def edit_first_name(message: Message, state: FSMContext) -> None:
     await state.set_state(ProfileFlow.first_name)
     await message.answer("Введите новое имя:", reply_markup=flow_cancel_keyboard())
+
+
+@router.message(ProfileFlow.personal_event_title)
+async def personal_event_title(message: Message, state: FSMContext) -> None:
+    title = message.text.strip()
+    if not title:
+        await message.answer("Название не должно быть пустым.", reply_markup=flow_cancel_keyboard())
+        return
+    if len(title) > 150:
+        await message.answer("Название должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
+        return
+    await state.update_data(personal_event_title=title)
+    await state.set_state(ProfileFlow.personal_event_date)
+    await message.answer("Введите дату события в формате YYYY-MM-DD:", reply_markup=flow_cancel_keyboard())
+
+
+@router.message(ProfileFlow.personal_event_date)
+async def personal_event_date(message: Message, state: FSMContext) -> None:
+    raw = message.text.strip()
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        await message.answer("Введите дату в формате YYYY-MM-DD.", reply_markup=flow_cancel_keyboard())
+        return
+    await state.update_data(personal_event_date=raw)
+    await state.set_state(ProfileFlow.personal_event_location)
+    await message.answer("Введите место проведения. Если места нет, отправьте '-'.", reply_markup=flow_cancel_keyboard())
+
+
+@router.message(ProfileFlow.personal_event_location)
+async def personal_event_location(message: Message, state: FSMContext) -> None:
+    raw = message.text.strip()
+    location = None if raw == "-" else raw
+    if location and len(location) > 150:
+        await message.answer("Место должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
+        return
+    await state.update_data(personal_event_location=location)
+    await state.set_state(ProfileFlow.personal_event_role)
+    await message.answer("В качестве кого вы участвовали? Например: вокалист, гитарист, организатор.", reply_markup=flow_cancel_keyboard())
+
+
+@router.message(ProfileFlow.personal_event_role)
+async def personal_event_role(message: Message, state: FSMContext) -> None:
+    role = message.text.strip()
+    if not role:
+        await message.answer("Роль не должна быть пустой.", reply_markup=flow_cancel_keyboard())
+        return
+    if len(role) > 100:
+        await message.answer("Роль должна быть не длиннее 100 символов.", reply_markup=flow_cancel_keyboard())
+        return
+    data = await state.get_data()
+    try:
+        await api.create_personal_event_history(
+            message.from_user.id,
+            {
+                "title": data["personal_event_title"],
+                "event_date": data["personal_event_date"],
+                "location": data.get("personal_event_location"),
+                "role_at_event": role,
+            },
+        )
+    except RuntimeError as exc:
+        await state.clear()
+        await message.answer(f"Не получилось добавить событие: {exc}", reply_markup=profile_event_history_keyboard())
+        return
+    await state.clear()
+    rows = await api.event_history(message.from_user.id)
+    await message.answer("Событие добавлено.\n\n" + format_event_history(rows), reply_markup=profile_event_history_keyboard(rows))
+
+
+@router.message(ProfileFlow.personal_event_edit_value)
+async def personal_event_edit_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    item_id = int(data["personal_event_edit_id"])
+    field = data["personal_event_edit_field"]
+    raw = message.text.strip()
+    value = raw
+    if field == "event_date":
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            await message.answer("Введите дату в формате YYYY-MM-DD.", reply_markup=flow_cancel_keyboard())
+            return
+    elif field == "location":
+        value = None if raw == "-" else raw
+        if value and len(value) > 150:
+            await message.answer("Место должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
+            return
+    elif field == "title":
+        if not raw:
+            await message.answer("Название не должно быть пустым.", reply_markup=flow_cancel_keyboard())
+            return
+        if len(raw) > 150:
+            await message.answer("Название должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
+            return
+    elif field == "role_at_event":
+        if not raw:
+            await message.answer("Роль не должна быть пустой.", reply_markup=flow_cancel_keyboard())
+            return
+        if len(raw) > 100:
+            await message.answer("Роль должна быть не длиннее 100 символов.", reply_markup=flow_cancel_keyboard())
+            return
+    try:
+        item = await api.update_personal_event_history(message.from_user.id, item_id, {field: value})
+    except RuntimeError as exc:
+        await state.clear()
+        await message.answer(f"Не получилось обновить событие: {exc}", reply_markup=profile_event_history_keyboard())
+        return
+    await state.clear()
+    await message.answer(
+        "Событие обновлено.\n\n" + format_personal_event_card(item),
+        reply_markup=profile_personal_event_detail_keyboard(item_id),
+    )
 
 
 @router.message(ProfileFlow.first_name)

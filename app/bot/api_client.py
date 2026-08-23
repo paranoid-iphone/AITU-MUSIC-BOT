@@ -242,6 +242,18 @@ class BackendClient:
     async def event_history(self, telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/events/history", params={"telegram_id": telegram_id})
 
+    async def create_personal_event_history(self, telegram_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        return await self.request("POST", "/events/history/personal", json={"telegram_id": telegram_id, **data})
+
+    async def get_personal_event_history(self, telegram_id: int, item_id: int) -> dict[str, Any]:
+        return await self.request("GET", f"/events/history/personal/{item_id}", params={"telegram_id": telegram_id})
+
+    async def update_personal_event_history(self, telegram_id: int, item_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        return await self.request("PATCH", f"/events/history/personal/{item_id}", json={"telegram_id": telegram_id, **data})
+
+    async def delete_personal_event_history(self, telegram_id: int, item_id: int) -> dict[str, Any]:
+        return await self.request("DELETE", f"/events/history/personal/{item_id}", params={"telegram_id": telegram_id})
+
     async def update_day(self, telegram_id: int, day_of_week: int, is_enabled: bool) -> dict[str, Any]:
         return await self.request(
             "PUT",

@@ -4,7 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.events import EventApplicationCreate, EventApplicationRead, EventApplicationUpdate, EventCreate, EventRead, EventUpdate
+from app.schemas.events import (
+    EventApplicationCreate,
+    EventApplicationRead,
+    EventApplicationUpdate,
+    EventCreate,
+    EventRead,
+    EventUpdate,
+    PersonalEventHistoryCreate,
+    PersonalEventHistoryRead,
+    PersonalEventHistoryUpdate,
+)
 from app.services import events
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -24,6 +34,28 @@ async def list_events(session: AsyncSession = Depends(get_session)):
 @router.get("/history")
 async def event_history(telegram_id: int, session: AsyncSession = Depends(get_session)):
     return await events.list_user_event_history(session, telegram_id)
+
+
+@router.post("/history/personal", response_model=PersonalEventHistoryRead)
+async def create_personal_history(payload: PersonalEventHistoryCreate, session: AsyncSession = Depends(get_session)):
+    data = payload.model_dump(exclude={"telegram_id"})
+    return await events.create_personal_event_history(session, payload.telegram_id, **data)
+
+
+@router.get("/history/personal/{item_id}")
+async def personal_history_detail(item_id: int, telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.get_personal_event_history(session, telegram_id, item_id)
+
+
+@router.patch("/history/personal/{item_id}", response_model=PersonalEventHistoryRead)
+async def update_personal_history(item_id: int, payload: PersonalEventHistoryUpdate, session: AsyncSession = Depends(get_session)):
+    data = payload.model_dump(exclude={"telegram_id"}, exclude_unset=True)
+    return await events.update_personal_event_history(session, payload.telegram_id, item_id, **data)
+
+
+@router.delete("/history/personal/{item_id}")
+async def delete_personal_history(item_id: int, telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await events.delete_personal_event_history(session, telegram_id, item_id)
 
 
 @router.get("/applications/mine")

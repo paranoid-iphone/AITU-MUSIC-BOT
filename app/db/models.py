@@ -193,3 +193,18 @@ class EventApplicationMember(Base):
 
     application: Mapped[EventApplication] = relationship(back_populates="members")
     user: Mapped[User] = relationship()
+
+
+class PersonalEventHistory(Base):
+    __tablename__ = "personal_event_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(150))
+    event_date: Mapped[date] = mapped_column(Date)
+    location: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    role_at_event: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped[User] = relationship()

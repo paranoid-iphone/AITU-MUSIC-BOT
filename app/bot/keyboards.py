@@ -346,11 +346,39 @@ def profile_inline_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def profile_event_history_keyboard() -> InlineKeyboardMarkup:
+def profile_event_history_keyboard(rows: list[dict] | None = None) -> InlineKeyboardMarkup:
+    keyboard = [[InlineKeyboardButton(text="Добавить событие", callback_data="profile_event_history:add")]]
+    personal_rows = [row for row in rows or [] if row.get("source") == "personal"]
+    for item in personal_rows[:10]:
+        text = f"{item['event_date']} | {item['event_title']}"
+        keyboard.append([InlineKeyboardButton(text=text[:64], callback_data=f"profile_personal_event:{item['id']}")])
+    keyboard.append([InlineKeyboardButton(text="Назад к профилю", callback_data="menu:profile")])
+    keyboard.append([InlineKeyboardButton(text="В меню", callback_data="menu:back")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def profile_personal_event_detail_keyboard(item_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Назад к профилю", callback_data="menu:profile")],
-            [InlineKeyboardButton(text="В меню", callback_data="menu:back")],
+            [
+                InlineKeyboardButton(text="Название", callback_data=f"profile_personal_event_edit:{item_id}:title"),
+                InlineKeyboardButton(text="Дата", callback_data=f"profile_personal_event_edit:{item_id}:event_date"),
+            ],
+            [
+                InlineKeyboardButton(text="Место", callback_data=f"profile_personal_event_edit:{item_id}:location"),
+                InlineKeyboardButton(text="Роль", callback_data=f"profile_personal_event_edit:{item_id}:role_at_event"),
+            ],
+            [InlineKeyboardButton(text="Удалить", callback_data=f"profile_personal_event_delete:{item_id}")],
+            [InlineKeyboardButton(text="Назад к истории", callback_data="profile:event_history")],
+        ]
+    )
+
+
+def profile_personal_event_delete_confirm_keyboard(item_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить событие", callback_data=f"profile_personal_event_delete_confirm:{item_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"profile_personal_event:{item_id}")],
         ]
     )
 

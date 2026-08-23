@@ -21,6 +21,11 @@ class ProfileFlow(StatesGroup):
     last_name = State()
     study_group = State()
     language = State()
+    personal_event_title = State()
+    personal_event_date = State()
+    personal_event_location = State()
+    personal_event_role = State()
+    personal_event_edit_value = State()
 
 
 class BookingFlow(StatesGroup):

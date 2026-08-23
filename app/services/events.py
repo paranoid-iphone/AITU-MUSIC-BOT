@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import BandMember, Event, EventApplication, EventApplicationMember
+from app.db.models import BandMember, Event, EventApplication, EventApplicationMember, PersonalEventHistory
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -329,6 +329,24 @@ async def delete_application(session: AsyncSession, telegram_id: int, applicatio
     return deleted
 
 
+def _personal_event_to_row(item: PersonalEventHistory) -> dict:
+    return {
+        "id": item.id,
+        "source": "personal",
+        "source_label": "ты добавил",
+        "event_title": item.title,
+        "event_date": item.event_date.isoformat(),
+        "event_location": item.location,
+        "event_status": None,
+        "band_id": None,
+        "band_name": None,
+        "song_title": None,
+        "instrument_role": item.role_at_event,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
 async def list_user_event_history(session: AsyncSession, telegram_id: int) -> list[dict]:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
@@ -351,6 +369,9 @@ async def list_user_event_history(session: AsyncSession, telegram_id: int) -> li
         event = application.event
         rows.append(
             {
+                "id": application.id,
+                "source": "admin",
+                "source_label": "админы",
                 "event_id": event.id,
                 "event_title": event.title,
                 "event_date": event.event_date.isoformat(),
@@ -363,7 +384,105 @@ async def list_user_event_history(session: AsyncSession, telegram_id: int) -> li
                 "submitted_at": application.submitted_at.isoformat(),
             }
         )
-    return rows
+    personal_result = await session.execute(
+        select(PersonalEventHistory)
+        .where(PersonalEventHistory.user_id == user.id)
+        .order_by(PersonalEventHistory.event_date.desc(), PersonalEventHistory.created_at.desc())
+    )
+    rows.extend(_personal_event_to_row(item) for item in personal_result.scalars())
+    return sorted(rows, key=lambda item: item["event_date"], reverse=True)
+
+
+async def create_personal_event_history(session: AsyncSession, telegram_id: int, **data) -> PersonalEventHistory:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    item = PersonalEventHistory(user_id=user.id, **data)
+    session.add(item)
+    await session.flush()
+    await log_action(
+        session,
+        user.id,
+        "event.history.personal.create",
+        "personal_event_history",
+        item.id,
+        f"Добавил личное мероприятие: {item.title} ({item.event_date.isoformat()})",
+    )
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def get_personal_event_history(session: AsyncSession, telegram_id: int, item_id: int) -> dict:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    result = await session.execute(
+        select(PersonalEventHistory).where(PersonalEventHistory.id == item_id, PersonalEventHistory.user_id == user.id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("Personal event not found")
+    return _personal_event_to_row(item)
+
+
+async def update_personal_event_history(session: AsyncSession, telegram_id: int, item_id: int, **data) -> PersonalEventHistory:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    result = await session.execute(
+        select(PersonalEventHistory).where(PersonalEventHistory.id == item_id, PersonalEventHistory.user_id == user.id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("Personal event not found")
+    for key, value in data.items():
+        setattr(item, key, value)
+    await log_action(
+        session,
+        user.id,
+        "event.history.personal.update",
+        "personal_event_history",
+        item.id,
+        f"Обновил личное мероприятие #{item.id}: {item.title}",
+    )
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def delete_personal_event_history(session: AsyncSession, telegram_id: int, item_id: int) -> dict:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_approved(user)
+    result = await session.execute(
+        select(PersonalEventHistory).where(PersonalEventHistory.id == item_id, PersonalEventHistory.user_id == user.id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("Personal event not found")
+    deleted = _personal_event_to_row(item)
+    await log_action(
+        session,
+        user.id,
+        "event.history.personal.delete",
+        "personal_event_history",
+        item.id,
+        f"Удалил личное мероприятие #{item.id}: {item.title}",
+    )
+    await session.delete(item)
+    await session.commit()
+    return deleted
 
 
 async def export_event_applications(session: AsyncSession, event_id: int) -> bytes:
