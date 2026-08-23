@@ -55,6 +55,13 @@ from app.bot.keyboards import (
     rehearsals_menu_keyboard,
     registration_review_keyboard,
     user_events_keyboard,
+    user_band_detail_keyboard,
+    user_band_members_keyboard,
+    user_bands_list_keyboard,
+    user_booking_delete_confirm_keyboard,
+    user_booking_detail_keyboard,
+    user_bookings_list_keyboard,
+    user_member_remove_confirm_keyboard,
 )
 from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, BandFlow, BookingFlow, EventFlow, Onboarding, ProfileFlow
@@ -249,6 +256,13 @@ def format_band_card(band: dict) -> str:
     return "\n".join(lines)
 
 
+def user_is_band_owner(band: dict, telegram_id: int) -> bool:
+    return any(
+        member.get("is_owner") and member.get("user", {}).get("telegram_id") == telegram_id
+        for member in band.get("members", [])
+    )
+
+
 def admin_guide_text() -> str:
     return (
         "Инструкция админа\n\n"
@@ -285,11 +299,12 @@ def format_event_history(rows: list[dict]) -> str:
 
 def format_booking_card(booking: dict) -> str:
     title = booking.get("song_title") or "-"
+    owner = booking.get("band_name") or ("Личная репетиция" if booking.get("purpose") == "personal" else "-")
     return (
         f"Бронь #{booking['id']}\n"
         f"Дата: {booking['booking_date']}\n"
         f"Время: {booking['start_time'][:5]}-{booking['end_time'][:5]}\n"
-        f"Кто занял: {booking['band_name']}\n"
+        f"Кто занял: {owner}\n"
         f"Создал: {booking.get('created_by') or '-'}\n"
         f"Цель: {format_purpose(booking['purpose'])}\n"
         f"Песня/название: {title}\n\n"
@@ -623,6 +638,78 @@ async def inline_schedule(callback: CallbackQuery) -> None:
     await answer_callback(callback)
 
 
+@router.callback_query(F.data.startswith("user_bookings:"))
+async def inline_user_bookings(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    page = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    rows = await api.my_bookings(callback.from_user.id)
+    await state.update_data(user_bookings=rows)
+    if not rows:
+        await edit_screen(callback, "У вас пока нет будущих репетиций.", rehearsals_menu_keyboard(await get_webapp_base_url()))
+        await answer_callback(callback)
+        return
+    await edit_screen(callback, "Мои репетиции", user_bookings_list_keyboard(rows, page))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_booking:"))
+async def inline_user_booking_detail(callback: CallbackQuery, state: FSMContext) -> None:
+    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    data = await state.get_data()
+    rows = data.get("user_bookings") or await api.my_bookings(callback.from_user.id)
+    await state.update_data(user_bookings=rows)
+    booking = next((item for item in rows if item["id"] == booking_id), None)
+    if booking is None:
+        await answer_callback(callback, "Бронь не найдена. Обновите список.", show_alert=True)
+        return
+    await edit_screen(callback, format_booking_card(booking), user_booking_detail_keyboard(booking_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_booking_edit:"))
+async def inline_user_booking_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    _, booking_id_raw, field = callback.data.split(":")
+    labels = {
+        "date": "Введите новую дату в формате YYYY-MM-DD:",
+        "time": "Введите новое время в формате 14:00-15:30:",
+        "song": "Введите новую песню/название. Для пустого значения отправьте '-'.",
+    }
+    if field not in labels:
+        await answer_callback(callback, "Поле не поддерживается.", show_alert=True)
+        return
+    await state.update_data(user_booking_edit_id=int(booking_id_raw), user_booking_edit_field=field)
+    await state.set_state(BookingFlow.edit_value)
+    await callback.message.answer(labels[field], reply_markup=flow_cancel_keyboard())
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_booking_delete:"))
+async def inline_user_booking_delete(callback: CallbackQuery) -> None:
+    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    await edit_screen(callback, "Удалить эту бронь и освободить время?", user_booking_delete_confirm_keyboard(booking_id))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_booking_delete_confirm:"))
+async def inline_user_booking_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        deleted = await api.delete_booking(callback.from_user.id, booking_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось удалить бронь: {exc}", user_booking_detail_keyboard(booking_id))
+        await answer_callback(callback)
+        return
+    await state.update_data(user_bookings=await api.my_bookings(callback.from_user.id))
+    await refresh_all_schedule_menus(callback.message.bot)
+    await edit_screen(
+        callback,
+        f"Бронь удалена: {deleted['booking_date']} {deleted['start_time'][:5]}-{deleted['end_time'][:5]} | {deleted['band_name']}",
+        rehearsals_menu_keyboard(await get_webapp_base_url()),
+    )
+    await answer_callback(callback, "Готово")
+
+
 @router.callback_query(F.data == "menu:profile")
 async def inline_profile(callback: CallbackQuery) -> None:
     if not await has_full_access_for_callback(callback):
@@ -646,13 +733,102 @@ async def inline_bands(callback: CallbackQuery) -> None:
         return
     bands = await api.list_bands(callback.from_user.id)
     if not bands:
-        user = await api.get_user(callback.from_user.id)
-        await edit_screen(callback, "У вас пока нет коллективов.", main_menu_inline(user.get("role") == "admin"))
+        await edit_screen(callback, "У вас пока нет коллективов.", bands_menu_keyboard())
         await answer_callback(callback)
         return
-    user = await api.get_user(callback.from_user.id)
-    await edit_screen(callback, await format_bands_list(callback.message.bot, bands), main_menu_inline(user.get("role") == "admin"))
+    bands = sorted(bands, key=lambda item: item.get("created_at", ""), reverse=True)
+    await edit_screen(callback, "Мои коллективы", user_bands_list_keyboard(bands))
     await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_bands:"))
+async def inline_user_bands_page(callback: CallbackQuery) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    page = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    bands = sorted(await api.list_bands(callback.from_user.id), key=lambda item: item.get("created_at", ""), reverse=True)
+    text = "Мои коллективы" if bands else "У вас пока нет коллективов."
+    await edit_screen(callback, text, user_bands_list_keyboard(bands, page))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band:"))
+async def inline_user_band_detail(callback: CallbackQuery) -> None:
+    if not await has_full_access_for_callback(callback):
+        return
+    _, band_id_raw, page_raw = callback.data.split(":")
+    band = await api.get_band(int(band_id_raw))
+    is_owner = user_is_band_owner(band, callback.from_user.id)
+    await edit_screen(callback, format_band_card(band), user_band_detail_keyboard(band["id"], is_owner, int(page_raw)))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_edit:"))
+async def inline_user_band_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    _, band_id_raw, field = callback.data.split(":")
+    if field != "name":
+        await answer_callback(callback, "Поле не поддерживается.", show_alert=True)
+        return
+    await state.update_data(user_band_edit_id=int(band_id_raw), user_band_edit_field=field)
+    await state.set_state(BandFlow.edit_value)
+    await callback.message.answer("Введите новое название коллектива:", reply_markup=flow_cancel_keyboard())
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_members:"))
+async def inline_user_band_members(callback: CallbackQuery) -> None:
+    _, band_id_raw, action, page_raw = callback.data.split(":")
+    band = await api.get_band(int(band_id_raw))
+    if not user_is_band_owner(band, callback.from_user.id):
+        await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
+        return
+    titles = {
+        "owner": "Выберите нового лидера коллектива:",
+        "role": "Выберите участника, которому нужно изменить роль:",
+        "remove": "Выберите участника, которого нужно убрать из коллектива:",
+    }
+    await edit_screen(callback, titles.get(action, "Участники:"), user_band_members_keyboard(band, action, int(page_raw)))
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_member:"))
+async def inline_user_band_member_action(callback: CallbackQuery, state: FSMContext) -> None:
+    _, band_id_raw, member_id_raw, action = callback.data.split(":")
+    band_id = int(band_id_raw)
+    member_id = int(member_id_raw)
+    band = await api.get_band(band_id)
+    if not user_is_band_owner(band, callback.from_user.id):
+        await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
+        return
+    if action == "owner":
+        band = await api.transfer_band_owner(callback.from_user.id, band_id, member_id)
+        await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, user_is_band_owner(band, callback.from_user.id)))
+    elif action == "role":
+        await state.update_data(user_band_edit_id=band_id, user_band_member_id=member_id, user_band_edit_field="member_role")
+        await state.set_state(BandFlow.edit_value)
+        await callback.message.answer("Введите новую роль участника:", reply_markup=flow_cancel_keyboard())
+    elif action == "remove":
+        await edit_screen(callback, "Удалить участника из коллектива?", user_member_remove_confirm_keyboard(band_id, member_id))
+    else:
+        await answer_callback(callback, "Действие не поддерживается.", show_alert=True)
+        return
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_member_remove_confirm:"))
+async def inline_user_band_member_remove_confirm(callback: CallbackQuery) -> None:
+    _, band_id_raw, member_id_raw = callback.data.split(":")
+    band_id = int(band_id_raw)
+    member_id = int(member_id_raw)
+    try:
+        deleted = await api.remove_band_member(callback.from_user.id, band_id, member_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось удалить участника: {exc}", user_band_detail_keyboard(band_id, True))
+        await answer_callback(callback)
+        return
+    band = await api.get_band(band_id)
+    await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, True))
+    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data == "menu:create_band")
@@ -1917,15 +2093,47 @@ async def join_band_role(message: Message, state: FSMContext) -> None:
     await send_schedule_menu(message, user, f"Вы вступили в коллектив: {band['name']}")
 
 
+@router.message(BandFlow.edit_value)
+async def user_band_edit_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    band_id = int(data["user_band_edit_id"])
+    field = data["user_band_edit_field"]
+    raw = message.text.strip()
+    if not raw:
+        await message.answer("Значение не должно быть пустым.", reply_markup=flow_cancel_keyboard())
+        return
+    try:
+        if field == "name":
+            band = await api.update_band(message.from_user.id, band_id, raw)
+        elif field == "member_role":
+            member_id = int(data["user_band_member_id"])
+            await api.update_band_member_role(message.from_user.id, band_id, member_id, raw)
+            band = await api.get_band(band_id)
+        else:
+            await state.clear()
+            await message.answer("Это поле нельзя редактировать.", reply_markup=bands_menu_keyboard())
+            return
+    except RuntimeError as exc:
+        await state.clear()
+        await message.answer(f"Не получилось обновить коллектив: {exc}", reply_markup=bands_menu_keyboard())
+        return
+    await state.clear()
+    await message.answer(
+        "Коллектив обновлен.\n\n" + format_band_card(band),
+        reply_markup=user_band_detail_keyboard(band_id, user_is_band_owner(band, message.from_user.id)),
+    )
+
+
 @router.message(F.text == "🎵 Мои коллективы")
 async def my_bands(message: Message) -> None:
     if not await has_full_access(message):
         return
     bands = await api.list_bands(message.from_user.id)
     if not bands:
-        await message.answer("У вас пока нет коллективов.")
+        await message.answer("У вас пока нет коллективов.", reply_markup=bands_menu_keyboard())
         return
-    await message.answer(await format_bands_list(message.bot, bands))
+    bands = sorted(bands, key=lambda item: item.get("created_at", ""), reverse=True)
+    await message.answer("Мои коллективы", reply_markup=user_bands_list_keyboard(bands))
 
 
 @router.message(F.text == "📋 Расписание")
@@ -1934,11 +2142,72 @@ async def schedule_button(message: Message) -> None:
     await send_schedule_menu(message, user, "Расписание на ближайшие 7 дней")
 
 
+@router.message(F.text == "🎧 Мои репетиции")
+async def my_rehearsals_button(message: Message) -> None:
+    if not await has_full_access(message):
+        return
+    rows = await api.my_bookings(message.from_user.id)
+    if not rows:
+        await message.answer("У вас пока нет будущих репетиций.", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        return
+    await message.answer("Мои репетиции", reply_markup=user_bookings_list_keyboard(rows))
+
+
 @router.message(F.text == "📅 Забронировать")
 async def booking_start(message: Message, state: FSMContext) -> None:
     if not await has_full_access(message):
         return
     await start_booking_flow(message, state, message.from_user.id)
+
+
+@router.message(BookingFlow.edit_value)
+async def user_booking_edit_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    booking_id = int(data["user_booking_edit_id"])
+    field = data["user_booking_edit_field"]
+    raw = message.text.strip()
+    payload: dict = {}
+    if field == "date":
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            await message.answer("Введите дату в формате YYYY-MM-DD.", reply_markup=flow_cancel_keyboard())
+            return
+        payload["booking_date"] = raw
+    elif field == "time":
+        parsed = parse_booking_window(raw)
+        if parsed is None:
+            await message.answer("Введите время в формате 14:00-15:30.", reply_markup=flow_cancel_keyboard())
+            return
+        start, end = parsed
+        if start.time() >= end.time():
+            await message.answer("Начало должно быть раньше конца.", reply_markup=flow_cancel_keyboard())
+            return
+        if start.minute not in {0, 30} or end.minute not in {0, 30}:
+            await message.answer("Время должно идти по полчаса: 14:00, 14:30, 15:00.", reply_markup=flow_cancel_keyboard())
+            return
+        payload["start_time"] = start.time().isoformat()
+        payload["end_time"] = end.time().isoformat()
+    elif field == "song":
+        payload["song_title"] = None if raw == "-" else raw
+    else:
+        await state.clear()
+        await message.answer("Это поле нельзя редактировать.", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        return
+    try:
+        updated = await api.update_booking(message.from_user.id, booking_id, payload)
+    except RuntimeError as exc:
+        await state.clear()
+        await message.answer(f"Не получилось обновить бронь: {exc}", reply_markup=rehearsals_menu_keyboard(await get_webapp_base_url()))
+        return
+    rows = await api.my_bookings(message.from_user.id)
+    booking = next((item for item in rows if item["id"] == updated["id"]), None)
+    await state.clear()
+    await refresh_all_schedule_menus(message.bot)
+    await message.answer(
+        "Бронь обновлена.\n\n" + format_booking_card(booking or updated),
+        reply_markup=user_booking_detail_keyboard(updated["id"]),
+    )
 
 
 @router.message(BookingFlow.band_id)

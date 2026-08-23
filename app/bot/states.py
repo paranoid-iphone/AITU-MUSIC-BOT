@@ -13,6 +13,7 @@ class BandFlow(StatesGroup):
     create_role = State()
     join_code = State()
     join_role = State()
+    edit_value = State()
 
 
 class ProfileFlow(StatesGroup):
@@ -29,6 +30,7 @@ class BookingFlow(StatesGroup):
     end_time = State()
     purpose = State()
     song_title = State()
+    edit_value = State()
 
 
 class AdminFlow(StatesGroup):

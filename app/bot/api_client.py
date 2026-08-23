@@ -140,6 +140,9 @@ class BackendClient:
     async def schedule(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/schedule")
 
+    async def my_bookings(self, telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/bookings/mine", params={"telegram_id": telegram_id})
+
     async def personal_booking_settings(self) -> dict[str, Any]:
         return await self.request("GET", "/bookings/settings/personal-bookings")
 

@@ -41,6 +41,7 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
     rows = [
+        [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
         [InlineKeyboardButton(text="📋 Открыть расписание", callback_data="menu:schedule")],
     ]
@@ -59,6 +60,49 @@ def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboa
     )
 
 
+def user_bookings_list_keyboard(bookings: list[dict], page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
+    pages = max(1, (len(bookings) + page_size - 1) // page_size)
+    page = max(0, min(page, pages - 1))
+    start = page * page_size
+    rows = []
+    for booking in bookings[start : start + page_size]:
+        title = booking.get("song_title") or booking["band_name"]
+        text = f"{booking['booking_date']} {booking['start_time'][:5]}-{booking['end_time'][:5]} | {title}"
+        rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"user_booking:{booking['id']}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"user_bookings:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"user_bookings:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="К репетициям", callback_data="menu_section:rehearsals")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_booking_detail_keyboard(booking_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Дата", callback_data=f"user_booking_edit:{booking_id}:date"),
+                InlineKeyboardButton(text="Время", callback_data=f"user_booking_edit:{booking_id}:time"),
+            ],
+            [InlineKeyboardButton(text="Песня/название", callback_data=f"user_booking_edit:{booking_id}:song")],
+            [InlineKeyboardButton(text="Удалить", callback_data=f"user_booking_delete:{booking_id}")],
+            [InlineKeyboardButton(text="Назад к моим репетициям", callback_data="user_bookings:0")],
+        ]
+    )
+
+
+def user_booking_delete_confirm_keyboard(booking_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить бронь", callback_data=f"user_booking_delete_confirm:{booking_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"user_booking:{booking_id}")],
+        ]
+    )
+
+
 def bands_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -68,6 +112,75 @@ def bands_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔑 Вступить по коду", callback_data="menu:join_band"),
             ],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
+        ]
+    )
+
+
+def user_bands_list_keyboard(bands: list[dict], page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
+    pages = max(1, (len(bands) + page_size - 1) // page_size)
+    page = max(0, min(page, pages - 1))
+    start = page * page_size
+    rows = [
+        [InlineKeyboardButton(text=band["name"][:64], callback_data=f"user_band:{band['id']}:{page}")]
+        for band in bands[start : start + page_size]
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"user_bands:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"user_bands:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="К коллективам", callback_data="menu_section:bands")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_band_detail_keyboard(band_id: int, is_owner: bool, page: int = 0) -> InlineKeyboardMarkup:
+    rows = []
+    if is_owner:
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(text="Название", callback_data=f"user_band_edit:{band_id}:name"),
+                    InlineKeyboardButton(text="Лидер", callback_data=f"user_band_members:{band_id}:owner:0"),
+                ],
+                [
+                    InlineKeyboardButton(text="Роли", callback_data=f"user_band_members:{band_id}:role:0"),
+                    InlineKeyboardButton(text="Участники", callback_data=f"user_band_members:{band_id}:remove:0"),
+                ],
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="Назад к списку", callback_data=f"user_bands:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_band_members_keyboard(band: dict, action: str, page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
+    members = band.get("members", [])
+    pages = max(1, (len(members) + page_size - 1) // page_size)
+    page = max(0, min(page, pages - 1))
+    start = page * page_size
+    rows = []
+    for member in members[start : start + page_size]:
+        user = member["user"]
+        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or user.get("telegram_username") or str(user["telegram_id"])
+        marker = "👑 " if member.get("is_owner") else ""
+        rows.append([InlineKeyboardButton(text=f"{marker}{name} | {member['instrument_role']}"[:64], callback_data=f"user_band_member:{band['id']}:{member['id']}:{action}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"user_band_members:{band['id']}:{action}:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"user_band_members:{band['id']}:{action}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="К коллективу", callback_data=f"user_band:{band['id']}:0")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_member_remove_confirm_keyboard(band_id: int, member_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_member_remove_confirm:{band_id}:{member_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"user_band_members:{band_id}:remove:0")],
         ]
     )
 

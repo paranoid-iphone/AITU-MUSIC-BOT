@@ -17,6 +17,11 @@ async def list_bookings(telegram_id: int | None = None, session: AsyncSession = 
     return await bookings.list_bookings(session, telegram_id)
 
 
+@router.get("/mine", response_model=list[ScheduleBookingRead])
+async def my_bookings(telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await bookings.list_my_booking_rows(session, telegram_id)
+
+
 @router.get("/schedule", response_model=list[ScheduleBookingRead])
 async def schedule(session: AsyncSession = Depends(get_session)):
     return await bookings.list_schedule(session)

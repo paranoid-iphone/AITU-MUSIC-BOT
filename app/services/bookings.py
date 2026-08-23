@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -49,6 +49,25 @@ def _booking_owner_label(booking: Booking) -> str:
         )
         return f"Личная репетиция | {name}"
     return "Стафф / кабинет"
+
+
+async def _can_manage_booking(session: AsyncSession, user, booking: Booking) -> bool:
+    from app.db.models import UserRole
+
+    if user.role == UserRole.ADMIN.value:
+        return True
+    if booking.created_by_id == user.id:
+        return True
+    if booking.band_id is None:
+        return False
+    owner_result = await session.execute(
+        select(BandMember).where(
+            BandMember.band_id == booking.band_id,
+            BandMember.user_id == user.id,
+            BandMember.is_owner.is_(True),
+        )
+    )
+    return owner_result.scalar_one_or_none() is not None
 
 
 async def _ensure_booking_time_available(
@@ -345,7 +364,6 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
     result = await session.execute(
         select(Booking)
         .where(Booking.id == booking_id)
@@ -354,6 +372,8 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     booking = result.scalar_one_or_none()
     if booking is None:
         raise NotFoundError("Booking not found")
+    if not await _can_manage_booking(session, user, booking):
+        raise ForbiddenError("You cannot manage this booking")
     band_name = _booking_owner_label(booking)
     created_by = (
         f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
@@ -398,7 +418,6 @@ async def update_booking(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
     result = await session.execute(
         select(Booking)
         .where(Booking.id == booking_id)
@@ -407,6 +426,8 @@ async def update_booking(
     booking = result.scalar_one_or_none()
     if booking is None:
         raise NotFoundError("Booking not found")
+    if not await _can_manage_booking(session, user, booking):
+        raise ForbiddenError("You cannot manage this booking")
     new_date = booking_date or booking.booking_date
     new_start = start_time or booking.start_time
     new_end = end_time or booking.end_time
@@ -441,6 +462,48 @@ async def list_bookings(session: AsyncSession, telegram_id: int | None = None) -
         stmt = stmt.join(BandMember, BandMember.band_id == Booking.band_id).where(BandMember.user_id == user.id)
     result = await session.execute(stmt)
     return list(result.scalars().unique())
+
+
+async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[dict]:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        return []
+    stmt = (
+        select(Booking)
+        .outerjoin(BandMember, BandMember.band_id == Booking.band_id)
+        .where(
+            Booking.status == BookingStatus.CONFIRMED.value,
+            or_(
+                Booking.created_by_id == user.id,
+                BandMember.user_id == user.id,
+            ),
+        )
+        .options(selectinload(Booking.band), selectinload(Booking.created_by))
+        .order_by(Booking.booking_date, Booking.start_time)
+    )
+    result = await session.execute(stmt)
+    rows = []
+    now = datetime.now()
+    for booking in result.scalars().unique():
+        if datetime.combine(booking.booking_date, booking.end_time) <= now:
+            continue
+        created_by = booking.created_by
+        rows.append(
+            {
+                "id": booking.id,
+                "band_name": _booking_owner_label(booking),
+                "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
+                or created_by.telegram_username
+                or str(created_by.telegram_id),
+                "booking_date": booking.booking_date,
+                "start_time": booking.start_time,
+                "end_time": booking.end_time,
+                "purpose": booking.purpose,
+                "song_title": booking.song_title,
+                "status": booking.status,
+            }
+        )
+    return rows
 
 
 async def list_schedule(session: AsyncSession) -> list[dict]:
