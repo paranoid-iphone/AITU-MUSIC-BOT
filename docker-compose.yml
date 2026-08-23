@@ -34,11 +34,12 @@ services:
 
   ngrok:
     image: ngrok/ngrok:3
-    entrypoint: /bin/sh
-    command: -c 'if [ -n "$$NGROK_DOMAIN" ]; then ngrok http --domain="$$NGROK_DOMAIN" backend:8000 --log stdout; else ngrok http backend:8000 --log stdout; fi'
+    command: ["http", "http://backend:8000", "--log", "stdout"]
     environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
-      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env}
+      NGROK_CONFIG: /etc/ngrok.yml
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml:ro
     ports:
       - "4040:4040"
     depends_on:
