@@ -20,7 +20,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - .:/app
     depends_on:
@@ -34,9 +34,11 @@ services:
 
   ngrok:
     image: ngrok/ngrok:3
-    command: http backend:8000 --log stdout
+    entrypoint: /bin/sh
+    command: -c 'if [ -n "$$NGROK_DOMAIN" ]; then ngrok http --domain="$$NGROK_DOMAIN" backend:8000 --log stdout; else ngrok http backend:8000 --log stdout; fi'
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
     ports:
       - "4040:4040"
     depends_on:
