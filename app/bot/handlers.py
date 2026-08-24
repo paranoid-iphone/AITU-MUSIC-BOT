@@ -103,6 +103,25 @@ LEHA_PRAISES = [
 ]
 
 
+MERTAI_PRAISES = [
+    (
+        "Мертай - великий сисадмин AITU Music Club, человек, после которого серверы дышат ровнее, "
+        "логи становятся понятнее, а деплой перестает быть лотереей."
+    ),
+    (
+        "Сегодня чествуем Мертая: хранителя инфраструктуры, укротителя контейнеров и того самого человека, "
+        "который знает, где всё упало, ещё до того как остальные поняли, что оно вообще падало."
+    ),
+    (
+        "Мертай - легендарный сисадмин, на чьём фоне ngrok, Docker и серверные настройки стараются вести себя прилично."
+    ),
+    (
+        "Если AITU Music Club Bot стоит на ногах, где-то рядом точно есть Мертай: великий сисадмин, "
+        "архитектор аптайма и повелитель спокойных перезапусков."
+    ),
+]
+
+
 async def show_menu(message: Message, user: dict) -> None:
     language = user.get("language", "ru")
     await send_schedule_menu(message, user, t(language, "main_menu"))
@@ -2195,6 +2214,11 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
 @router.message(Command("leha"))
 async def leha(message: Message) -> None:
     await message.answer(random.choice(LEHA_PRAISES))
+
+
+@router.message(Command("mertai"))
+async def mertai(message: Message) -> None:
+    await message.answer(random.choice(MERTAI_PRAISES))
 
 
 @router.message(Command("help"))
