@@ -62,6 +62,7 @@ from app.bot.keyboards import (
     registration_review_keyboard,
     user_events_keyboard,
     user_band_detail_keyboard,
+    user_band_manage_keyboard,
     user_band_members_keyboard,
     user_bands_list_keyboard,
     user_booking_delete_confirm_keyboard,
@@ -81,6 +82,7 @@ logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
 SCHEDULE_MENU_MESSAGES_KEY = "bot:schedule_menu_messages"
 SCHEDULE_IMAGE_FILE_ID_PREFIX = "bot:schedule_image_file_id:"
+REGISTRATION_NOTICE_MESSAGES_PREFIX = "bot:registration_notice_messages:"
 bot_username_cache: str | None = None
 
 LEHA_PRAISES = [
@@ -631,15 +633,58 @@ async def get_registration_admin_ids() -> set[int]:
     return admin_ids
 
 
+def registration_notice_messages_key(telegram_id: int) -> str:
+    return f"{REGISTRATION_NOTICE_MESSAGES_PREFIX}{telegram_id}"
+
+
+async def get_registration_notice_messages(telegram_id: int) -> list[dict]:
+    raw = await redis.get(registration_notice_messages_key(telegram_id))
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+async def remember_registration_notice_message(telegram_id: int, chat_id: int, message_id: int) -> None:
+    messages = await get_registration_notice_messages(telegram_id)
+    entry = {"chat_id": chat_id, "message_id": message_id}
+    if entry not in messages:
+        messages.append(entry)
+    await redis.set(registration_notice_messages_key(telegram_id), json.dumps(messages), ex=7 * 24 * 60 * 60)
+
+
+async def clear_registration_notice_messages(telegram_id: int) -> None:
+    await redis.delete(registration_notice_messages_key(telegram_id))
+    registration_notice_sent.discard(telegram_id)
+
+
+async def update_registration_notice_messages(bot, telegram_id: int, text: str) -> int:
+    messages = await get_registration_notice_messages(telegram_id)
+    updated = 0
+    for item in messages:
+        try:
+            await bot.edit_message_text(text, chat_id=item["chat_id"], message_id=item["message_id"], reply_markup=None)
+            updated += 1
+        except Exception as exc:
+            logger.info("Could not update registration notice %s/%s: %s", item.get("chat_id"), item.get("message_id"), exc)
+    await clear_registration_notice_messages(telegram_id)
+    return updated
+
+
 async def notify_admins_about_registration(message: Message, user: dict, force: bool = False) -> bool:
     telegram_id = user["telegram_id"]
-    if not force and telegram_id in registration_notice_sent:
+    if not force and (telegram_id in registration_notice_sent or await get_registration_notice_messages(telegram_id)):
         return False
+    if force:
+        await clear_registration_notice_messages(telegram_id)
     sent = 0
     admin_ids = await get_registration_admin_ids()
     for admin_id in admin_ids:
         try:
-            await message.bot.send_message(
+            sent_message = await message.bot.send_message(
                 admin_id,
                 "Новая заявка на регистрацию:\n"
                 f"{user['last_name']} {user['first_name']} | {user['study_group']}\n"
@@ -648,6 +693,7 @@ async def notify_admins_about_registration(message: Message, user: dict, force: 
                 "Одобрить регистрацию?",
                 reply_markup=registration_review_keyboard(user["telegram_id"]),
             )
+            await remember_registration_notice_message(telegram_id, sent_message.chat.id, sent_message.message_id)
             sent += 1
         except Exception as exc:
             logger.warning("Could not send registration notification to admin %s: %s", admin_id, exc)
@@ -897,6 +943,22 @@ async def inline_user_band_edit(callback: CallbackQuery, state: FSMContext) -> N
     await state.update_data(user_band_edit_id=int(band_id_raw), user_band_edit_field=field)
     await state.set_state(BandFlow.edit_value)
     await callback.message.answer("Введите новое название коллектива:", reply_markup=flow_cancel_keyboard())
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_manage:"))
+async def inline_user_band_manage(callback: CallbackQuery) -> None:
+    _, band_id_raw, page_raw = callback.data.split(":")
+    band_id = int(band_id_raw)
+    band = await api.get_band(band_id)
+    if not user_is_band_owner(band, callback.from_user.id):
+        await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
+        return
+    await edit_screen(
+        callback,
+        "Редактирование коллектива\n\n" + format_band_card(band),
+        user_band_manage_keyboard(band_id, int(page_raw)),
+    )
     await answer_callback(callback)
 
 
@@ -2169,9 +2231,11 @@ async def inline_registration_approve(callback: CallbackQuery) -> None:
         "Регистрация одобрена:\n"
         f"{user['last_name'] or '-'} {user['first_name'] or '-'} | {user['study_group'] or '-'}\n"
         f"Telegram: @{user['telegram_username'] or '-'}\n"
-        f"Telegram ID: {user['telegram_id']}"
+        f"Telegram ID: {user['telegram_id']}\n"
+        f"Одобрил: @{admin.get('telegram_username') or callback.from_user.id}"
     )
-    await edit_screen(callback, text)
+    if not await update_registration_notice_messages(callback.message.bot, user["telegram_id"], text):
+        await edit_screen(callback, text)
     try:
         await callback.message.bot.send_message(
             user["telegram_id"],
@@ -2196,9 +2260,11 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
         f"{user['last_name'] or '-'} {user['first_name'] or '-'} | {user['study_group'] or '-'}\n"
         f"Telegram: @{user['telegram_username'] or '-'}\n"
         f"Telegram ID: {user['telegram_id']}\n"
-        f"Повторная подача после: {retry_after or 'позже'}"
+        f"Повторная подача после: {retry_after or 'позже'}\n"
+        f"Отклонил: @{admin.get('telegram_username') or callback.from_user.id}"
     )
-    await edit_screen(callback, text)
+    if not await update_registration_notice_messages(callback.message.bot, user["telegram_id"], text):
+        await edit_screen(callback, text)
     try:
         await callback.message.bot.send_message(
             user["telegram_id"],

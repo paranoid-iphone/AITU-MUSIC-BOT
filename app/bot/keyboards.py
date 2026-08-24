@@ -137,20 +137,23 @@ def user_bands_list_keyboard(bands: list[dict], page: int = 0, page_size: int = 
 def user_band_detail_keyboard(band_id: int, is_owner: bool, page: int = 0) -> InlineKeyboardMarkup:
     rows = []
     if is_owner:
-        rows.extend(
-            [
-                [InlineKeyboardButton(text="Редактировать коллектив", callback_data=f"user_band_edit:{band_id}:name")],
-                [
-                    InlineKeyboardButton(text="Сменить лидера", callback_data=f"user_band_members:{band_id}:owner:0"),
-                    InlineKeyboardButton(text="Роли участников", callback_data=f"user_band_members:{band_id}:role:0"),
-                ],
-                [
-                    InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_members:{band_id}:remove:0"),
-                ],
-            ]
-        )
+        rows.append([InlineKeyboardButton(text="Редактировать коллектив", callback_data=f"user_band_manage:{band_id}:{page}")])
     rows.append([InlineKeyboardButton(text="Назад к списку", callback_data=f"user_bands:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_band_manage_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Переименовать", callback_data=f"user_band_edit:{band_id}:name")],
+            [
+                InlineKeyboardButton(text="Сменить лидера", callback_data=f"user_band_members:{band_id}:owner:0"),
+                InlineKeyboardButton(text="Роли участников", callback_data=f"user_band_members:{band_id}:role:0"),
+            ],
+            [InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_members:{band_id}:remove:0")],
+            [InlineKeyboardButton(text="К коллективу", callback_data=f"user_band:{band_id}:{page}")],
+        ]
+    )
 
 
 def user_band_members_keyboard(band: dict, action: str, page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
