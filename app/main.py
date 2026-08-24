@@ -53,7 +53,7 @@ async def schedule_webapp() -> str:
     th { position:sticky; top:58px; z-index:2; background:var(--soft); padding:10px 8px; font-size:13px; text-align:left; color:#315a3c; }
     .time { width:72px; background:#fbfdfb; color:#7a887d; font-size:12px; padding:8px; white-space:nowrap; }
     td { height:54px; padding:4px; min-width:116px; }
-    .event { border-left:4px solid var(--green); background:var(--busy); border-radius:7px; padding:6px 7px; min-height:44px; box-shadow:0 1px 0 rgba(0,0,0,.04); }
+    .event { border-left:4px solid var(--green); background:var(--busy); border-radius:7px; padding:6px 7px; min-height:44px; height:100%; box-shadow:0 1px 0 rgba(0,0,0,.04); }
     .event.staff { background:var(--staff); border-left-color:#4a6fd6; }
     .song { font-weight:750; font-size:13px; margin-bottom:2px; }
     .band, .purpose { font-size:11px; color:#435247; line-height:1.25; }
@@ -73,6 +73,10 @@ async def schedule_webapp() -> str:
     });
     const dayNames = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
     const purposeMap = { concert: "к концерту", self: "для себя", staff: "ивент / стафф", personal: "личная репетиция" };
+    function timeToMinutes(value) {
+      const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+      return hours * 60 + minutes;
+    }
     function nextDays() {
       const now = new Date();
       return Array.from({length: 7}, (_, i) => {
@@ -93,14 +97,30 @@ async def schedule_webapp() -> str:
       const head = document.createElement("tr");
       head.innerHTML = "<th>Время</th>" + days.map(d => `<th>${dayNames[d.getDay()]}<br>${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth()+1).padStart(2, "0")}</th>`).join("");
       table.appendChild(head);
+      const byStart = new Map();
+      const covered = new Set();
+      for (const item of bookings) {
+        const start = item.start_time.slice(0, 5);
+        const end = item.end_time.slice(0, 5);
+        byStart.set(`${item.booking_date}|${start}`, item);
+        for (let minute = timeToMinutes(start) + 30; minute < timeToMinutes(end); minute += 30) {
+          const time = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+          covered.add(`${item.booking_date}|${time}`);
+        }
+      }
       for (const time of hours) {
         const tr = document.createElement("tr");
         tr.innerHTML = `<td class="time">${time}</td>`;
         for (const day of days) {
           const date = isoDate(day);
+          if (covered.has(`${date}|${time}`)) {
+            continue;
+          }
           const cell = document.createElement("td");
-          const item = bookings.find(b => b.booking_date === date && b.start_time.slice(0,5) === time);
+          const item = byStart.get(`${date}|${time}`);
           if (item) {
+            const span = Math.max(1, Math.ceil((timeToMinutes(item.end_time) - timeToMinutes(item.start_time)) / 30));
+            cell.rowSpan = span;
             const div = document.createElement("div");
             div.className = `event ${item.purpose === "staff" ? "staff" : ""}`;
             div.innerHTML = `<div class="song">${item.song_title || "песня не указана"}</div><div class="band">${item.band_name}</div><div class="purpose">${item.start_time.slice(0,5)}-${item.end_time.slice(0,5)} · ${purposeMap[item.purpose] || item.purpose}</div>`;
