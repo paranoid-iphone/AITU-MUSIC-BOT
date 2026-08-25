@@ -151,7 +151,17 @@ def user_band_manage_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMark
                 InlineKeyboardButton(text="Роли участников", callback_data=f"user_band_members:{band_id}:role:0"),
             ],
             [InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_members:{band_id}:remove:0")],
+            [InlineKeyboardButton(text="Удалить коллектив", callback_data=f"user_band_delete:{band_id}")],
             [InlineKeyboardButton(text="К коллективу", callback_data=f"user_band:{band_id}:{page}")],
+        ]
+    )
+
+
+def user_band_delete_confirm_keyboard(band_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить коллектив", callback_data=f"user_band_delete_confirm:{band_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"user_band_manage:{band_id}:0")],
         ]
     )
 

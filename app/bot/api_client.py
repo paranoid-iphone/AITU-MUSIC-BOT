@@ -114,6 +114,9 @@ class BackendClient:
     async def remove_band_member(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/bands/{band_id}/members/{member_id}", params={"requester_telegram_id": requester_telegram_id})
 
+    async def delete_band(self, requester_telegram_id: int, band_id: int) -> dict[str, Any]:
+        return await self.request("DELETE", f"/bands/{band_id}", params={"requester_telegram_id": requester_telegram_id})
+
     async def join_band(self, telegram_id: int, invite_code: str, instrument_role: str) -> dict[str, Any]:
         return await self.request(
             "POST",

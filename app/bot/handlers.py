@@ -61,6 +61,7 @@ from app.bot.keyboards import (
     rehearsals_menu_keyboard,
     registration_review_keyboard,
     user_events_keyboard,
+    user_band_delete_confirm_keyboard,
     user_band_detail_keyboard,
     user_band_manage_keyboard,
     user_band_members_keyboard,
@@ -1015,6 +1016,41 @@ async def inline_user_band_member_remove_confirm(callback: CallbackQuery) -> Non
         return
     band = await api.get_band(band_id)
     await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, True))
+    await answer_callback(callback, "Готово")
+
+
+@router.callback_query(F.data.startswith("user_band_delete:"))
+async def inline_user_band_delete(callback: CallbackQuery) -> None:
+    band_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    band = await api.get_band(band_id)
+    if not user_is_band_owner(band, callback.from_user.id):
+        await answer_callback(callback, "Удалить коллектив может только лидер.", show_alert=True)
+        return
+    await edit_screen(
+        callback,
+        f"Удалить коллектив «{band['name']}»?\n\n"
+        "Участники и заявки этого коллектива на концерты будут удалены. Брони останутся в истории, но будут отвязаны от коллектива.",
+        user_band_delete_confirm_keyboard(band_id),
+    )
+    await answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("user_band_delete_confirm:"))
+async def inline_user_band_delete_confirm(callback: CallbackQuery) -> None:
+    band_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    try:
+        deleted = await api.delete_band(callback.from_user.id, band_id)
+    except RuntimeError as exc:
+        await edit_screen(callback, f"Не получилось удалить коллектив: {exc}", bands_menu_keyboard())
+        await answer_callback(callback)
+        return
+    bands = sorted(await api.list_bands(callback.from_user.id), key=lambda item: item.get("created_at", ""), reverse=True)
+    text = f"Коллектив удалён: {deleted['name']}"
+    if bands:
+        text += "\n\nМои коллективы"
+    else:
+        text += "\n\nУ вас пока нет коллективов."
+    await edit_screen(callback, text, user_bands_list_keyboard(bands))
     await answer_callback(callback, "Готово")
 
 

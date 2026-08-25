@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Band, BandMember, UserRole
+from app.db.models import Band, BandMember, Booking, EventApplication, EventApplicationMember, UserRole
 from app.services.errors import ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -194,5 +194,38 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
         f"Удалил участника из коллектива #{band_id}: {user_name}",
     )
     await session.delete(member)
+    await session.commit()
+    return deleted
+
+
+async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id: int) -> dict:
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    band = await get_band_detail(session, band_id)
+    deleted = {"id": band.id, "name": band.name}
+
+    bookings_result = await session.execute(select(Booking).where(Booking.band_id == band_id))
+    for booking in bookings_result.scalars():
+        booking.band_id = None
+
+    applications_result = await session.execute(select(EventApplication).where(EventApplication.band_id == band_id))
+    for application in applications_result.scalars():
+        members_result = await session.execute(
+            select(EventApplicationMember).where(EventApplicationMember.application_id == application.id)
+        )
+        for member in members_result.scalars():
+            await session.delete(member)
+        await session.delete(application)
+
+    await log_action(
+        session,
+        requester.id,
+        "band.delete",
+        "band",
+        band.id,
+        f"Удалил коллектив: {band.name}",
+    )
+    await session.delete(band)
     await session.commit()
     return deleted

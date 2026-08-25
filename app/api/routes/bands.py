@@ -39,6 +39,11 @@ async def update_band(band_id: int, payload: BandUpdate, session: AsyncSession =
     return await bands.update_band_name(session, band_id, payload.requester_telegram_id, payload.name)
 
 
+@router.delete("/{band_id}")
+async def delete_band(band_id: int, requester_telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await bands.delete_band(session, band_id, requester_telegram_id)
+
+
 @router.patch("/{band_id}/owner", response_model=BandDetail)
 async def transfer_owner(band_id: int, payload: BandOwnerUpdate, session: AsyncSession = Depends(get_session)):
     return await bands.transfer_band_owner(session, band_id, payload.requester_telegram_id, payload.member_id)
