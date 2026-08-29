@@ -39,7 +39,7 @@ async def schedule_webapp() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AITU Music Club Schedule</title>
   <style>
-    :root { color-scheme: light; --green:#2f7d4f; --soft:#eef7ef; --line:#d9e8da; --busy:#d9eadb; --staff:#dce7ff; --text:#172018; }
+    :root { color-scheme: light; --green:#2f7d4f; --soft:#eef7ef; --line:#d9e8da; --busy:#d9eadb; --staff:#dce7ff; --closed:#f1ebe1; --text:#172018; }
     * { box-sizing: border-box; }
     body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; color:var(--text); background:#f7faf7; }
     header { position:sticky; top:0; z-index:3; padding:14px 14px 10px; background:rgba(247,250,247,.94); backdrop-filter: blur(10px); border-bottom:1px solid var(--line); }
@@ -55,6 +55,9 @@ async def schedule_webapp() -> str:
     td { height:54px; padding:4px; min-width:116px; }
     .event { border-left:4px solid var(--green); background:var(--busy); border-radius:7px; padding:6px 7px; min-height:44px; height:100%; box-shadow:0 1px 0 rgba(0,0,0,.04); }
     .event.staff { background:var(--staff); border-left-color:#4a6fd6; }
+    .closed { height:100%; min-height:44px; border-radius:7px; padding:7px; background:repeating-linear-gradient(135deg, var(--closed), var(--closed) 8px, #e5dacb 8px, #e5dacb 9px); color:#786656; }
+    .closed-title { font-weight:750; font-size:12px; margin-bottom:3px; }
+    .closed-note { font-size:11px; line-height:1.25; }
     .song { font-weight:750; font-size:13px; margin-bottom:2px; }
     .band, .purpose { font-size:11px; color:#435247; line-height:1.25; }
     .empty { color:#b2beb4; font-size:11px; padding:6px; }
@@ -88,9 +91,20 @@ async def schedule_webapp() -> str:
     function isoDate(d) {
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     }
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[char]));
+    }
     async function load() {
       const res = await fetch("/webapp/schedule-data", { cache: "no-store" });
-      const bookings = await res.json();
+      const payload = await res.json();
+      const bookings = Array.isArray(payload) ? payload : payload.bookings || [];
+      const dayClosures = Array.isArray(payload) ? [] : payload.day_closures || [];
       const days = nextDays();
       const table = document.getElementById("schedule");
       table.innerHTML = "";
@@ -99,6 +113,7 @@ async def schedule_webapp() -> str:
       table.appendChild(head);
       const byStart = new Map();
       const covered = new Set();
+      const closedByDate = new Map(dayClosures.map(item => [item.date, item.occupied_by || "занято другим клубом"]));
       for (const item of bookings) {
         const start = item.start_time.slice(0, 5);
         const end = item.end_time.slice(0, 5);
@@ -125,6 +140,8 @@ async def schedule_webapp() -> str:
             div.className = `event ${item.purpose === "staff" ? "staff" : ""}`;
             div.innerHTML = `<div class="song">${item.song_title || "песня не указана"}</div><div class="band">${item.band_name}</div><div class="purpose">${item.start_time.slice(0,5)}-${item.end_time.slice(0,5)} · ${purposeMap[item.purpose] || item.purpose}</div>`;
             cell.appendChild(div);
+          } else if (closedByDate.has(date)) {
+            cell.innerHTML = `<div class="closed"><div class="closed-title">день занят</div><div class="closed-note">${escapeHtml(closedByDate.get(date))}</div></div>`;
           } else {
             cell.innerHTML = '<span class="empty">свободно</span>';
           }
@@ -143,10 +160,11 @@ async def schedule_webapp() -> str:
 
 
 @app.get("/webapp/schedule-data")
-async def schedule_webapp_data() -> list[dict]:
+async def schedule_webapp_data() -> dict:
     async with AsyncSessionLocal() as session:
         rows = await booking_service.list_schedule(session)
-    return [
+        closures = await booking_service.list_day_closures(session)
+    bookings = [
         {
             **item,
             "booking_date": item["booking_date"].isoformat(),
@@ -155,6 +173,8 @@ async def schedule_webapp_data() -> list[dict]:
         }
         for item in rows
     ]
+    day_closures = [{**item, "date": item["date"].isoformat()} for item in closures]
+    return {"bookings": bookings, "day_closures": day_closures}
 
 
 app.include_router(users.router, prefix="/users", tags=["users"])

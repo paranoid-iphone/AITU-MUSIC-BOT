@@ -40,6 +40,7 @@ class BookingFlow(StatesGroup):
 
 class AdminFlow(StatesGroup):
     day_toggle = State()
+    day_occupied_by = State()
     approve_user = State()
     reject_user = State()
     ban_user = State()

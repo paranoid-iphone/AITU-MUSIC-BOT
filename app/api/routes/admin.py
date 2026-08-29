@@ -12,8 +12,8 @@ router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 @router.put("/days", response_model=dict)
 async def update_day(payload: DayUpdate, session: AsyncSession = Depends(get_session)):
-    day = await admin.update_available_day(session, payload.telegram_id, payload.day_of_week, payload.is_enabled)
-    return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled}
+    day = await admin.update_available_day(session, payload.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by)
+    return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled, "occupied_by": day.occupied_by}
 
 
 @router.post("/slots", response_model=AvailableSlotRead)

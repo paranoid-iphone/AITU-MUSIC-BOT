@@ -27,6 +27,12 @@ async def schedule(session: AsyncSession = Depends(get_session)):
     return await bookings.list_schedule(session)
 
 
+@router.get("/day-closures")
+async def day_closures(session: AsyncSession = Depends(get_session)):
+    rows = await bookings.list_day_closures(session)
+    return [{**item, "date": item["date"].isoformat()} for item in rows]
+
+
 @router.get("/available-slots", response_model=list[AvailableSlotRead])
 async def available_slots(
     target_date: date,

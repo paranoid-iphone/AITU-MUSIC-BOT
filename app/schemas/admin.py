@@ -7,6 +7,7 @@ class DayUpdate(BaseModel):
     telegram_id: int
     day_of_week: int = Field(ge=0, le=6)
     is_enabled: bool
+    occupied_by: str | None = Field(default=None, max_length=150)
 
 
 class SlotCreate(BaseModel):

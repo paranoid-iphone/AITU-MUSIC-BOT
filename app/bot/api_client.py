@@ -257,12 +257,15 @@ class BackendClient:
     async def delete_personal_event_history(self, telegram_id: int, item_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/events/history/personal/{item_id}", params={"telegram_id": telegram_id})
 
-    async def update_day(self, telegram_id: int, day_of_week: int, is_enabled: bool) -> dict[str, Any]:
+    async def update_day(self, telegram_id: int, day_of_week: int, is_enabled: bool, occupied_by: str | None = None) -> dict[str, Any]:
         return await self.request(
             "PUT",
             "/admin/days",
-            json={"telegram_id": telegram_id, "day_of_week": day_of_week, "is_enabled": is_enabled},
+            json={"telegram_id": telegram_id, "day_of_week": day_of_week, "is_enabled": is_enabled, "occupied_by": occupied_by},
         )
+
+    async def schedule_day_closures(self) -> list[dict[str, Any]]:
+        return await self.request("GET", "/bookings/day-closures")
 
     async def get_weekly_booking_limit(self, telegram_id: int) -> dict[str, Any]:
         return await self.request("GET", "/admin/settings/weekly-booking-limit", params={"telegram_id": telegram_id})

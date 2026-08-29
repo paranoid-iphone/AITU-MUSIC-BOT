@@ -26,6 +26,7 @@ async def create_db_and_tables() -> None:
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) DEFAULT 'self' NOT NULL"))
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS song_title VARCHAR(150)"))
         await conn.execute(text("ALTER TABLE bookings ALTER COLUMN band_id DROP NOT NULL"))
+        await conn.execute(text("ALTER TABLE available_days ADD COLUMN IF NOT EXISTS occupied_by VARCHAR(150)"))
         await conn.execute(text("ALTER TABLE event_applications ADD COLUMN IF NOT EXISTS song_title VARCHAR(150)"))
         await conn.execute(
             text(

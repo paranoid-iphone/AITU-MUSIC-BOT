@@ -112,6 +112,7 @@ class AvailableDay(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     day_of_week: Mapped[int] = mapped_column(Integer, unique=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    occupied_by: Mapped[str | None] = mapped_column(String(150))
 
 
 class TimeSlot(Base):

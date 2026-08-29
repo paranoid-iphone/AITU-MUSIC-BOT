@@ -31,7 +31,13 @@ def _booking_owner_label(booking) -> str:
     return "Стафф / кабинет"
 
 
-async def update_available_day(session: AsyncSession, telegram_id: int, day_of_week: int, is_enabled: bool) -> AvailableDay:
+async def update_available_day(
+    session: AsyncSession,
+    telegram_id: int,
+    day_of_week: int,
+    is_enabled: bool,
+    occupied_by: str | None = None,
+) -> AvailableDay:
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -40,18 +46,21 @@ async def update_available_day(session: AsyncSession, telegram_id: int, day_of_w
     require_admin(user)
     result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == day_of_week))
     day = result.scalar_one_or_none()
+    note = None if is_enabled else (occupied_by or "занято другим клубом").strip()[:150]
     if day is None:
-        day = AvailableDay(day_of_week=day_of_week, is_enabled=is_enabled)
+        day = AvailableDay(day_of_week=day_of_week, is_enabled=is_enabled, occupied_by=note)
         session.add(day)
     else:
         day.is_enabled = is_enabled
+        day.occupied_by = note
     await log_action(
         session,
         user.id,
         "schedule.day.update",
         "available_day",
         day_of_week,
-        f"{'Включил' if is_enabled else 'Выключил'} день недели: {day_of_week}",
+        f"{'Включил' if is_enabled else 'Выключил'} день недели: {day_of_week}"
+        + ("" if is_enabled else f", занято: {note}"),
     )
     await session.commit()
     await session.refresh(day)

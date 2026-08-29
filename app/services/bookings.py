@@ -541,3 +541,23 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
             }
         )
     return rows
+
+
+async def list_day_closures(session: AsyncSession) -> list[dict]:
+    now = datetime.now()
+    days = [now.date() + timedelta(days=offset) for offset in range(7)]
+    result = await session.execute(select(AvailableDay).where(AvailableDay.is_enabled.is_(False)))
+    closed_by_weekday = {item.day_of_week: item for item in result.scalars()}
+    rows = []
+    for day in days:
+        closed_day = closed_by_weekday.get(day.weekday())
+        if closed_day is None:
+            continue
+        rows.append(
+            {
+                "date": day,
+                "day_of_week": closed_day.day_of_week,
+                "occupied_by": closed_day.occupied_by or "занято другим клубом",
+            }
+        )
+    return rows

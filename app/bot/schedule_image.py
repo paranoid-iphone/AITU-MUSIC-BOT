@@ -30,6 +30,9 @@ SELF = "#dbeedd"
 CONCERT = "#dbe8ff"
 STAFF = "#ffe8cc"
 EMPTY = "#f8faf6"
+CLOSED = "#f0ece4"
+CLOSED_LINE = "#dbd3c6"
+CLOSED_TEXT = "#7a695d"
 PAST = "#ecefed"
 PAST_LINE = "#d6ddd7"
 PAST_TEXT = "#87938a"
@@ -130,11 +133,27 @@ def _draw_today_past(draw: ImageDraw.ImageDraw, day_idx: int, col_w: int, grid_t
         draw.text((x1 + 18, y1 + 16), "уже прошло", fill=PAST_TEXT, font=FONT_SMALL)
 
 
+def _draw_closed_day(draw: ImageDraw.ImageDraw, day_idx: int, col_w: int, grid_top: int, grid_h: int, occupied_by: str) -> None:
+    x1 = LEFT_GUTTER + day_idx * col_w + 1
+    x2 = LEFT_GUTTER + (day_idx + 1) * col_w - 1
+    y1 = grid_top + 1
+    y2 = grid_top + grid_h - 1
+    draw.rectangle((x1, y1, x2, y2), fill=CLOSED)
+    for y in range(y1 - col_w, y2, 20):
+        draw.line((x1, y + col_w, x2, y), fill=CLOSED_LINE, width=1)
+    y = y1 + 16
+    draw.text((x1 + 18, y), "день занят", fill=CLOSED_TEXT, font=FONT_CARD_BAND)
+    y += 22
+    for line in _fit_lines(occupied_by, 18, 3):
+        draw.text((x1 + 18, y), line, fill=CLOSED_TEXT, font=FONT_SMALL)
+        y += 16
+
+
 def _week_days(today: date) -> list[date]:
     return [today + timedelta(days=offset) for offset in range(DAYS)]
 
 
-def render_schedule_image(bookings: list[dict], generated_at: datetime | None = None) -> bytes:
+def render_schedule_image(bookings: list[dict], day_closures: list[dict] | None = None, generated_at: datetime | None = None) -> bytes:
     now = generated_at or datetime.now()
     days = _week_days(now.date())
     grid_top = TOP_PAD + TITLE_H + HEADER_H
@@ -181,6 +200,12 @@ def render_schedule_image(bookings: list[dict], generated_at: datetime | None = 
         if day == now.date():
             _draw_today_past(draw, day_idx, col_w, grid_top, grid_h, now)
 
+    closed_by_date = {item.get("date"): item.get("occupied_by") or "занято другим клубом" for item in (day_closures or [])}
+    for day_idx, day in enumerate(days):
+        occupied_by = closed_by_date.get(day.isoformat())
+        if occupied_by:
+            _draw_closed_day(draw, day_idx, col_w, grid_top, grid_h, occupied_by)
+
     bookings_by_day: dict[str, list[dict]] = {day.isoformat(): [] for day in days}
     for booking in bookings:
         if booking.get("booking_date") in bookings_by_day:
@@ -190,6 +215,8 @@ def render_schedule_image(bookings: list[dict], generated_at: datetime | None = 
         day_rows = bookings_by_day[day.isoformat()]
         if not day_rows:
             x = LEFT_GUTTER + day_idx * col_w
+            if day.isoformat() in closed_by_date:
+                continue
             label_y = grid_top + 16
             if day == now.date():
                 current_minutes = now.hour * 60 + now.minute

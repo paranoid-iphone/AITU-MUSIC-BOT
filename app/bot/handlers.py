@@ -474,7 +474,7 @@ async def get_schedule_text() -> str:
     return "\n".join(lines)
 
 
-def schedule_fingerprint(rows: list[dict]) -> str:
+def schedule_fingerprint(rows: list[dict], day_closures: list[dict] | None = None) -> str:
     payload = [
         {
             "id": item.get("id"),
@@ -488,17 +488,31 @@ def schedule_fingerprint(rows: list[dict]) -> str:
         }
         for item in rows
     ]
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    closure_payload = [
+        {
+            "date": item.get("date"),
+            "day_of_week": item.get("day_of_week"),
+            "occupied_by": item.get("occupied_by"),
+        }
+        for item in (day_closures or [])
+    ]
+    raw = json.dumps(
+        {"bookings": payload, "day_closures": closure_payload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 async def get_schedule_image_media() -> tuple[str | BufferedInputFile, str, bool]:
     rows = await api.schedule()
-    fingerprint = schedule_fingerprint(rows)
+    day_closures = await api.schedule_day_closures()
+    fingerprint = schedule_fingerprint(rows, day_closures)
     cached_file_id = await redis.get(f"{SCHEDULE_IMAGE_FILE_ID_PREFIX}{fingerprint}")
     if cached_file_id:
         return cached_file_id, fingerprint, True
-    image = render_schedule_image(rows)
+    image = render_schedule_image(rows, day_closures)
     return BufferedInputFile(image, filename="schedule.jpg"), fingerprint, False
 
 
@@ -3455,9 +3469,34 @@ async def admin_day_save(message: Message, state: FSMContext) -> None:
     except ValueError:
         await message.answer("Введите число от 0 до 6.")
         return
-    await api.update_day(message.from_user.id, day, data["is_enabled"])
+    if day < 0 or day > 6:
+        await message.answer("Введите число от 0 до 6.")
+        return
+    if data["is_enabled"]:
+        await api.update_day(message.from_user.id, day, True)
+        await state.clear()
+        await refresh_all_schedule_menus(message.bot)
+        await message.answer("День включен.", reply_markup=admin_schedule_keyboard())
+        return
+    await state.update_data(day_of_week=day)
+    await state.set_state(AdminFlow.day_occupied_by)
+    await message.answer(
+        "Кто занял этот день? Например: Debate Club, Dance Club или внешний ивент.",
+        reply_markup=flow_cancel_keyboard(),
+    )
+
+
+@router.message(AdminFlow.day_occupied_by)
+async def admin_day_occupied_by_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    occupied_by = message.text.strip()
+    if not occupied_by:
+        await message.answer("Напишите, кто занял день.")
+        return
+    await api.update_day(message.from_user.id, data["day_of_week"], False, occupied_by)
     await state.clear()
-    await message.answer("День обновлен.", reply_markup=admin_schedule_keyboard())
+    await refresh_all_schedule_menus(message.bot)
+    await message.answer("День выключен и подпись добавлена.", reply_markup=admin_schedule_keyboard())
 
 
 @router.message(F.text == "Создать концерт")
