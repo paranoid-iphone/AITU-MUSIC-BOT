@@ -166,6 +166,16 @@ class BackendClient:
             params["target_date"] = target_date.isoformat()
         return await self.request("GET", "/bookings/limit-status", params=params)
 
+    async def schedule_history(
+        self, telegram_id: int, band_id: int | None = None, group_id: int | None = None, limit: int = 15
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"telegram_id": telegram_id, "limit": limit}
+        if band_id is not None:
+            params["band_id"] = band_id
+        if group_id is not None:
+            params["group_id"] = group_id
+        return await self.request("GET", "/history", params=params)
+
     async def schedule(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/schedule")
 

@@ -6,7 +6,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timezone import now_local
 from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot
+from app.services.outbox import commit_and_publish
 from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
+from app.services.schedule_history import record_change, snapshot
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -339,7 +341,8 @@ async def create_booking(
         booking.id,
         f"Создал бронь: {'личная' if band_id is None else f'коллектив #{band_id}'}, {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {song_title or 'песня не указана'}",
     )
-    await session.commit()
+    await record_change(session, booking, "created", user)
+    await commit_and_publish(session)
     await session.refresh(booking)
     return booking
 
@@ -373,6 +376,7 @@ async def create_staff_booking(
         end_time=end_time,
         purpose="staff",
         song_title=title,
+        source="staff",
     )
     session.add(booking)
     await session.flush()
@@ -384,7 +388,8 @@ async def create_staff_booking(
         booking.id,
         f"Занял кабинет: {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {title}",
     )
-    await session.commit()
+    await record_change(session, booking, "created", user)
+    await commit_and_publish(session)
     await session.refresh(booking)
     return booking
 
@@ -405,6 +410,8 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
         raise NotFoundError("Booking not found")
     if not await _can_manage_booking(session, user, booking):
         raise ForbiddenError("You cannot manage this booking")
+    if booking.status != BookingStatus.CONFIRMED.value:
+        raise ConflictError("Booking is already cancelled")
     band_name = _booking_owner_label(booking)
     created_by = (
         f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
@@ -429,8 +436,11 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
         booking.id,
         f"Удалил бронь: {band_name}, {booking.booking_date.isoformat()} {booking.start_time.strftime('%H:%M')}-{booking.end_time.strftime('%H:%M')}",
     )
-    await session.delete(booking)
-    await session.commit()
+    before = snapshot(booking)
+    booking.status = BookingStatus.CANCELLED.value
+    booking.cancelled_by_id = user.id
+    await record_change(session, booking, "cancelled", user, before=before)
+    await commit_and_publish(session)
     return deleted
 
 
@@ -460,6 +470,9 @@ async def update_booking(
     require_approved(user)
     if not await _can_manage_booking(session, user, booking):
         raise ForbiddenError("You cannot manage this booking")
+    if booking.status != BookingStatus.CONFIRMED.value:
+        raise ConflictError("Cancelled booking cannot be changed")
+    before = snapshot(booking)
     if purpose is not None:
         if booking.band_id is not None and purpose in {"staff", "personal"}:
             raise ConflictError("Band booking must use concert or self purpose")
@@ -497,7 +510,8 @@ async def update_booking(
         booking.id,
         f"Изменил бронь #{booking.id}: {booking.booking_date.isoformat()} {booking.start_time.strftime('%H:%M')}-{booking.end_time.strftime('%H:%M')}",
     )
-    await session.commit()
+    await record_change(session, booking, "updated", user, before=before)
+    await commit_and_publish(session)
     await session.refresh(booking)
     return booking
 

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from app.api.routes import admin, bands, bookings, events, groups, users
+from app.api.routes import admin, bands, bookings, events, groups, history, users
 from app.core.config import settings
 from app.core.telegram_auth import validate_init_data
 from app.db.models import UserStatus
@@ -209,6 +209,7 @@ async def schedule_webapp_data(x_telegram_init_data: str | None = Header(default
 
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
+app.include_router(history.router, prefix="/history", tags=["history"])
 app.include_router(bands.router, prefix="/bands", tags=["bands"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
 app.include_router(events.router, prefix="/events", tags=["events"])

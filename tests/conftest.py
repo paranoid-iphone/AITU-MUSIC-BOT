@@ -6,8 +6,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db import models
 from app.services import bookings as booking_service
+from app.services import outbox
 
 _telegram_ids = itertools.count(1000)
+
+
+@pytest.fixture(autouse=True)
+def published(monkeypatch) -> list[dict]:
+    """Collect outbox events instead of pushing them to Redis."""
+    events: list[dict] = []
+
+    async def _capture(batch: list[dict]) -> None:
+        events.extend(batch)
+
+    monkeypatch.setattr(outbox, "publish", _capture)
+    return events
 
 
 @pytest_asyncio.fixture

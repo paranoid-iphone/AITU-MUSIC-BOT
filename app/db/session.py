@@ -58,6 +58,12 @@ async def create_db_and_tables() -> None:
                 "ON CONFLICT (key) DO NOTHING"
             )
         )
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual' NOT NULL"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS request_id INTEGER"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancelled_by_id INTEGER REFERENCES users(id)"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancel_reason VARCHAR(255)"))
+        await conn.execute(text("ALTER TABLE bookings DROP CONSTRAINT IF EXISTS uq_booking_slot"))
+        await conn.execute(text("UPDATE bookings SET source = 'staff' WHERE purpose = 'staff' AND source = 'manual'"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES groups(id)"))
         await conn.execute(text("ALTER TABLE bands ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES groups(id)"))
         await conn.execute(text("ALTER TABLE bands ADD COLUMN IF NOT EXISTS responsible_user_id INTEGER REFERENCES users(id)"))

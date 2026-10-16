@@ -146,6 +146,7 @@ def user_band_detail_keyboard(band_id: int, is_owner: bool, page: int = 0) -> In
     rows = []
     if is_owner:
         rows.append([InlineKeyboardButton(text="Редактировать коллектив", callback_data=f"user_band_manage:{band_id}:{page}")])
+    rows.append([InlineKeyboardButton(text="История изменений", callback_data=f"band_history:{band_id}:u")])
     rows.append([InlineKeyboardButton(text="Назад к списку", callback_data=f"user_bands:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -453,6 +454,7 @@ def group_admin_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Заявки", callback_data="admin_section:users"),
                 InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
             ],
+            [InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
@@ -547,6 +549,7 @@ def admin_band_detail_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMar
                 InlineKeyboardButton(text="Участники", callback_data=f"admin_band_members:{band_id}:remove:0"),
             ],
             [InlineKeyboardButton(text="Ответственный", callback_data=f"admin_band_members:{band_id}:responsible:0")],
+            [InlineKeyboardButton(text="История изменений", callback_data=f"band_history:{band_id}:a")],
             [InlineKeyboardButton(text="Назад к коллективам", callback_data=f"admin_bands:{page}")],
         ]
     )
@@ -620,6 +623,7 @@ def admin_user_detail_keyboard(user: dict, origin_status: str = "pending", page:
 def admin_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")],
             [InlineKeyboardButton(text="Последние действия", callback_data="admin:action_history")],
             [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
         ]

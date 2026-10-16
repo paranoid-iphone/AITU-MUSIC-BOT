@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -164,7 +164,6 @@ class ClubSetting(Base):
 
 class Booking(Base):
     __tablename__ = "bookings"
-    __table_args__ = (UniqueConstraint("booking_date", "start_time", "end_time", name="uq_booking_slot"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), nullable=True)
@@ -175,10 +174,35 @@ class Booking(Base):
     purpose: Mapped[str] = mapped_column(String(30), default="self")
     song_title: Mapped[str | None] = mapped_column(String(150), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=BookingStatus.CONFIRMED.value)
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    request_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     band: Mapped[Band | None] = relationship(back_populates="bookings")
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
+
+
+class ScheduleChange(Base):
+    """Who changed the schedule and how. Rows outlive bookings and bands, so names are denormalized."""
+
+    __tablename__ = "schedule_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True, index=True)
+    band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id", ondelete="SET NULL"), nullable=True, index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True, index=True)
+    band_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(30))
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    sheets_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    actor: Mapped["User | None"] = relationship("User", foreign_keys=[actor_id])
 
 
 class Event(Base):
