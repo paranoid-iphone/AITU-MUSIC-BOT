@@ -227,6 +227,35 @@ async def demote_admin(session: AsyncSession, admin_telegram_id: int, target_ide
     return target
 
 
+async def set_dsvr_role(session: AsyncSession, admin_telegram_id: int, target_identifier: str, enabled: bool) -> User:
+    from app.services.audit import log_action
+
+    admin = await get_user_by_telegram_id(session, admin_telegram_id)
+    target = await get_user_by_identifier(session, target_identifier)
+    if admin is None or target is None:
+        raise NotFoundError("User not found")
+    require_admin(admin)
+    if target.role == UserRole.ADMIN.value:
+        raise ConflictError("Admins already have full access; remove admin role first")
+    if enabled:
+        if target.status != UserStatus.APPROVED.value:
+            raise ConflictError("User must be approved before becoming DSVR")
+        target.role = UserRole.DSVR.value
+    elif target.role == UserRole.DSVR.value:
+        target.role = UserRole.USER.value
+    await log_action(
+        session,
+        admin.id,
+        "dsvr.add" if enabled else "dsvr.remove",
+        "user",
+        target.telegram_id,
+        f"{'Назначил' if enabled else 'Снял'} ДСВР: @{target.telegram_username or target.telegram_id}",
+    )
+    await session.commit()
+    await session.refresh(target)
+    return target
+
+
 async def list_admins(session: AsyncSession, admin_telegram_id: int) -> list[User]:
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:

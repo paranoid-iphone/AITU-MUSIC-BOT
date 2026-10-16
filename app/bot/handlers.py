@@ -27,7 +27,7 @@ from app.bot.keyboards import (
     admin_events_keyboard,
     admin_event_applications_keyboard,
     admin_inline_keyboard,
-    group_admin_inline_keyboard,
+    staff_inline_keyboard,
     admin_member_remove_confirm_keyboard,
     admin_user_detail_keyboard,
     admin_user_list_keyboard,
@@ -129,7 +129,13 @@ MERTAI_PRAISES = [
 
 
 def has_admin_menu(user: dict) -> bool:
-    return user.get("role") == "admin" or bool(user.get("is_group_admin"))
+    return user.get("role") in {"admin", "dsvr"} or bool(user.get("is_group_admin"))
+
+
+def admin_menu_keyboard_for(user: dict):
+    if user.get("role") == "admin":
+        return admin_inline_keyboard()
+    return staff_inline_keyboard(bool(user.get("is_group_admin")), user.get("role") == "dsvr")
 
 
 async def show_menu(message: Message, user: dict) -> None:
@@ -1597,7 +1603,7 @@ async def inline_admin(callback: CallbackQuery) -> None:
         await edit_screen(callback, "Нет доступа.")
         await answer_callback(callback)
         return
-    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    keyboard = admin_menu_keyboard_for(user)
     await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
@@ -1862,7 +1868,7 @@ async def inline_action_history(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "admin:back")
 async def inline_admin_back(callback: CallbackQuery) -> None:
     user = await api.get_user(callback.from_user.id)
-    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    keyboard = admin_menu_keyboard_for(user)
     await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
@@ -3117,7 +3123,7 @@ async def admin_menu(message: Message) -> None:
     if not has_admin_menu(user):
         await message.answer("Нет доступа.")
         return
-    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    keyboard = admin_menu_keyboard_for(user)
     await message.answer("Админ-меню", reply_markup=keyboard)
 
 

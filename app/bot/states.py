@@ -64,6 +64,15 @@ class AdminFlow(StatesGroup):
     group_admin_add = State()
 
 
+class DsvrFlow(StatesGroup):
+    date = State()
+    time = State()
+    title = State()
+    confirm = State()
+    grant_target = State()
+    revoke_target = State()
+
+
 class EventFlow(StatesGroup):
     event_id = State()
     band_id = State()

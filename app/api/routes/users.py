@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.users import AdminRoleUpdate, UserModerationUpdate, UserProfileUpdate, UserRead, UserSettingsUpdate, UserTelegramUpsert
+from app.schemas.users import AdminRoleUpdate, DsvrRoleUpdate, UserModerationUpdate, UserProfileUpdate, UserRead, UserSettingsUpdate, UserTelegramUpsert
 from app.services import users
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -42,6 +42,11 @@ async def promote_admin(payload: UserModerationUpdate, session: AsyncSession = D
 @router.post("/demote-admin", response_model=UserRead)
 async def demote_admin(payload: AdminRoleUpdate, session: AsyncSession = Depends(get_session)):
     return await users.demote_admin(session, payload.admin_telegram_id, payload.target)
+
+
+@router.post("/dsvr", response_model=UserRead)
+async def set_dsvr(payload: DsvrRoleUpdate, session: AsyncSession = Depends(get_session)):
+    return await users.set_dsvr_role(session, payload.admin_telegram_id, payload.target, payload.enabled)
 
 
 @router.post("/reject", response_model=UserRead)

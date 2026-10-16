@@ -58,6 +58,15 @@ class StaffBookingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=150)
 
 
+class PriorityBookingCreate(StaffBookingCreate):
+    pass
+
+
+class PriorityBookingResult(BaseModel):
+    booking: BookingRead
+    cancelled: list[dict]
+
+
 class AvailableSlotRead(BaseModel):
     id: int
     day_of_week: int

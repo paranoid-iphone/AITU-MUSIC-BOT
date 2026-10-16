@@ -176,6 +176,27 @@ class BackendClient:
             params["group_id"] = group_id
         return await self.request("GET", "/history", params=params)
 
+    async def priority_preview(self, telegram_id: int, booking_date: str, start_time: str, end_time: str) -> list[dict[str, Any]]:
+        return await self.request(
+            "GET",
+            "/bookings/priority-preview",
+            params={"telegram_id": telegram_id, "booking_date": booking_date, "start_time": start_time, "end_time": end_time},
+        )
+
+    async def create_priority_booking(
+        self, telegram_id: int, booking_date: str, start_time: str, end_time: str, title: str
+    ) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            "/bookings/priority",
+            json={"telegram_id": telegram_id, "booking_date": booking_date, "start_time": start_time, "end_time": end_time, "title": title},
+        )
+
+    async def set_dsvr(self, admin_telegram_id: int, target: str, enabled: bool) -> dict[str, Any]:
+        return await self.request(
+            "POST", "/users/dsvr", json={"admin_telegram_id": admin_telegram_id, "target": target, "enabled": enabled}
+        )
+
     async def schedule(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/schedule")
 

@@ -89,10 +89,19 @@ async def record_change(
     )
     session.add(change)
     queue_schedule_changed(session)
-    if notify and band is not None and band.responsible_user_id is not None:
-        responsible = await session.get(User, band.responsible_user_id)
-        if responsible is not None and (actor is None or responsible.id != actor.id):
-            queue_notification(session, responsible.telegram_id, _notification_text(action, label, actor, before, after, reason))
+    if notify:
+        recipient_ids: list[int] = []
+        if band is not None and band.responsible_user_id is not None:
+            recipient_ids.append(band.responsible_user_id)
+        if action in {"cancelled", "preempted"} and booking.created_by_id not in recipient_ids:
+            recipient_ids.append(booking.created_by_id)
+        text = _notification_text(action, label, actor, before, after, reason)
+        for user_id in recipient_ids:
+            if actor is not None and user_id == actor.id:
+                continue
+            recipient = await session.get(User, user_id)
+            if recipient is not None:
+                queue_notification(session, recipient.telegram_id, text)
     return change
 
 

@@ -447,17 +447,21 @@ def admin_inline_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def group_admin_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool) -> InlineKeyboardMarkup:
+    """Admin menu for people who are not main admins: group admins and/or DSVR."""
+    rows = []
+    if is_group_admin:
+        rows.append(
             [
                 InlineKeyboardButton(text="Заявки", callback_data="admin_section:users"),
                 InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
-            ],
-            [InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")],
-            [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
-        ]
-    )
+            ]
+        )
+    if is_dsvr:
+        rows.append([InlineKeyboardButton(text="Занять время (приоритет ДСВР)", callback_data="dsvr:start")])
+    rows.append([InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def groups_keyboard(groups: list[dict]) -> InlineKeyboardMarkup:
@@ -513,6 +517,10 @@ def admin_admins_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")],
             [InlineKeyboardButton(text="Снять админку", callback_data="admin:remove_admin")],
+            [
+                InlineKeyboardButton(text="Назначить ДСВР", callback_data="dsvr:grant"),
+                InlineKeyboardButton(text="Снять ДСВР", callback_data="dsvr:revoke"),
+            ],
             [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
         ]
     )
@@ -639,6 +647,7 @@ def admin_schedule_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Занять время", callback_data="admin:staff_booking"),
+                InlineKeyboardButton(text="Занять с вытеснением", callback_data="dsvr:start"),
                 InlineKeyboardButton(text="Редактировать бронь", callback_data="admin_bookings_manage:0"),
             ],
             [InlineKeyboardButton(text="Часы кабинета", callback_data="admin:booking_window")],

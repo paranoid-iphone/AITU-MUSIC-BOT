@@ -394,6 +394,115 @@ async def create_staff_booking(
     return booking
 
 
+PRIORITY_HORIZON_DAYS = 30
+
+
+def _require_priority_rights(user) -> None:
+    if not (is_dsvr(user) or is_global_admin(user)):
+        raise ForbiddenError("Only DSVR or admins can take over time")
+
+
+async def _validate_priority_slot(session: AsyncSession, booking_date: date, start_time: time, end_time: time) -> None:
+    duration = _duration_minutes(start_time, end_time)
+    if duration <= 0 or duration % 30 != 0:
+        raise ConflictError("Booking duration must be a positive 30-minute step")
+    now = now_local()
+    start_dt = datetime.combine(booking_date, start_time)
+    if start_dt <= now:
+        raise ConflictError("Start time must be in the future")
+    if booking_date > (now + timedelta(days=PRIORITY_HORIZON_DAYS)).date():
+        raise ConflictError(f"Date must be within the next {PRIORITY_HORIZON_DAYS} days")
+    window_start, window_finish = await get_booking_window_minutes(session)
+    if _time_to_minutes(start_time) < window_start or _time_to_minutes(end_time) > window_finish:
+        raise ConflictError("Booking is outside room working hours")
+
+
+async def _overlapping_confirmed(session: AsyncSession, booking_date: date, start_time: time, end_time: time) -> list[Booking]:
+    result = await session.execute(
+        select(Booking)
+        .where(Booking.booking_date == booking_date, Booking.status == BookingStatus.CONFIRMED.value)
+        .options(*_booking_load_options())
+        .order_by(Booking.start_time)
+    )
+    return [item for item in result.scalars().unique() if _overlaps(start_time, end_time, item.start_time, item.end_time)]
+
+
+def _preempted_row(booking: Booking) -> dict:
+    return {
+        "id": booking.id,
+        "band_name": _booking_owner_label(booking),
+        "booking_date": booking.booking_date.isoformat(),
+        "start_time": booking.start_time.isoformat(),
+        "end_time": booking.end_time.isoformat(),
+        "song_title": booking.song_title,
+        **_band_info(booking),
+    }
+
+
+async def preview_priority_booking(
+    session: AsyncSession, telegram_id: int, booking_date: date, start_time: time, end_time: time
+) -> list[dict]:
+    """Bookings that would be cancelled if the caller takes this time; nothing is changed."""
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    _require_priority_rights(user)
+    await _validate_priority_slot(session, booking_date, start_time, end_time)
+    return [_preempted_row(item) for item in await _overlapping_confirmed(session, booking_date, start_time, end_time)]
+
+
+async def create_priority_booking(
+    session: AsyncSession,
+    telegram_id: int,
+    booking_date: date,
+    start_time: time,
+    end_time: time,
+    title: str,
+) -> dict:
+    """DSVR takes the room: overlapping bookings are cancelled (and their people notified), then the slot is theirs."""
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    _require_priority_rights(user)
+    await _lock_bookings(session)
+    await _validate_priority_slot(session, booking_date, start_time, end_time)
+    affected = await _overlapping_confirmed(session, booking_date, start_time, end_time)
+    cancelled_rows = [_preempted_row(item) for item in affected]
+    reason = f"Вытеснено ДСВР: {title}"[:255]
+    for item in affected:
+        before = snapshot(item)
+        item.status = BookingStatus.CANCELLED.value
+        item.cancelled_by_id = user.id
+        item.cancel_reason = reason
+        await record_change(session, item, "preempted", user, before=before, reason=reason)
+    booking = Booking(
+        band_id=None,
+        created_by_id=user.id,
+        booking_date=booking_date,
+        start_time=start_time,
+        end_time=end_time,
+        purpose="staff",
+        song_title=title,
+        source="dsvr",
+    )
+    session.add(booking)
+    await session.flush()
+    await log_action(
+        session,
+        user.id,
+        "booking.priority_create",
+        "booking",
+        booking.id,
+        f"ДСВР занял кабинет: {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {title}; отменено броней: {len(affected)}",
+    )
+    await record_change(session, booking, "created", user, reason=f"Приоритет ДСВР, отменено броней: {len(affected)}")
+    await commit_and_publish(session)
+    await session.refresh(booking)
+    return {"booking": booking, "cancelled": cancelled_rows}
+
+
 async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: int) -> dict:
     from app.services.audit import log_action
 

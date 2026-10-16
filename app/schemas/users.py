@@ -55,3 +55,7 @@ class UserModerationUpdate(BaseModel):
 class AdminRoleUpdate(BaseModel):
     admin_telegram_id: int
     target: str
+
+
+class DsvrRoleUpdate(AdminRoleUpdate):
+    enabled: bool = True

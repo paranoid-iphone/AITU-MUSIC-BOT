@@ -7,6 +7,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 from app.bot.handlers import refresh_all_schedule_menus, router
+from app.bot.handlers_dsvr import router as dsvr_router
 from app.bot.handlers_history import router as history_router
 from app.bot.handlers_groups import router as groups_router
 from app.core.config import settings
@@ -53,6 +54,7 @@ async def main() -> None:
     # Feature routers go first: the main router has catch-all fallback handlers.
     dispatcher.include_router(groups_router)
     dispatcher.include_router(history_router)
+    dispatcher.include_router(dsvr_router)
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
     worker = asyncio.create_task(outbox_worker(bot))

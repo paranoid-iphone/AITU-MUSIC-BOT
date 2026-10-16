@@ -1,11 +1,20 @@
-from datetime import date
+from datetime import date, time
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.bookings import AvailableSlotRead, BookingCreate, BookingRead, BookingUpdate, ScheduleBookingRead, StaffBookingCreate
+from app.schemas.bookings import (
+    AvailableSlotRead,
+    BookingCreate,
+    BookingRead,
+    BookingUpdate,
+    PriorityBookingCreate,
+    PriorityBookingResult,
+    ScheduleBookingRead,
+    StaffBookingCreate,
+)
 from app.services import bookings
 from app.services import admin as admin_service
 
@@ -81,6 +90,24 @@ async def create_staff_booking(payload: StaffBookingCreate, session: AsyncSessio
         payload.start_time,
         payload.end_time,
         payload.title,
+    )
+
+
+@router.get("/priority-preview")
+async def priority_preview(
+    telegram_id: int,
+    booking_date: date,
+    start_time: time,
+    end_time: time,
+    session: AsyncSession = Depends(get_session),
+):
+    return await bookings.preview_priority_booking(session, telegram_id, booking_date, start_time, end_time)
+
+
+@router.post("/priority", response_model=PriorityBookingResult)
+async def create_priority_booking(payload: PriorityBookingCreate, session: AsyncSession = Depends(get_session)):
+    return await bookings.create_priority_booking(
+        session, payload.telegram_id, payload.booking_date, payload.start_time, payload.end_time, payload.title
     )
 
 
