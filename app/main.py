@@ -19,6 +19,17 @@ async def on_startup() -> None:
         await seed_default_schedule(session)
 
 
+@app.middleware("http")
+async def restrict_tunnel_access(request: Request, call_next):
+    # ngrok adds X-Forwarded-Host; the bot calls the backend directly without it.
+    # Public tunnel traffic may only reach the schedule mini-app and the health check.
+    if "x-forwarded-host" in request.headers and not (
+        request.url.path.startswith("/webapp/") or request.url.path == "/health"
+    ):
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    return await call_next(request)
+
+
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
@@ -138,7 +149,7 @@ async def schedule_webapp() -> str:
             cell.rowSpan = span;
             const div = document.createElement("div");
             div.className = `event ${item.purpose === "staff" ? "staff" : ""}`;
-            div.innerHTML = `<div class="song">${item.song_title || "песня не указана"}</div><div class="band">${item.band_name}</div><div class="purpose">${item.start_time.slice(0,5)}-${item.end_time.slice(0,5)} · ${purposeMap[item.purpose] || item.purpose}</div>`;
+            div.innerHTML = `<div class="song">${escapeHtml(item.song_title || "песня не указана")}</div><div class="band">${escapeHtml(item.band_name)}</div><div class="purpose">${escapeHtml(item.start_time.slice(0,5))}-${escapeHtml(item.end_time.slice(0,5))} · ${escapeHtml(purposeMap[item.purpose] || item.purpose)}</div>`;
             cell.appendChild(div);
           } else if (closedByDate.has(date)) {
             cell.innerHTML = `<div class="closed"><div class="closed-title">день занят</div><div class="closed-note">${escapeHtml(closedByDate.get(date))}</div></div>`;
@@ -166,7 +177,8 @@ async def schedule_webapp_data() -> dict:
         closures = await booking_service.list_day_closures(session)
     bookings = [
         {
-            **item,
+            **{key: value for key, value in item.items() if key != "created_by"},
+            "band_name": "Личная репетиция" if item["purpose"] == "personal" and item["band_name"].startswith("Личная репетиция") else item["band_name"],
             "booking_date": item["booking_date"].isoformat(),
             "start_time": item["start_time"].isoformat(),
             "end_time": item["end_time"].isoformat(),

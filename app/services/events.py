@@ -485,7 +485,11 @@ async def delete_personal_event_history(session: AsyncSession, telegram_id: int,
     return deleted
 
 
-async def export_event_applications(session: AsyncSession, event_id: int) -> bytes:
+async def export_event_applications(session: AsyncSession, telegram_id: int, event_id: int) -> bytes:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
     result = await session.execute(
         select(EventApplication)
         .where(EventApplication.event_id == event_id)

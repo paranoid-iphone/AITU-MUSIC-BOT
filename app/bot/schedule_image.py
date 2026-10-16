@@ -7,6 +7,8 @@ from textwrap import wrap
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.core.timezone import now_local
+
 
 WIDTH = 1280
 LEFT_GUTTER = 90
@@ -154,7 +156,7 @@ def _week_days(today: date) -> list[date]:
 
 
 def render_schedule_image(bookings: list[dict], day_closures: list[dict] | None = None, generated_at: datetime | None = None) -> bytes:
-    now = generated_at or datetime.now()
+    now = generated_at or now_local()
     days = _week_days(now.date())
     grid_top = TOP_PAD + TITLE_H + HEADER_H
     grid_h = ((END_HOUR - START_HOUR) * 2) * ROW_H

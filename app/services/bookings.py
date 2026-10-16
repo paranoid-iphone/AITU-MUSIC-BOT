@@ -1,10 +1,11 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import AvailableDay, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot
+from app.core.timezone import now_local
+from app.db.models import AvailableDay, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot, UserRole
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -70,6 +71,14 @@ async def _can_manage_booking(session: AsyncSession, user, booking: Booking) -> 
     return owner_result.scalar_one_or_none() is not None
 
 
+_BOOKING_LOCK_KEY = 7351001
+
+
+async def _lock_bookings(session: AsyncSession) -> None:
+    """Serialize booking writes so overlap checks and inserts are atomic (released on commit/rollback)."""
+    await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _BOOKING_LOCK_KEY})
+
+
 async def _ensure_booking_time_available(
     session: AsyncSession,
     booking_date: date,
@@ -77,12 +86,15 @@ async def _ensure_booking_time_available(
     end_time: time,
     exclude_booking_id: int | None = None,
 ) -> None:
-    now = datetime.now()
+    now = now_local()
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
     if booking_date < now.date() or booking_date > (now + timedelta(days=7)).date():
         raise ConflictError("Booking date must be within the next 7 days")
+    start_dt = datetime.combine(booking_date, start_time)
+    if start_dt <= now or start_dt > now + timedelta(days=7):
+        raise ConflictError("Booking must start in the future and within the next 7 days")
     window_start, window_finish = await get_booking_window_minutes(session)
     if _time_to_minutes(start_time) < window_start or _time_to_minutes(end_time) > window_finish:
         raise ConflictError("Booking is outside room working hours")
@@ -146,7 +158,7 @@ async def personal_bookings_are_enabled(session: AsyncSession) -> bool:
 async def list_available_slots(session: AsyncSession, target_date: date, duration_minutes: int = 60, band_id: int | None = None) -> list[dict]:
     if duration_minutes <= 0 or duration_minutes % 30 != 0:
         return []
-    now = datetime.now()
+    now = now_local()
     if band_id is not None:
         weekly_limit = await get_weekly_booking_limit_minutes(session)
         used_minutes = await get_band_booked_minutes_in_window(session, band_id, now)
@@ -196,16 +208,19 @@ async def list_available_slots(session: AsyncSession, target_date: date, duratio
     return result
 
 
-async def get_band_booked_minutes_in_window(session: AsyncSession, band_id: int, now: datetime) -> int:
+async def get_band_booked_minutes_in_window(
+    session: AsyncSession, band_id: int, now: datetime, exclude_booking_id: int | None = None
+) -> int:
     window_end = now + timedelta(days=7)
-    result = await session.execute(
-        select(Booking).where(
-            Booking.band_id == band_id,
-            Booking.status == BookingStatus.CONFIRMED.value,
-            Booking.booking_date >= now.date(),
-            Booking.booking_date <= window_end.date(),
-        )
+    stmt = select(Booking).where(
+        Booking.band_id == band_id,
+        Booking.status == BookingStatus.CONFIRMED.value,
+        Booking.booking_date >= now.date(),
+        Booking.booking_date <= window_end.date(),
     )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    result = await session.execute(stmt)
     total = 0
     for booking in result.scalars():
         booking_start = datetime.combine(booking.booking_date, booking.start_time)
@@ -215,14 +230,17 @@ async def get_band_booked_minutes_in_window(session: AsyncSession, band_id: int,
     return total
 
 
-async def get_band_booked_minutes_on_date(session: AsyncSession, band_id: int, target_date: date) -> int:
-    result = await session.execute(
-        select(Booking).where(
-            Booking.band_id == band_id,
-            Booking.status == BookingStatus.CONFIRMED.value,
-            Booking.booking_date == target_date,
-        )
+async def get_band_booked_minutes_on_date(
+    session: AsyncSession, band_id: int, target_date: date, exclude_booking_id: int | None = None
+) -> int:
+    stmt = select(Booking).where(
+        Booking.band_id == band_id,
+        Booking.status == BookingStatus.CONFIRMED.value,
+        Booking.booking_date == target_date,
     )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    result = await session.execute(stmt)
     return sum(_duration_minutes(booking.start_time, booking.end_time) for booking in result.scalars())
 
 
@@ -234,7 +252,7 @@ async def get_booking_limit_status(session: AsyncSession, telegram_id: int, band
     member_result = await session.execute(select(BandMember).where(BandMember.band_id == band_id, BandMember.user_id == user.id))
     if member_result.scalar_one_or_none() is None:
         raise ForbiddenError("You are not a member of this band")
-    now = datetime.now()
+    now = now_local()
     limit = await get_weekly_booking_limit_minutes(session)
     used = await get_band_booked_minutes_in_window(session, band_id, now)
     remaining = max(0, limit - used)
@@ -281,11 +299,12 @@ async def create_booking(
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
+    await _lock_bookings(session)
     slots = await list_available_slots(session, booking_date, duration, band_id)
     if not any(slot["start_time"] == start_time and slot["end_time"] == end_time for slot in slots):
         raise ConflictError("Slot is not available")
     if band_id is not None:
-        now = datetime.now()
+        now = now_local()
         weekly_limit = await get_weekly_booking_limit_minutes(session)
         used_minutes = await get_band_booked_minutes_in_window(session, band_id, now)
         if used_minutes + duration > weekly_limit:
@@ -331,6 +350,7 @@ async def create_staff_booking(
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
+    await _lock_bookings(session)
     slots = await list_available_slots(session, booking_date, duration)
     if not any(slot["start_time"] == start_time and slot["end_time"] == end_time for slot in slots):
         raise ConflictError("Slot is not available")
@@ -426,13 +446,31 @@ async def update_booking(
     booking = result.scalar_one_or_none()
     if booking is None:
         raise NotFoundError("Booking not found")
+    require_approved(user)
     if not await _can_manage_booking(session, user, booking):
         raise ForbiddenError("You cannot manage this booking")
+    if purpose is not None:
+        if booking.band_id is not None and purpose in {"staff", "personal"}:
+            raise ConflictError("Band booking must use concert or self purpose")
+        if booking.band_id is None and purpose in {"concert", "self"}:
+            raise ConflictError("Booking without a band must use personal or staff purpose")
     new_date = booking_date or booking.booking_date
     new_start = start_time or booking.start_time
     new_end = end_time or booking.end_time
     if booking_date is not None or start_time is not None or end_time is not None:
+        await _lock_bookings(session)
         await _ensure_booking_time_available(session, new_date, new_start, new_end, booking.id)
+        if booking.band_id is not None and user.role != UserRole.ADMIN.value:
+            new_duration = _duration_minutes(new_start, new_end)
+            weekly_limit = await get_weekly_booking_limit_minutes(session)
+            used = await get_band_booked_minutes_in_window(session, booking.band_id, now_local(), booking.id)
+            if used + new_duration > weekly_limit:
+                raise ConflictError(f"Weekly booking limit exceeded: {weekly_limit / 60:g}h per band")
+            daily_limit = await get_daily_booking_limit_minutes(session)
+            if daily_limit > 0:
+                used_day = await get_band_booked_minutes_on_date(session, booking.band_id, new_date, booking.id)
+                if used_day + new_duration > daily_limit:
+                    raise ConflictError(f"Daily booking limit exceeded: {daily_limit / 60:g}h per band")
         booking.booking_date = new_date
         booking.start_time = new_start
         booking.end_time = new_end
@@ -483,7 +521,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
     )
     result = await session.execute(stmt)
     rows = []
-    now = datetime.now()
+    now = now_local()
     for booking in result.scalars().unique():
         if datetime.combine(booking.booking_date, booking.end_time) <= now:
             continue
@@ -507,7 +545,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
 
 
 async def list_schedule(session: AsyncSession) -> list[dict]:
-    now = datetime.now()
+    now = now_local()
     window_end = now + timedelta(days=7)
     result = await session.execute(
         select(Booking)
@@ -544,7 +582,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
 
 
 async def list_day_closures(session: AsyncSession) -> list[dict]:
-    now = datetime.now()
+    now = now_local()
     days = [now.date() + timedelta(days=offset) for offset in range(7)]
     result = await session.execute(select(AvailableDay).where(AvailableDay.is_enabled.is_(False)))
     closed_by_weekday = {item.day_of_week: item for item in result.scalars()}

@@ -29,7 +29,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    loaded = Settings()
+    if loaded.environment != "local" and loaded.internal_api_token == "change-me":
+        raise RuntimeError("INTERNAL_API_TOKEN must be changed from the default when ENVIRONMENT is not 'local'")
+    return loaded
 
 
 settings = get_settings()

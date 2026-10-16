@@ -75,6 +75,7 @@ from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, BandFlow, BookingFlow, EventFlow, Onboarding, ProfileFlow
 from app.bot.webapp_url import get_webapp_base_url
 from app.core.config import settings
+from app.core.timezone import now_local
 
 router = Router()
 api = BackendClient()
@@ -1126,7 +1127,7 @@ async def inline_booking_personal(callback: CallbackQuery, state: FSMContext) ->
             return
     await state.update_data(band_id=None, band_name="Личная репетиция", is_personal_booking=True, purpose="personal")
     days = []
-    today = datetime.now().date()
+    today = now_local().date()
     for offset in range(8):
         target_date = today + timedelta(days=offset)
         day_slots = await api.available_slots(target_date, 30)
@@ -1160,7 +1161,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
         return
     await state.update_data(band_id=band_id, band_name=band["name"], is_personal_booking=False)
     days = []
-    today = datetime.now().date()
+    today = now_local().date()
     for offset in range(8):
         target_date = today + timedelta(days=offset)
         day_slots = await api.available_slots(target_date, 30, band_id)
@@ -2833,7 +2834,7 @@ async def booking_band(message: Message, state: FSMContext) -> None:
     band_id = band["id"]
     await state.update_data(band_id=band_id, band_name=band["name"])
     dates = []
-    today = datetime.now().date()
+    today = now_local().date()
     for offset in range(8):
         target_date = today + timedelta(days=offset)
         day_slots = await api.available_slots(target_date, 30, band_id)
@@ -3363,7 +3364,7 @@ async def staff_booking_date_save(message: Message, state: FSMContext) -> None:
     except ValueError:
         await message.answer("Введите дату в формате YYYY-MM-DD. Например: 2026-06-25", reply_markup=flow_cancel_keyboard())
         return
-    now = datetime.now()
+    now = now_local()
     if booking_date < now.date() or booking_date > (now + timedelta(days=7)).date():
         await message.answer("Можно занять кабинет только в пределах ближайших 7 дней.", reply_markup=flow_cancel_keyboard())
         return

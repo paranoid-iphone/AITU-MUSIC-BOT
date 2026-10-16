@@ -96,8 +96,15 @@ async def update_profile(
 
 
 def require_admin(user: User) -> None:
-    if user.role != UserRole.ADMIN.value:
+    if user.role != UserRole.ADMIN.value or user.status != UserStatus.APPROVED.value:
         raise ForbiddenError("Admin access required")
+
+
+def _guard_moderation_target(admin: User, target: User) -> None:
+    if target.telegram_id == admin.telegram_id:
+        raise ForbiddenError("You cannot ban or delete yourself")
+    if target.telegram_id in settings.initial_admin_ids:
+        raise ForbiddenError("Initial admin cannot be banned or deleted")
 
 
 def require_approved(user: User) -> None:
@@ -248,7 +255,9 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
     if admin is None or target is None:
         raise NotFoundError("User not found")
     require_admin(admin)
+    _guard_moderation_target(admin, target)
     target.status = UserStatus.BANNED.value
+    target.role = UserRole.USER.value
     target.moderation_reason = reason
     target.registration_retry_after = None
     await log_action(
@@ -272,7 +281,9 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     if admin is None or target is None:
         raise NotFoundError("User not found")
     require_admin(admin)
+    _guard_moderation_target(admin, target)
     target.status = UserStatus.DELETED.value
+    target.role = UserRole.USER.value
     target.first_name = None
     target.last_name = None
     target.study_group = None

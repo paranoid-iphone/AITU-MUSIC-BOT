@@ -96,8 +96,8 @@ async def list_applications(event_id: int, telegram_id: int, session: AsyncSessi
 
 
 @router.get("/{event_id}/export.xlsx")
-async def export_event(event_id: int, session: AsyncSession = Depends(get_session)):
-    content = await events.export_event_applications(session, event_id)
+async def export_event(event_id: int, telegram_id: int, session: AsyncSession = Depends(get_session)):
+    content = await events.export_event_applications(session, telegram_id, event_id)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
