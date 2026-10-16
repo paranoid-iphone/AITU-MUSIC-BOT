@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,6 +13,7 @@ from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
+from app.services import sheets_sync
 from app.services.errors import AppError
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
@@ -21,6 +23,7 @@ from app.services.users import get_user_by_telegram_id
 app = FastAPI(title=settings.app_name)
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
+sheets_task: asyncio.Task | None = None
 
 
 async def run_sunday_allocation() -> None:
@@ -55,12 +58,18 @@ async def on_startup() -> None:
         scheduler.add_job(run_sunday_allocation, "cron", day_of_week="sun", hour=run_at.hour, minute=run_at.minute, id="weekly_allocation")
         scheduler.start()
         await catch_up_missed_allocations()
+    global sheets_task
+    if sheets_sync.is_enabled():
+        sheets_task = asyncio.create_task(sheets_sync.sync_worker(AsyncSessionLocal))
+        sheets_sync.request_sync()  # push the current state right after (re)start
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
+    if sheets_task is not None:
+        sheets_task.cancel()
 
 
 @app.middleware("http")

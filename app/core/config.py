@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Almaty"
     weekly_planning_enabled: bool = True
     allocation_time: str = "18:00"
+    google_sheets_id: str = ""
+    google_service_account_file: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

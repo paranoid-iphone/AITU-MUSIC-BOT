@@ -46,4 +46,9 @@ async def publish(events: list[dict]) -> None:
 
 async def commit_and_publish(session: AsyncSession) -> None:
     await session.commit()
-    await publish(session.info.pop("outbox", []))
+    events = session.info.pop("outbox", [])
+    await publish(events)
+    if any(item["type"] == "schedule_changed" for item in events):
+        from app.services.sheets_sync import request_sync  # lazy: sheets_sync imports booking code that imports this module
+
+        request_sync()
