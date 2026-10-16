@@ -20,12 +20,14 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     volumes:
       - .:/app
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   redis:
     image: redis:7-alpine
