@@ -27,6 +27,7 @@ from app.bot.keyboards import (
     admin_events_keyboard,
     admin_event_applications_keyboard,
     admin_inline_keyboard,
+    group_admin_inline_keyboard,
     admin_member_remove_confirm_keyboard,
     admin_user_detail_keyboard,
     admin_user_list_keyboard,
@@ -50,6 +51,7 @@ from app.bot.keyboards import (
     event_applications_keyboard,
     event_members_keyboard,
     flow_cancel_keyboard,
+    group_keyboard,
     language_keyboard,
     main_menu,
     main_menu_inline,
@@ -124,6 +126,10 @@ MERTAI_PRAISES = [
         "архитектор аптайма и повелитель спокойных перезапусков."
     ),
 ]
+
+
+def has_admin_menu(user: dict) -> bool:
+    return user.get("role") == "admin" or bool(user.get("is_group_admin"))
 
 
 async def show_menu(message: Message, user: dict) -> None:
@@ -288,10 +294,19 @@ def format_admins_list(users: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_person(user: dict | None) -> str:
+    if not user:
+        return "-"
+    name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or str(user.get("telegram_id"))
+    return f"{name} (@{user['telegram_username']})" if user.get("telegram_username") else name
+
+
 def format_band_card(band: dict) -> str:
     lines = [
         f"Коллектив #{band['id']}",
         f"Название: {band['name']}",
+        f"Направление: {(band.get('group') or {}).get('title') or '-'}",
+        f"Ответственный: {format_person(band.get('responsible'))}",
         f"Код: {band['invite_code']}",
         "",
         "Участники:",
@@ -395,7 +410,10 @@ def format_booking_card(booking: dict) -> str:
         f"Дата: {booking['booking_date']}\n"
         f"Время: {booking['start_time'][:5]}-{booking['end_time'][:5]}\n"
         f"Кто занял: {owner}\n"
-        f"Создал: {booking.get('created_by') or '-'}\n"
+        + (f"Ответственный: {booking['responsible_name']}"
+           + (f" (@{booking['responsible_username']})" if booking.get("responsible_username") else "")
+           + "\n" if booking.get("responsible_name") else "")
+        + f"Создал: {booking.get('created_by') or '-'}\n"
         f"Цель: {format_purpose(booking['purpose'])}\n"
         f"Песня/название: {title}\n\n"
         "Выберите действие:"
@@ -486,6 +504,8 @@ def schedule_fingerprint(rows: list[dict], day_closures: list[dict] | None = Non
             "purpose": item.get("purpose"),
             "song_title": item.get("song_title"),
             "status": item.get("status"),
+            "responsible_name": item.get("responsible_name"),
+            "group_title": item.get("group_title"),
         }
         for item in rows
     ]
@@ -577,25 +597,25 @@ async def send_schedule_menu(message: Message, user: dict, caption: str | None =
     sent = await message.answer_photo(
         image_media,
         caption=caption or "Главное меню",
-        reply_markup=main_menu_inline(user.get("role") == "admin"),
+        reply_markup=main_menu_inline(has_admin_menu(user)),
     )
     if not is_cached:
         await remember_schedule_file_id(fingerprint, sent)
-    await remember_schedule_menu(sent.chat.id, sent.message_id, user.get("role") == "admin")
+    await remember_schedule_menu(sent.chat.id, sent.message_id, has_admin_menu(user))
 
 
 async def edit_schedule_menu(callback: CallbackQuery, user: dict, caption: str | None = None) -> None:
     image_media, fingerprint, is_cached = await get_schedule_image_media()
     media = InputMediaPhoto(media=image_media, caption=caption or "Главное меню")
     try:
-        updated = await callback.message.edit_media(media=media, reply_markup=main_menu_inline(user.get("role") == "admin"))
+        updated = await callback.message.edit_media(media=media, reply_markup=main_menu_inline(has_admin_menu(user)))
         if not is_cached and isinstance(updated, Message):
             await remember_schedule_file_id(fingerprint, updated)
-        await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, user.get("role") == "admin")
+        await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, has_admin_menu(user))
     except Exception:
         try:
-            await callback.message.edit_caption(caption=caption or "Главное меню", reply_markup=main_menu_inline(user.get("role") == "admin"))
-            await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, user.get("role") == "admin")
+            await callback.message.edit_caption(caption=caption or "Главное меню", reply_markup=main_menu_inline(has_admin_menu(user)))
+            await remember_schedule_menu(callback.message.chat.id, callback.message.message_id, has_admin_menu(user))
         except Exception:
             await send_schedule_menu(callback.message, user, caption)
 
@@ -635,8 +655,14 @@ async def send_pending_notice(message: Message) -> None:
     )
 
 
-async def get_registration_admin_ids() -> set[int]:
+async def get_registration_admin_ids(group_id: int | None = None) -> set[int]:
     admin_ids = set(settings.initial_admin_ids)
+    if group_id is not None:
+        try:
+            admin_ids.update(await api.group_reviewer_ids(group_id))
+            return admin_ids
+        except Exception as exc:
+            logger.warning("Could not load reviewers for group %s: %s", group_id, exc)
     for seed_admin_id in settings.initial_admin_ids:
         try:
             users = await api.list_users(seed_admin_id, "approved")
@@ -647,6 +673,16 @@ async def get_registration_admin_ids() -> set[int]:
             if item.get("role") == "admin" and item.get("status") == "approved":
                 admin_ids.add(item["telegram_id"])
     return admin_ids
+
+
+async def get_group_title(group_id: int | None) -> str | None:
+    if group_id is None:
+        return None
+    try:
+        groups = await api.list_groups()
+    except Exception:
+        return None
+    return next((item["title"] for item in groups if item["id"] == group_id), None)
 
 
 def registration_notice_messages_key(telegram_id: int) -> str:
@@ -697,13 +733,15 @@ async def notify_admins_about_registration(message: Message, user: dict, force: 
     if force:
         await clear_registration_notice_messages(telegram_id)
     sent = 0
-    admin_ids = await get_registration_admin_ids()
+    admin_ids = await get_registration_admin_ids(user.get("group_id"))
+    group_title = await get_group_title(user.get("group_id"))
     for admin_id in admin_ids:
         try:
             sent_message = await message.bot.send_message(
                 admin_id,
                 "Новая заявка на регистрацию:\n"
                 f"{user['last_name']} {user['first_name']} | {user['study_group']}\n"
+                f"Направление: {group_title or '-'}\n"
                 f"Telegram: @{user['telegram_username'] or '-'}\n"
                 f"Telegram ID: {user['telegram_id']}\n"
                 "Одобрить регистрацию?",
@@ -735,6 +773,10 @@ async def prompt_next_profile_step(message: Message, state: FSMContext, user: di
     if not user.get("study_group"):
         await state.set_state(Onboarding.study_group)
         await message.answer("Введите учебную группу:", reply_markup=ReplyKeyboardRemove())
+        return
+    if user.get("group_id") is None:
+        await state.set_state(Onboarding.group)
+        await message.answer("Выберите направление:", reply_markup=group_keyboard(await api.list_groups()))
         return
     await state.set_state(Onboarding.language)
     await message.answer("Выберите язык:", reply_markup=language_keyboard())
@@ -989,6 +1031,7 @@ async def inline_user_band_members(callback: CallbackQuery) -> None:
         "owner": "Выберите нового лидера коллектива:",
         "role": "Выберите участника, которому нужно изменить роль:",
         "remove": "Выберите участника, которого нужно убрать из коллектива:",
+        "responsible": "Выберите ответственного: ему будут писать при изменении расписания.",
     }
     await edit_screen(callback, titles.get(action, "Участники:"), user_band_members_keyboard(band, action, int(page_raw)))
     await answer_callback(callback)
@@ -1006,6 +1049,10 @@ async def inline_user_band_member_action(callback: CallbackQuery, state: FSMCont
     if action == "owner":
         band = await api.transfer_band_owner(callback.from_user.id, band_id, member_id)
         await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, user_is_band_owner(band, callback.from_user.id)))
+    elif action == "responsible":
+        band = await api.update_band_responsible(callback.from_user.id, band_id, member_id)
+        await refresh_all_schedule_menus(callback.message.bot)
+        await edit_screen(callback, "Ответственный обновлен.\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, True))
     elif action == "role":
         await state.update_data(user_band_edit_id=band_id, user_band_member_id=member_id, user_band_edit_field="member_role")
         await state.set_state(BandFlow.edit_value)
@@ -1141,7 +1188,7 @@ async def inline_booking_personal(callback: CallbackQuery, state: FSMContext) ->
     if not days:
         await state.clear()
         user = await api.get_user(callback.from_user.id)
-        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.", main_menu_inline(user.get("role") == "admin"))
+        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.", main_menu_inline(has_admin_menu(user)))
         await answer_callback(callback)
         return
     await state.update_data(booking_dates=days)
@@ -1178,7 +1225,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
         await edit_screen(
             callback,
             "На ближайшие 7 дней нет свободного времени.",
-            main_menu_inline(user.get("role") == "admin"),
+            main_menu_inline(has_admin_menu(user)),
         )
         await answer_callback(callback)
         return
@@ -1546,11 +1593,12 @@ async def inline_event_application_delete_confirm(callback: CallbackQuery, state
 @router.callback_query(F.data == "menu:admin")
 async def inline_admin(callback: CallbackQuery) -> None:
     user = await api.get_user(callback.from_user.id)
-    if user["role"] != "admin":
+    if not has_admin_menu(user):
         await edit_screen(callback, "Нет доступа.")
         await answer_callback(callback)
         return
-    await edit_screen(callback, "Админ-меню", admin_inline_keyboard())
+    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
 
@@ -1813,13 +1861,19 @@ async def inline_action_history(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "admin:back")
 async def inline_admin_back(callback: CallbackQuery) -> None:
-    await edit_screen(callback, "Админ-меню", admin_inline_keyboard())
+    user = await api.get_user(callback.from_user.id)
+    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
 
 @router.callback_query(F.data.startswith("admin_section:"))
 async def inline_admin_section(callback: CallbackQuery) -> None:
     section = callback.data.split(":", maxsplit=1)[1]
+    viewer = await api.get_user(callback.from_user.id)
+    if viewer["role"] != "admin" and section not in {"users", "bands"}:
+        await answer_callback(callback, "Нет доступа", show_alert=True)
+        return
     if section == "users":
         await edit_screen(callback, "Пользователи и заявки", admin_users_keyboard())
     elif section == "actions":
@@ -1930,6 +1984,7 @@ async def inline_admin_band_members(callback: CallbackQuery) -> None:
         "owner": "Выберите нового лидера коллектива:",
         "role": "Выберите участника, которому нужно изменить роль:",
         "remove": "Выберите участника, которого нужно убрать из коллектива:",
+        "responsible": "Выберите ответственного: ему будут писать при изменении расписания.",
     }
     await edit_screen(callback, titles.get(action, "Участники:"), admin_band_members_keyboard(band, action, int(page_raw)))
     await answer_callback(callback)
@@ -1943,6 +1998,10 @@ async def inline_admin_band_member_action(callback: CallbackQuery, state: FSMCon
     if action == "owner":
         band = await api.transfer_band_owner(callback.from_user.id, band_id, member_id)
         await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
+    elif action == "responsible":
+        band = await api.update_band_responsible(callback.from_user.id, band_id, member_id)
+        await refresh_all_schedule_menus(callback.message.bot)
+        await edit_screen(callback, "Ответственный обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
     elif action == "role":
         await state.update_data(admin_band_edit_id=band_id, admin_band_member_id=member_id, admin_band_edit_field="member_role")
         await state.set_state(AdminFlow.band_edit_value)
@@ -2273,11 +2332,12 @@ async def inline_event_create_start(callback: CallbackQuery, state: FSMContext) 
 @router.callback_query(F.data.startswith("registration:approve:"))
 async def inline_registration_approve(callback: CallbackQuery) -> None:
     admin = await api.get_user(callback.from_user.id)
-    if admin["role"] != "admin":
+    target = callback.data.rsplit(":", maxsplit=1)[-1]
+    try:
+        user = await api.moderate_user("approve", callback.from_user.id, target)
+    except RuntimeError:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
-    target = callback.data.rsplit(":", maxsplit=1)[-1]
-    user = await api.moderate_user("approve", callback.from_user.id, target)
     text = (
         "Регистрация одобрена:\n"
         f"{user['last_name'] or '-'} {user['first_name'] or '-'} | {user['study_group'] or '-'}\n"
@@ -2300,11 +2360,12 @@ async def inline_registration_approve(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("registration:reject:"))
 async def inline_registration_reject(callback: CallbackQuery) -> None:
     admin = await api.get_user(callback.from_user.id)
-    if admin["role"] != "admin":
+    target = callback.data.rsplit(":", maxsplit=1)[-1]
+    try:
+        user = await api.moderate_user("reject", callback.from_user.id, target, "Отклонено админом")
+    except RuntimeError:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
-    target = callback.data.rsplit(":", maxsplit=1)[-1]
-    user = await api.moderate_user("reject", callback.from_user.id, target, "Отклонено админом")
     retry_after = user.get("registration_retry_after")
     text = (
         "Регистрация отклонена:\n"
@@ -2419,6 +2480,18 @@ async def onboarding_group(message: Message, state: FSMContext) -> None:
         await message.answer("Введите учебную группу:")
         return
     await api.update_settings(message.from_user.id, {"study_group": study_group})
+    await state.set_state(Onboarding.group)
+    await message.answer("Выберите направление:", reply_markup=group_keyboard(await api.list_groups()))
+
+
+@router.message(Onboarding.group)
+async def onboarding_direction(message: Message, state: FSMContext) -> None:
+    groups = await api.list_groups()
+    chosen = next((item for item in groups if item["title"].lower() == (message.text or "").strip().lower()), None)
+    if chosen is None:
+        await message.answer("Выберите направление кнопкой ниже.", reply_markup=group_keyboard(groups))
+        return
+    await api.update_settings(message.from_user.id, {"group_id": chosen["id"]})
     await state.set_state(Onboarding.language)
     await message.answer("Выберите язык:", reply_markup=language_keyboard())
 
@@ -3041,10 +3114,11 @@ async def submit_list_members(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "⚙️ Админ")
 async def admin_menu(message: Message) -> None:
     user = await api.get_user(message.from_user.id)
-    if user["role"] != "admin":
+    if not has_admin_menu(user):
         await message.answer("Нет доступа.")
         return
-    await message.answer("Админ-меню", reply_markup=admin_inline_keyboard())
+    keyboard = admin_inline_keyboard() if user["role"] == "admin" else group_admin_inline_keyboard()
+    await message.answer("Админ-меню", reply_markup=keyboard)
 
 
 @router.message(F.text == "Заявки пользователей")

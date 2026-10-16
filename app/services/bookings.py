@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.timezone import now_local
-from app.db.models import AvailableDay, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot, UserRole
+from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot
+from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -52,23 +53,33 @@ def _booking_owner_label(booking: Booking) -> str:
     return "Стафф / кабинет"
 
 
-async def _can_manage_booking(session: AsyncSession, user, booking: Booking) -> bool:
-    from app.db.models import UserRole
+def _person_name(user) -> str:
+    return f"{user.last_name or ''} {user.first_name or ''}".strip() or user.telegram_username or str(user.telegram_id)
 
-    if user.role == UserRole.ADMIN.value:
-        return True
-    if booking.created_by_id == user.id:
-        return True
-    if booking.band_id is None:
-        return False
-    owner_result = await session.execute(
-        select(BandMember).where(
-            BandMember.band_id == booking.band_id,
-            BandMember.user_id == user.id,
-            BandMember.is_owner.is_(True),
-        )
+
+def _band_info(booking: Booking) -> dict:
+    """Group and responsible person shown next to a booking in the schedule table."""
+    band = booking.band
+    if band is None:
+        return {"group_title": None, "responsible_name": None, "responsible_username": None}
+    responsible = band.responsible
+    return {
+        "group_title": band.group.title if band.group is not None else None,
+        "responsible_name": _person_name(responsible) if responsible is not None else None,
+        "responsible_username": responsible.telegram_username if responsible is not None else None,
+    }
+
+
+def _booking_load_options():
+    return (
+        selectinload(Booking.band).selectinload(Band.responsible),
+        selectinload(Booking.band).selectinload(Band.group),
+        selectinload(Booking.created_by),
     )
-    return owner_result.scalar_one_or_none() is not None
+
+
+async def _can_manage_booking(session: AsyncSession, user, booking: Booking) -> bool:
+    return await can_manage_schedule(session, user, booking)
 
 
 _BOOKING_LOCK_KEY = 7351001
@@ -460,7 +471,7 @@ async def update_booking(
     if booking_date is not None or start_time is not None or end_time is not None:
         await _lock_bookings(session)
         await _ensure_booking_time_available(session, new_date, new_start, new_end, booking.id)
-        if booking.band_id is not None and user.role != UserRole.ADMIN.value:
+        if booking.band_id is not None and not (is_global_admin(user) or is_dsvr(user)):
             new_duration = _duration_minutes(new_start, new_end)
             weekly_limit = await get_weekly_booking_limit_minutes(session)
             used = await get_band_booked_minutes_in_window(session, booking.band_id, now_local(), booking.id)
@@ -516,7 +527,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
                 BandMember.user_id == user.id,
             ),
         )
-        .options(selectinload(Booking.band), selectinload(Booking.created_by))
+        .options(*_booking_load_options())
         .order_by(Booking.booking_date, Booking.start_time)
     )
     result = await session.execute(stmt)
@@ -539,6 +550,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
                 "purpose": booking.purpose,
                 "song_title": booking.song_title,
                 "status": booking.status,
+                **_band_info(booking),
             }
         )
     return rows
@@ -554,7 +566,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
             Booking.booking_date >= now.date(),
             Booking.booking_date <= window_end.date(),
         )
-        .options(selectinload(Booking.band), selectinload(Booking.created_by))
+        .options(*_booking_load_options())
         .order_by(Booking.booking_date, Booking.start_time)
     )
     rows = []
@@ -576,6 +588,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
                 "purpose": booking.purpose,
                 "song_title": booking.song_title,
                 "status": booking.status,
+                **_band_info(booking),
             }
         )
     return rows

@@ -78,6 +78,32 @@ class BackendClient:
     async def list_admins(self, admin_telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/users/admins/list", params={"admin_telegram_id": admin_telegram_id})
 
+    async def list_groups(self) -> list[dict[str, Any]]:
+        return await self.request("GET", "/groups")
+
+    async def group_reviewer_ids(self, group_id: int) -> list[int]:
+        return await self.request("GET", f"/groups/{group_id}/reviewers")
+
+    async def list_group_admins(self, telegram_id: int, group_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", f"/groups/{group_id}/admins", params={"telegram_id": telegram_id})
+
+    async def add_group_admin(self, telegram_id: int, group_id: int, target: str) -> dict[str, Any]:
+        return await self.request(
+            "POST", f"/groups/{group_id}/admins", json={"admin_telegram_id": telegram_id, "target": target}
+        )
+
+    async def remove_group_admin(self, telegram_id: int, group_id: int, target: str) -> dict[str, Any]:
+        return await self.request(
+            "DELETE", f"/groups/{group_id}/admins", params={"telegram_id": telegram_id, "target": target}
+        )
+
+    async def update_band_responsible(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
+        return await self.request(
+            "PATCH",
+            f"/bands/{band_id}/responsible",
+            json={"requester_telegram_id": requester_telegram_id, "member_id": member_id},
+        )
+
     async def create_band(self, telegram_id: int, name: str, creator_role: str) -> dict[str, Any]:
         return await self.request(
             "POST",

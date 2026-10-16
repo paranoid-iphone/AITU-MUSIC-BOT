@@ -11,6 +11,14 @@ def language_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def group_keyboard(groups: list[dict]) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=group["title"])] for group in groups],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="🎵 Мои коллективы"), KeyboardButton(text="➕ Создать коллектив")],
@@ -150,6 +158,7 @@ def user_band_manage_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMark
                 InlineKeyboardButton(text="Сменить лидера", callback_data=f"user_band_members:{band_id}:owner:0"),
                 InlineKeyboardButton(text="Роли участников", callback_data=f"user_band_members:{band_id}:role:0"),
             ],
+            [InlineKeyboardButton(text="Ответственный", callback_data=f"user_band_members:{band_id}:responsible:0")],
             [InlineKeyboardButton(text="Удалить участника", callback_data=f"user_band_members:{band_id}:remove:0")],
             [InlineKeyboardButton(text="Удалить коллектив", callback_data=f"user_band_delete:{band_id}")],
             [InlineKeyboardButton(text="К коллективу", callback_data=f"user_band:{band_id}:{page}")],
@@ -429,11 +438,40 @@ def admin_inline_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Админы", callback_data="admin_section:admins"),
-                InlineKeyboardButton(text="Инструкция", callback_data="admin_section:guide"),
+                InlineKeyboardButton(text="Группы", callback_data="groups:list"),
+            ],
+            [InlineKeyboardButton(text="Инструкция", callback_data="admin_section:guide")],
+            [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
+        ]
+    )
+
+
+def group_admin_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Заявки", callback_data="admin_section:users"),
+                InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
             ],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
+
+
+def groups_keyboard(groups: list[dict]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=group["title"], callback_data=f"groups:open:{group['id']}")] for group in groups]
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="admin:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def group_detail_keyboard(group_id: int, admins: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for admin in admins:
+        name = f"{admin.get('last_name') or ''} {admin.get('first_name') or ''}".strip() or admin.get("telegram_username") or str(admin["telegram_id"])
+        rows.append([InlineKeyboardButton(text=f"Снять: {name}"[:64], callback_data=f"groups:remove:{group_id}:{admin['telegram_id']}")])
+    rows.append([InlineKeyboardButton(text="Добавить админа группы", callback_data=f"groups:add:{group_id}")])
+    rows.append([InlineKeyboardButton(text="К группам", callback_data="groups:list")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_users_keyboard() -> InlineKeyboardMarkup:
@@ -508,6 +546,7 @@ def admin_band_detail_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMar
                 InlineKeyboardButton(text="Роли", callback_data=f"admin_band_members:{band_id}:role:0"),
                 InlineKeyboardButton(text="Участники", callback_data=f"admin_band_members:{band_id}:remove:0"),
             ],
+            [InlineKeyboardButton(text="Ответственный", callback_data=f"admin_band_members:{band_id}:responsible:0")],
             [InlineKeyboardButton(text="Назад к коллективам", callback_data=f"admin_bands:{page}")],
         ]
     )

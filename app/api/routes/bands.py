@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.bands import BandCreate, BandDetail, BandJoin, BandOwnerUpdate, BandRead, BandUpdate, MemberRoleUpdate
+from app.schemas.bands import BandCreate, BandDetail, BandJoin, BandOwnerUpdate, BandRead, BandResponsibleUpdate, BandUpdate, MemberRoleUpdate
 from app.services import bands
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -47,6 +47,11 @@ async def delete_band(band_id: int, requester_telegram_id: int, session: AsyncSe
 @router.patch("/{band_id}/owner", response_model=BandDetail)
 async def transfer_owner(band_id: int, payload: BandOwnerUpdate, session: AsyncSession = Depends(get_session)):
     return await bands.transfer_band_owner(session, band_id, payload.requester_telegram_id, payload.member_id)
+
+
+@router.patch("/{band_id}/responsible", response_model=BandDetail)
+async def update_responsible(band_id: int, payload: BandResponsibleUpdate, session: AsyncSession = Depends(get_session)):
+    return await bands.update_band_responsible(session, band_id, payload.requester_telegram_id, payload.member_id)
 
 
 @router.patch("/{band_id}/members/{member_id}/role")

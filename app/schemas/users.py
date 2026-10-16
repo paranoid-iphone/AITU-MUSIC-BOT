@@ -14,6 +14,7 @@ class UserProfileUpdate(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     study_group: str = Field(min_length=1, max_length=50)
     language: str = Field(pattern="^(ru|kz|en)$")
+    group_id: int | None = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -22,6 +23,7 @@ class UserSettingsUpdate(BaseModel):
     study_group: str | None = Field(default=None, min_length=1, max_length=50)
     language: str | None = Field(default=None, pattern="^(ru|kz|en)$")
     notifications_enabled: bool | None = None
+    group_id: int | None = None
 
 
 class UserRead(BaseModel):
@@ -36,6 +38,8 @@ class UserRead(BaseModel):
     role: str
     status: str
     notifications_enabled: bool
+    group_id: int | None = None
+    is_group_admin: bool = False
     registration_retry_after: datetime | None = None
     profile_completed: bool
 

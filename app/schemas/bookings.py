@@ -39,6 +39,9 @@ class ScheduleBookingRead(BaseModel):
     id: int
     band_name: str
     created_by: str
+    group_title: str | None = None
+    responsible_name: str | None = None
+    responsible_username: str | None = None
     booking_date: date
     start_time: time
     end_time: time

@@ -2,26 +2,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Band, BandMember, Booking, EventApplication, EventApplicationMember, UserRole
+from app.db.models import Band, BandMember, Booking, EventApplication, EventApplicationMember, UserStatus
 from app.services.errors import ForbiddenError, NotFoundError
-from app.services.users import get_user_by_telegram_id, require_admin, require_approved
+from app.services.permissions import administered_group_ids, can_manage_band, is_global_admin
+from app.services.users import get_user_by_telegram_id, require_approved
+
+
+def _band_load_options():
+    return (
+        selectinload(Band.members).selectinload(BandMember.user),
+        selectinload(Band.responsible),
+        selectinload(Band.group),
+    )
 
 
 async def _require_band_manager(session: AsyncSession, band_id: int, requester_telegram_id: int):
     requester = await get_user_by_telegram_id(session, requester_telegram_id)
     if requester is None:
         raise NotFoundError("User not found")
-    if requester.role == UserRole.ADMIN.value:
-        return requester
-    owner_result = await session.execute(
-        select(BandMember).where(
-            BandMember.band_id == band_id,
-            BandMember.user_id == requester.id,
-            BandMember.is_owner.is_(True),
-        )
-    )
-    if owner_result.scalar_one_or_none() is None:
-        raise ForbiddenError("Only band owner or admin can manage this band")
+    band = (await session.execute(select(Band).where(Band.id == band_id))).scalar_one_or_none()
+    if band is None:
+        raise NotFoundError("Band not found")
+    if not await can_manage_band(session, requester, band):
+        raise ForbiddenError("Only band owner or group admin can manage this band")
     return requester
 
 
@@ -30,7 +33,7 @@ async def create_band(session: AsyncSession, creator_telegram_id: int, name: str
     if creator is None:
         raise NotFoundError("User not found")
     require_approved(creator)
-    band = Band(name=name, creator_id=creator.id)
+    band = Band(name=name, creator_id=creator.id, group_id=creator.group_id, responsible_user_id=creator.id)
     session.add(band)
     await session.flush()
     session.add(BandMember(band_id=band.id, user_id=creator.id, instrument_role=creator_role, is_owner=True))
@@ -47,7 +50,7 @@ async def list_user_bands(session: AsyncSession, telegram_id: int) -> list[Band]
         select(Band)
         .join(BandMember)
         .where(BandMember.user_id == user.id)
-        .options(selectinload(Band.members).selectinload(BandMember.user))
+        .options(*_band_load_options())
         .order_by(Band.created_at.desc())
     )
     return list(result.scalars().unique())
@@ -57,18 +60,19 @@ async def list_all_bands(session: AsyncSession, admin_telegram_id: int) -> list[
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:
         raise NotFoundError("Admin not found")
-    require_admin(admin)
-    result = await session.execute(
-        select(Band)
-        .options(selectinload(Band.members).selectinload(BandMember.user))
-        .order_by(Band.created_at.desc())
-    )
+    stmt = select(Band).options(*_band_load_options()).order_by(Band.created_at.desc())
+    if not is_global_admin(admin):
+        group_ids = await administered_group_ids(session, admin)
+        if not group_ids or admin.status != UserStatus.APPROVED.value:
+            raise ForbiddenError("Admin access required")
+        stmt = stmt.where(Band.group_id.in_(group_ids))
+    result = await session.execute(stmt)
     return list(result.scalars().unique())
 
 
 async def get_band_detail(session: AsyncSession, band_id: int) -> Band:
     result = await session.execute(
-        select(Band).where(Band.id == band_id).options(selectinload(Band.members).selectinload(BandMember.user))
+        select(Band).where(Band.id == band_id).options(*_band_load_options())
     )
     band = result.scalar_one_or_none()
     if band is None:
@@ -142,6 +146,28 @@ async def update_band_name(session: AsyncSession, band_id: int, requester_telegr
     return await get_band_detail(session, band_id)
 
 
+async def update_band_responsible(session: AsyncSession, band_id: int, requester_telegram_id: int, member_id: int) -> Band:
+    from app.services.audit import log_action
+
+    requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    band = await get_band_detail(session, band_id)
+    target = next((member for member in band.members if member.id == member_id), None)
+    if target is None:
+        raise NotFoundError("Member not found")
+    band.responsible_user_id = target.user_id
+    await log_action(
+        session,
+        requester.id,
+        "band.responsible",
+        "band",
+        band_id,
+        f"Назначил ответственного коллектива #{band_id}: участник #{member_id}",
+    )
+    await session.commit()
+    session.expire(band)
+    return await get_band_detail(session, band_id)
+
+
 async def transfer_band_owner(session: AsyncSession, band_id: int, requester_telegram_id: int, member_id: int) -> Band:
     from app.services.audit import log_action
 
@@ -184,6 +210,10 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
         or member.user.telegram_username
         or str(member.user.telegram_id)
     )
+    band = await get_band_detail(session, band_id)
+    if band.responsible_user_id == member.user_id:
+        owner = next((m for m in band.members if m.is_owner), None)
+        band.responsible_user_id = owner.user_id if owner is not None else None
     deleted = {"member_id": member.id, "band_id": band_id, "user_name": user_name}
     await log_action(
         session,

@@ -27,6 +27,19 @@ class BandUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
 
 
+class GroupRead(BaseModel):
+    id: int
+    slug: str
+    title: str
+
+    model_config = {"from_attributes": True}
+
+
+class BandResponsibleUpdate(BaseModel):
+    requester_telegram_id: int
+    member_id: int
+
+
 class BandOwnerUpdate(BaseModel):
     requester_telegram_id: int
     member_id: int
@@ -47,6 +60,8 @@ class BandRead(BaseModel):
     name: str
     invite_code: str
     creator_id: int
+    group_id: int | None = None
+    responsible_user_id: int | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -54,3 +69,5 @@ class BandRead(BaseModel):
 
 class BandDetail(BandRead):
     members: list[BandMemberRead]
+    group: GroupRead | None = None
+    responsible: UserRead | None = None

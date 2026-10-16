@@ -66,7 +66,7 @@ async def get_user(telegram_id: int, session: AsyncSession = Depends(get_session
         from app.services.errors import NotFoundError
 
         raise NotFoundError("User not found")
-    return user
+    return await users.annotate_group_admin(session, user)
 
 
 @router.patch("/{telegram_id}/profile", response_model=UserRead)

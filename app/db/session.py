@@ -58,6 +58,21 @@ async def create_db_and_tables() -> None:
                 "ON CONFLICT (key) DO NOTHING"
             )
         )
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES groups(id)"))
+        await conn.execute(text("ALTER TABLE bands ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES groups(id)"))
+        await conn.execute(text("ALTER TABLE bands ADD COLUMN IF NOT EXISTS responsible_user_id INTEGER REFERENCES users(id)"))
+        for slug, title in models.GROUP_SLUGS:
+            await conn.execute(
+                text("INSERT INTO groups (slug, title) VALUES (:slug, :title) ON CONFLICT (slug) DO NOTHING"),
+                {"slug": slug, "title": title},
+            )
+        # One-time backfill: everything that existed before groups were introduced belongs to the music club.
+        done = await conn.execute(text("SELECT 1 FROM club_settings WHERE key = 'groups_backfilled'"))
+        if done.first() is None:
+            await conn.execute(text("UPDATE users SET group_id = (SELECT id FROM groups WHERE slug = 'music') WHERE group_id IS NULL"))
+            await conn.execute(text("UPDATE bands SET group_id = (SELECT id FROM groups WHERE slug = 'music') WHERE group_id IS NULL"))
+            await conn.execute(text("UPDATE bands SET responsible_user_id = creator_id WHERE responsible_user_id IS NULL"))
+            await conn.execute(text("INSERT INTO club_settings (key, value) VALUES ('groups_backfilled', '1')"))
         for admin_id in settings.initial_admin_ids:
             await conn.execute(
                 text("UPDATE users SET role = 'admin', status = 'approved' WHERE telegram_id = :telegram_id"),

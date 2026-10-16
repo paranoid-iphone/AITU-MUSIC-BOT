@@ -6,11 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.models import User, UserRole, UserStatus
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
+from app.services.permissions import administered_group_ids, is_global_admin, require_group_admin
 
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     return result.scalar_one_or_none()
+
+
+async def annotate_group_admin(session: AsyncSession, user: User) -> User:
+    """Attach a transient `is_group_admin` flag so API responses can drive the bot menus."""
+    user.is_group_admin = bool(await administered_group_ids(session, user)) and user.status == UserStatus.APPROVED.value
+    return user
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
@@ -55,6 +62,7 @@ async def upsert_telegram_user(
             user.first_name = None
             user.last_name = None
             user.study_group = None
+            user.group_id = None
             user.language = settings.default_language
             user.moderation_reason = None
             user.registration_retry_after = None
@@ -65,7 +73,7 @@ async def upsert_telegram_user(
             user.status = UserStatus.APPROVED.value
     await session.commit()
     await session.refresh(user)
-    return user
+    return await annotate_group_admin(session, user)
 
 
 async def update_profile(
@@ -76,6 +84,7 @@ async def update_profile(
     study_group: str | None = None,
     language: str | None = None,
     notifications_enabled: bool | None = None,
+    group_id: int | None = None,
 ) -> User:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
@@ -90,6 +99,10 @@ async def update_profile(
         user.language = language
     if notifications_enabled is not None:
         user.notifications_enabled = notifications_enabled
+    if group_id is not None:
+        if user.status == UserStatus.APPROVED.value and user.group_id not in (None, group_id):
+            raise ForbiddenError("Group can be changed only by an admin")
+        user.group_id = group_id
     await session.commit()
     await session.refresh(user)
     return user
@@ -118,8 +131,12 @@ async def list_users_by_status(session: AsyncSession, admin_telegram_id: int, st
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:
         raise NotFoundError("Admin not found")
-    require_admin(admin)
     stmt = select(User).order_by(User.created_at.desc())
+    if not is_global_admin(admin):
+        group_ids = await administered_group_ids(session, admin)
+        if not group_ids or admin.status != UserStatus.APPROVED.value:
+            raise ForbiddenError("Admin access required")
+        stmt = stmt.where(User.group_id.in_(group_ids))
     if status is not None:
         stmt = stmt.where(User.status == status)
     result = await session.execute(stmt)
@@ -133,7 +150,7 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    require_admin(admin)
+    await require_group_admin(session, admin, target.group_id)
     target.status = UserStatus.APPROVED.value
     target.moderation_reason = None
     target.registration_retry_after = None
@@ -230,7 +247,7 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    require_admin(admin)
+    await require_group_admin(session, admin, target.group_id)
     target.status = UserStatus.REJECTED.value
     target.moderation_reason = reason
     target.registration_retry_after = datetime.utcnow() + timedelta(hours=settings.registration_retry_hours)
@@ -254,7 +271,7 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    require_admin(admin)
+    await require_group_admin(session, admin, target.group_id)
     _guard_moderation_target(admin, target)
     target.status = UserStatus.BANNED.value
     target.role = UserRole.USER.value
@@ -280,7 +297,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    require_admin(admin)
+    await require_group_admin(session, admin, target.group_id)
     _guard_moderation_target(admin, target)
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value

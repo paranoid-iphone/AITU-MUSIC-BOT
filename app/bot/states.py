@@ -5,6 +5,7 @@ class Onboarding(StatesGroup):
     first_name = State()
     last_name = State()
     study_group = State()
+    group = State()
     language = State()
 
 
@@ -60,6 +61,7 @@ class AdminFlow(StatesGroup):
     event_location = State()
     event_deadline = State()
     event_edit_value = State()
+    group_admin_add = State()
 
 
 class EventFlow(StatesGroup):

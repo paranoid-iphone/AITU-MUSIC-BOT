@@ -85,6 +85,14 @@ def _fit_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
     return lines
 
 
+def _short_name(full_name: str | None) -> str:
+    """"Фамилия Имя" -> "Фамилия И." for tight cards."""
+    parts = (full_name or "").split()
+    if len(parts) >= 2:
+        return f"{parts[0]} {parts[1][0]}."
+    return parts[0] if parts else ""
+
+
 def _purpose_label(value: str) -> str:
     return {"concert": "к концерту", "self": "для себя", "staff": "стафф", "personal": "личная"}.get(value, value)
 
@@ -257,6 +265,10 @@ def render_schedule_image(bookings: list[dict], day_closures: list[dict] | None 
                 for line in _fit_lines(band, 20, 1):
                     draw.text((x1 + 16, y), line, fill="#314b39", font=FONT_CARD_BAND)
                     y += 19
+            responsible = _short_name(booking.get("responsible_name"))
+            if responsible and bottom - y >= 16:
+                draw.text((x1 + 16, y), _fit_lines(f"отв. {responsible}", 22, 1)[0], fill=MUTED, font=FONT_SMALL)
+                y += 16
             if bottom - y > 20:
                 pill_x = x1 + 16
                 pill_x += _draw_pill(draw, pill_x, y, meta, "#f8fbf4") + 6

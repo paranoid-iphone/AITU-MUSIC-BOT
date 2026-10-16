@@ -13,6 +13,10 @@ class Base(DeclarativeBase):
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"
+    DSVR = "dsvr"
+
+
+GROUP_SLUGS = (("music", "Мьюзик"), ("dance", "Денс"), ("cheer", "Чирлидерши"))
 
 
 class UserStatus(str, Enum):
@@ -31,6 +35,26 @@ class BookingStatus(str, Enum):
 class EventStatus(str, Enum):
     OPEN = "open"
     CLOSED = "closed"
+
+
+class Group(Base):
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(30), unique=True)
+    title: Mapped[str] = mapped_column(String(80))
+
+
+class GroupAdmin(Base):
+    __tablename__ = "group_admins"
+    __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_admin"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+
+    group: Mapped[Group] = relationship()
+    user: Mapped["User"] = relationship()
 
 
 class AuditLog(Base):
@@ -61,6 +85,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default=UserRole.USER.value)
     status: Mapped[str] = mapped_column(String(20), default=UserStatus.PENDING.value)
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
     moderation_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -68,7 +93,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    bands_created: Mapped[list["Band"]] = relationship(back_populates="creator")
+    bands_created: Mapped[list["Band"]] = relationship(back_populates="creator", foreign_keys="Band.creator_id")
     memberships: Mapped[list["BandMember"]] = relationship(back_populates="user")
 
     @property
@@ -83,9 +108,13 @@ class Band(Base):
     name: Mapped[str] = mapped_column(String(150), index=True)
     invite_code: Mapped[str] = mapped_column(String(30), unique=True, index=True, default=lambda: uuid4().hex[:8].upper())
     creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
+    responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    creator: Mapped[User] = relationship(back_populates="bands_created")
+    creator: Mapped[User] = relationship(back_populates="bands_created", foreign_keys=[creator_id])
+    group: Mapped[Group | None] = relationship()
+    responsible: Mapped[User | None] = relationship(foreign_keys=[responsible_user_id])
     members: Mapped[list["BandMember"]] = relationship(back_populates="band", cascade="all, delete-orphan")
     bookings: Mapped[list["Booking"]] = relationship(back_populates="band")
 

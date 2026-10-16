@@ -1,13 +1,16 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from app.api.routes import admin, bands, bookings, events, users
+from app.api.routes import admin, bands, bookings, events, groups, users
 from app.core.config import settings
+from app.core.telegram_auth import validate_init_data
+from app.db.models import UserStatus
 from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services.errors import AppError
 from app.services import bookings as booking_service
+from app.services.users import get_user_by_telegram_id
 
 app = FastAPI(title=settings.app_name)
 
@@ -49,6 +52,7 @@ async def schedule_webapp() -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AITU Music Club Schedule</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root { color-scheme: light; --green:#2f7d4f; --soft:#eef7ef; --line:#d9e8da; --busy:#d9eadb; --staff:#dce7ff; --closed:#f1ebe1; --text:#172018; }
     * { box-sizing: border-box; }
@@ -70,6 +74,7 @@ async def schedule_webapp() -> str:
     .closed-title { font-weight:750; font-size:12px; margin-bottom:3px; }
     .closed-note { font-size:11px; line-height:1.25; }
     .song { font-weight:750; font-size:13px; margin-bottom:2px; }
+    .resp { font-size:11px; color:#5d6f62; line-height:1.25; margin-top:2px; }
     .band, .purpose { font-size:11px; color:#435247; line-height:1.25; }
     .empty { color:#b2beb4; font-size:11px; padding:6px; }
   </style>
@@ -112,7 +117,8 @@ async def schedule_webapp() -> str:
       }[char]));
     }
     async function load() {
-      const res = await fetch("/webapp/schedule-data", { cache: "no-store" });
+      const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || "";
+      const res = await fetch("/webapp/schedule-data", { cache: "no-store", headers: { "X-Telegram-Init-Data": initData } });
       const payload = await res.json();
       const bookings = Array.isArray(payload) ? payload : payload.bookings || [];
       const dayClosures = Array.isArray(payload) ? [] : payload.day_closures || [];
@@ -149,7 +155,7 @@ async def schedule_webapp() -> str:
             cell.rowSpan = span;
             const div = document.createElement("div");
             div.className = `event ${item.purpose === "staff" ? "staff" : ""}`;
-            div.innerHTML = `<div class="song">${escapeHtml(item.song_title || "песня не указана")}</div><div class="band">${escapeHtml(item.band_name)}</div><div class="purpose">${escapeHtml(item.start_time.slice(0,5))}-${escapeHtml(item.end_time.slice(0,5))} · ${escapeHtml(purposeMap[item.purpose] || item.purpose)}</div>`;
+            div.innerHTML = `<div class="song">${escapeHtml(item.song_title || "песня не указана")}</div><div class="band">${escapeHtml(item.band_name)}${item.group_title ? " · " + escapeHtml(item.group_title) : ""}</div>${item.responsible_name ? `<div class="resp">отв.: ${escapeHtml(item.responsible_name)}${item.responsible_username ? " @" + escapeHtml(item.responsible_username) : ""}</div>` : ""}<div class="purpose">${escapeHtml(item.start_time.slice(0,5))}-${escapeHtml(item.end_time.slice(0,5))} · ${escapeHtml(purposeMap[item.purpose] || item.purpose)}</div>`;
             cell.appendChild(div);
           } else if (closedByDate.has(date)) {
             cell.innerHTML = `<div class="closed"><div class="closed-title">день занят</div><div class="closed-note">${escapeHtml(closedByDate.get(date))}</div></div>`;
@@ -170,11 +176,23 @@ async def schedule_webapp() -> str:
     """
 
 
+async def _viewer_is_approved(session, init_data: str | None) -> bool:
+    telegram_user = validate_init_data(init_data, settings.bot_token)
+    if telegram_user is None:
+        return False
+    user = await get_user_by_telegram_id(session, int(telegram_user["id"]))
+    return user is not None and user.status == UserStatus.APPROVED.value
+
+
 @app.get("/webapp/schedule-data")
-async def schedule_webapp_data() -> dict:
+async def schedule_webapp_data(x_telegram_init_data: str | None = Header(default=None)) -> dict:
     async with AsyncSessionLocal() as session:
         rows = await booking_service.list_schedule(session)
         closures = await booking_service.list_day_closures(session)
+        # Contact details are only shown to approved members opening the app from Telegram.
+        show_contacts = await _viewer_is_approved(session, x_telegram_init_data)
+    if not show_contacts:
+        rows = [{**item, "responsible_name": None, "responsible_username": None} for item in rows]
     bookings = [
         {
             **{key: value for key, value in item.items() if key != "created_by"},
@@ -190,6 +208,7 @@ async def schedule_webapp_data() -> dict:
 
 
 app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(bands.router, prefix="/bands", tags=["bands"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
 app.include_router(events.router, prefix="/events", tags=["events"])
