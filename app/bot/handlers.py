@@ -1194,7 +1194,7 @@ async def inline_booking_personal(callback: CallbackQuery, state: FSMContext) ->
     if not days:
         await state.clear()
         user = await api.get_user(callback.from_user.id)
-        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.", main_menu_inline(has_admin_menu(user)))
+        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».", main_menu_inline(has_admin_menu(user)))
         await answer_callback(callback)
         return
     await state.update_data(booking_dates=days)
@@ -1230,7 +1230,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
         user = await api.get_user(callback.from_user.id)
         await edit_screen(
             callback,
-            "На ближайшие 7 дней нет свободного времени.",
+            "На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».",
             main_menu_inline(has_admin_menu(user)),
         )
         await answer_callback(callback)
@@ -2920,7 +2920,7 @@ async def booking_band(message: Message, state: FSMContext) -> None:
         if day_slots:
             dates.append({"date": target_date.isoformat(), "count": len(day_slots)})
     if not dates:
-        await message.answer("На ближайшие 7 дней нет свободного времени.")
+        await message.answer("На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».")
         await state.clear()
         return
     await state.update_data(booking_dates=dates)

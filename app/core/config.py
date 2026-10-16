@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     registration_retry_hours: int = 24
     default_language: str = "ru"
     timezone: str = "Asia/Almaty"
+    weekly_planning_enabled: bool = True
+    allocation_time: str = "18:00"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

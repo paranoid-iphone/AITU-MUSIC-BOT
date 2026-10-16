@@ -49,6 +49,7 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 def rehearsals_menu_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
     rows = [
+        [InlineKeyboardButton(text="🗓 Заявка на неделю", callback_data="plan:start")],
         [InlineKeyboardButton(text="🎧 Мои репетиции", callback_data="user_bookings:0")],
         [InlineKeyboardButton(text="📅 Забронировать репетицию", callback_data="menu:booking")],
     ]
@@ -647,9 +648,10 @@ def admin_schedule_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Занять время", callback_data="admin:staff_booking"),
-                InlineKeyboardButton(text="Занять с вытеснением", callback_data="dsvr:start"),
                 InlineKeyboardButton(text="Редактировать бронь", callback_data="admin_bookings_manage:0"),
             ],
+            [InlineKeyboardButton(text="Занять с вытеснением (ДСВР)", callback_data="dsvr:start")],
+            [InlineKeyboardButton(text="Планирование недели", callback_data="plan:admin")],
             [InlineKeyboardButton(text="Часы кабинета", callback_data="admin:booking_window")],
             [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
         ]

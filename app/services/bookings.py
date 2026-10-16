@@ -9,6 +9,7 @@ from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus
 from app.services.outbox import commit_and_publish
 from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
 from app.services.schedule_history import record_change, snapshot
+from app.services.weeks import is_date_open_for_booking
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -98,6 +99,7 @@ async def _ensure_booking_time_available(
     start_time: time,
     end_time: time,
     exclude_booking_id: int | None = None,
+    privileged: bool = False,
 ) -> None:
     now = now_local()
     duration = _duration_minutes(start_time, end_time)
@@ -105,6 +107,8 @@ async def _ensure_booking_time_available(
         raise ConflictError("Booking duration must be a positive 30-minute step")
     if booking_date < now.date() or booking_date > (now + timedelta(days=7)).date():
         raise ConflictError("Booking date must be within the next 7 days")
+    if not privileged and not await is_date_open_for_booking(session, booking_date, now):
+        raise ConflictError("The schedule for that week is not published yet: send a weekly request instead")
     start_dt = datetime.combine(booking_date, start_time)
     if start_dt <= now or start_dt > now + timedelta(days=7):
         raise ConflictError("Booking must start in the future and within the next 7 days")
@@ -168,7 +172,13 @@ async def personal_bookings_are_enabled(session: AsyncSession) -> bool:
     return setting is None or setting.value == "1"
 
 
-async def list_available_slots(session: AsyncSession, target_date: date, duration_minutes: int = 60, band_id: int | None = None) -> list[dict]:
+async def list_available_slots(
+    session: AsyncSession,
+    target_date: date,
+    duration_minutes: int = 60,
+    band_id: int | None = None,
+    privileged: bool = False,
+) -> list[dict]:
     if duration_minutes <= 0 or duration_minutes % 30 != 0:
         return []
     now = now_local()
@@ -183,6 +193,8 @@ async def list_available_slots(session: AsyncSession, target_date: date, duratio
             if used_day_minutes + duration_minutes > daily_limit:
                 return []
     if target_date < now.date() or target_date > (now + timedelta(days=7)).date():
+        return []
+    if not privileged and not await is_date_open_for_booking(session, target_date, now):
         return []
     day = target_date.weekday()
     day_result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == day, AvailableDay.is_enabled.is_(True)))
@@ -365,7 +377,7 @@ async def create_staff_booking(
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
     await _lock_bookings(session)
-    slots = await list_available_slots(session, booking_date, duration)
+    slots = await list_available_slots(session, booking_date, duration, privileged=True)
     if not any(slot["start_time"] == start_time and slot["end_time"] == end_time for slot in slots):
         raise ConflictError("Slot is not available")
     booking = Booking(
@@ -592,7 +604,9 @@ async def update_booking(
     new_end = end_time or booking.end_time
     if booking_date is not None or start_time is not None or end_time is not None:
         await _lock_bookings(session)
-        await _ensure_booking_time_available(session, new_date, new_start, new_end, booking.id)
+        await _ensure_booking_time_available(
+            session, new_date, new_start, new_end, booking.id, privileged=is_global_admin(user) or is_dsvr(user)
+        )
         if booking.band_id is not None and not (is_global_admin(user) or is_dsvr(user)):
             new_duration = _duration_minutes(new_start, new_end)
             weekly_limit = await get_weekly_booking_limit_minutes(session)

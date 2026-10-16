@@ -197,6 +197,21 @@ class BackendClient:
             "POST", "/users/dsvr", json={"admin_telegram_id": admin_telegram_id, "target": target, "enabled": enabled}
         )
 
+    async def planning_week(self) -> dict[str, Any]:
+        return await self.request("GET", "/planning/week")
+
+    async def planning_requests(self, telegram_id: int) -> list[dict[str, Any]]:
+        return await self.request("GET", "/planning/requests", params={"telegram_id": telegram_id})
+
+    async def create_planning_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self.request("POST", "/planning/requests", json=payload)
+
+    async def delete_planning_request(self, telegram_id: int, request_id: int) -> dict[str, Any]:
+        return await self.request("DELETE", f"/planning/requests/{request_id}", params={"telegram_id": telegram_id})
+
+    async def planning_allocate(self, telegram_id: int, dry_run: bool = False) -> dict[str, Any]:
+        return await self.request("POST", "/planning/allocate", json={"telegram_id": telegram_id, "dry_run": dry_run})
+
     async def schedule(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/schedule")
 

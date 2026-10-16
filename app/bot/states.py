@@ -64,6 +64,16 @@ class AdminFlow(StatesGroup):
     group_admin_add = State()
 
 
+class PlanFlow(StatesGroup):
+    band = State()
+    duration = State()
+    day = State()
+    time = State()
+    more = State()
+    purpose = State()
+    song = State()
+
+
 class DsvrFlow(StatesGroup):
     date = State()
     time = State()

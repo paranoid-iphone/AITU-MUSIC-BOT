@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.db import models
 from app.services import bookings as booking_service
 from app.services import outbox
@@ -30,6 +31,12 @@ async def session(monkeypatch) -> AsyncSession:
         return None
 
     monkeypatch.setattr(booking_service, "_lock_bookings", _no_lock)
+    from app.services import planning
+
+    monkeypatch.setattr(planning, "_lock_bookings", _no_lock)
+    # Weekly planning closes next-week days for manual booking, which would make date-relative tests depend on
+    # the weekday they run on. Planning tests switch it on explicitly via the `planning_on` fixture.
+    monkeypatch.setattr(settings, "weekly_planning_enabled", False)
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -91,3 +98,20 @@ async def make_band(session):
         return band
 
     return factory
+
+
+@pytest.fixture
+def planning_on(session, monkeypatch):  # depends on `session` so it is applied after the default-off setting
+    monkeypatch.setattr(settings, "weekly_planning_enabled", True)
+
+
+@pytest.fixture
+def freeze_now(monkeypatch):
+    """Pin the club clock: freeze_now(datetime(2026, 10, 18, 12, 0))."""
+    from app.services import planning
+
+    def _freeze(moment):
+        for module in (booking_service, planning):
+            monkeypatch.setattr(module, "now_local", lambda moment=moment: moment)
+
+    return _freeze

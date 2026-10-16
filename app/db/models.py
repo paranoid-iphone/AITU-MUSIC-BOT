@@ -184,6 +184,64 @@ class Booking(Base):
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
 
 
+class WeekStatus(str, Enum):
+    COLLECTING = "collecting"
+    PUBLISHED = "published"
+
+
+class RequestStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    UNASSIGNED = "unassigned"
+
+
+class SchedulingWeek(Base):
+    """One planning week (Monday-based). Requests are collected, then allocated and published once."""
+
+    __tablename__ = "scheduling_weeks"
+
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default=WeekStatus.COLLECTING.value)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AvailabilityRequest(Base):
+    """A band's request for one rehearsal next week, with up to five time windows ordered by priority."""
+
+    __tablename__ = "availability_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, index=True)
+    band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"))
+    submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    duration_minutes: Mapped[int] = mapped_column(Integer)
+    purpose: Mapped[str] = mapped_column(String(30), default="self")
+    song_title: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=RequestStatus.PENDING.value)
+    booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    band: Mapped[Band] = relationship()
+    submitted_by: Mapped[User] = relationship(foreign_keys=[submitted_by_id])
+    windows: Mapped[list["AvailabilityWindow"]] = relationship(
+        back_populates="request", cascade="all, delete-orphan", order_by="AvailabilityWindow.priority"
+    )
+
+
+class AvailabilityWindow(Base):
+    __tablename__ = "availability_windows"
+    __table_args__ = (UniqueConstraint("request_id", "priority", name="uq_request_priority"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("availability_requests.id"))
+    priority: Mapped[int] = mapped_column(Integer)
+    day_of_week: Mapped[int] = mapped_column(Integer)
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+
+    request: Mapped[AvailabilityRequest] = relationship(back_populates="windows")
+
+
 class ScheduleChange(Base):
     """Who changed the schedule and how. Rows outlive bookings and bands, so names are denormalized."""
 

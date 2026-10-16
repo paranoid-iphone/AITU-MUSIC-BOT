@@ -1,18 +1,48 @@
+import logging
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from app.api.routes import admin, bands, bookings, events, groups, history, users
+from app.api.routes import admin, bands, bookings, events, groups, history, planning, users
 from app.core.config import settings
 from app.core.telegram_auth import validate_init_data
 from app.db.models import UserStatus
 from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
+from app.services import planning as planning_service
 from app.services.errors import AppError
+from app.services.weeks import allocation_time, next_week_start
+from app.core.timezone import now_local
 from app.services import bookings as booking_service
 from app.services.users import get_user_by_telegram_id
 
 app = FastAPI(title=settings.app_name)
+logger = logging.getLogger(__name__)
+scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+
+async def run_sunday_allocation() -> None:
+    """Close requests and allocate the room for the coming week."""
+    async with AsyncSessionLocal() as session:
+        try:
+            summary = await planning_service.run_weekly_allocation(session, None, next_week_start(now_local().date()))
+            logger.info("Weekly allocation done: %s assigned, %s unassigned", len(summary["assigned"]), len(summary["unassigned"]))
+        except AppError as exc:
+            logger.info("Weekly allocation skipped: %s", exc)
+        except Exception:
+            logger.exception("Weekly allocation failed")
+
+
+async def catch_up_missed_allocations() -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            done = await planning_service.catch_up_allocations(session)
+            if done:
+                logger.info("Caught up missed allocations for weeks: %s", [week.isoformat() for week in done])
+        except Exception:
+            logger.exception("Catch-up allocation failed")
 
 
 @app.on_event("startup")
@@ -20,6 +50,17 @@ async def on_startup() -> None:
     await create_db_and_tables()
     async with AsyncSessionLocal() as session:
         await seed_default_schedule(session)
+    if settings.weekly_planning_enabled:
+        run_at = allocation_time()
+        scheduler.add_job(run_sunday_allocation, "cron", day_of_week="sun", hour=run_at.hour, minute=run_at.minute, id="weekly_allocation")
+        scheduler.start()
+        await catch_up_missed_allocations()
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 
 @app.middleware("http")
@@ -210,6 +251,7 @@ async def schedule_webapp_data(x_telegram_init_data: str | None = Header(default
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(history.router, prefix="/history", tags=["history"])
+app.include_router(planning.router, prefix="/planning", tags=["planning"])
 app.include_router(bands.router, prefix="/bands", tags=["bands"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
 app.include_router(events.router, prefix="/events", tags=["events"])
