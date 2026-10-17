@@ -87,6 +87,15 @@ class PriorityBookingCreate(StaffBookingCreate):
     pass
 
 
+class WebAppPriorityCreate(BaseModel):
+    """Mini App takeover by DSVR or an admin: the acting user comes from the signed initData."""
+
+    booking_date: date
+    start_time: time
+    end_time: time
+    title: str = Field(min_length=1, max_length=150)
+
+
 class PriorityBookingResult(BaseModel):
     booking: BookingRead
     cancelled: list[dict]

@@ -676,3 +676,56 @@ async def test_admin_moves_and_cancels_somebody_elses_booking_past_the_limits(cl
     assert cancelled.status_code == 200
     await session.refresh(booking)
     assert booking.status == "cancelled"
+
+
+# ---------- step 11.2: DSVR takeover from the grid ----------
+
+
+PRIORITY = {"booking_date": "2026-10-14", "start_time": "15:30", "end_time": "16:30"}
+
+
+async def test_only_dsvr_and_admins_may_preview_or_take_over(client, session, make_user, freeze_now):
+    freeze_now(NOW)
+    member = await make_user()
+    preview = await client.get("/webapp/api/priority/preview", params=PRIORITY, headers=tg(member.telegram_id))
+    assert preview.status_code == 403
+    created = await client.post("/webapp/api/priority", json={**PRIORITY, "title": "Ректор"}, headers=tg(member.telegram_id))
+    assert created.status_code == 403
+    assert (await client.get("/webapp/api/priority/preview", params=PRIORITY)).status_code == 401
+
+
+async def test_dsvr_previews_and_takes_over_through_the_mini_app(client, session, make_user, make_band, freeze_now, published):
+    leader = await booked_schedule(session, make_user, make_band, freeze_now)  # Rockers, 15:00-16:00
+    dsvr = await make_user(role="dsvr", group_slug=None)
+    admin = await make_user(role="admin")
+    headers = tg(dsvr.telegram_id)
+
+    preview = (await client.get("/webapp/api/priority/preview", params=PRIORITY, headers=headers)).json()
+    assert [row["band_name"] for row in preview["bookings"]] == ["Rockers"]
+    assert len(await bookings.list_schedule(session)) == 1  # a preview changes nothing
+
+    published.clear()
+    created = await client.post("/webapp/api/priority", json={**PRIORITY, "title": "Ректор"}, headers=headers)
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["booking"]["purpose"] == "staff" and body["booking"]["start_time"] == "15:30:00"
+    assert [row["band_name"] for row in body["cancelled"]] == ["Rockers"]
+    assert any(event["type"] == "notify" and event["telegram_id"] == leader.telegram_id for event in published)
+
+    taken = (await client.get("/webapp/api/schedule")).json()["bookings"]
+    assert [(row["purpose"], row["start_time"]) for row in taken] == [("staff", "15:30:00")]
+
+    admin_preview = await client.get("/webapp/api/priority/preview", params=PRIORITY, headers=tg(admin.telegram_id))
+    assert admin_preview.status_code == 200
+
+
+async def test_takeover_rejects_bad_title_and_time(client, session, make_user, freeze_now):
+    freeze_now(NOW)
+    dsvr = await make_user(role="dsvr", group_slug=None)
+    headers = tg(dsvr.telegram_id)
+    assert (await client.post("/webapp/api/priority", json={**PRIORITY, "title": ""}, headers=headers)).status_code == 422
+    assert (await client.post("/webapp/api/priority", json={**PRIORITY, "title": "x" * 151}, headers=headers)).status_code == 422
+    past = {**PRIORITY, "start_time": "09:00", "end_time": "10:00", "title": "Ранний"}  # NOW is 12:00
+    assert (await client.post("/webapp/api/priority", json=past, headers=headers)).status_code == 409
+    odd = {**PRIORITY, "end_time": "16:10", "title": "Кривое"}
+    assert (await client.post("/webapp/api/priority", json=odd, headers=headers)).status_code == 409

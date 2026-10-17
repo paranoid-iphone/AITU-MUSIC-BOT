@@ -1,5 +1,5 @@
 """JSON API of the Telegram Mini App. Authenticated by signed `initData`, not by the internal token."""
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -24,7 +24,13 @@ from app.schemas.bands import (
     WebAppMemberPick,
     WebAppMemberRole,
 )
-from app.schemas.bookings import BookingRead, WebAppBookingCreate, WebAppBookingUpdate
+from app.schemas.bookings import (
+    BookingRead,
+    PriorityBookingResult,
+    WebAppBookingCreate,
+    WebAppBookingUpdate,
+    WebAppPriorityCreate,
+)
 from app.schemas.move_requests import MoveRequestRead, WebAppMoveRequestCreate
 from app.schemas.waitlist import WebAppWaitlistJoin
 from app.services import bands as band_service
@@ -178,6 +184,31 @@ async def cancel_booking(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await booking_service.delete_booking(session, user.telegram_id, booking_id)
+
+
+@router.get("/priority/preview")
+async def priority_preview(
+    booking_date: date,
+    start_time: time,
+    end_time: time,
+    user: User = Depends(current_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Bookings a DSVR/admin takeover of this time would cancel; nothing is changed."""
+    return {
+        "bookings": await booking_service.preview_priority_booking(session, user.telegram_id, booking_date, start_time, end_time)
+    }
+
+
+@router.post("/priority", response_model=PriorityBookingResult)
+async def create_priority_booking(
+    payload: WebAppPriorityCreate,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await booking_service.create_priority_booking(
+        session, user.telegram_id, payload.booking_date, payload.start_time, payload.end_time, payload.title
+    )
 
 
 def _move_row(row: dict) -> dict:

@@ -18,6 +18,7 @@ const state = {
   data: null, // last /schedule payload
   free: new Map(), // date -> Set of "HH:MM" cells that can be booked
   selection: null, // { date, from, to } in minutes; `to` is exclusive
+  takeover: false, // DSVR/admin picks any future time, busy or not, to take the room
   closeSheet: null, // set while a bottom sheet is open
   adminTab: "requests",
   adminQuery: "",
@@ -203,30 +204,29 @@ function cellsAreFree(date, from, to) {
   return true;
 }
 
-function pickCell(date, minute) {
-  const step = state.data.slot_minutes;
+// `from`..`to` is the tapped unit: one free cell, or in takeover mode also a whole booking or closed block.
+function pickRange(date, from, to) {
   const selection = state.selection;
-  const tappedSelected = Boolean(selection) && selection.date === date && minute >= selection.from && minute < selection.to;
   if (!selection || selection.date !== date) {
-    state.selection = { date, from: minute, to: minute + step };
-  } else if (tappedSelected) {
-    // tapping a selected cell switches it off; the range must stay in one piece, so a middle cell cuts it short
-    if (minute === selection.from) state.selection = selection.to - step > minute ? { ...selection, from: minute + step } : null;
-    else state.selection = { ...selection, to: minute };
+    state.selection = { date, from, to };
+  } else if (from >= selection.from && to <= selection.to) {
+    // tapping a selected unit switches it off; the range must stay in one piece, so a middle unit cuts it short
+    if (from === selection.from) state.selection = selection.to > to ? { ...selection, from: to } : null;
+    else state.selection = { ...selection, to: from };
   } else {
-    const from = Math.min(selection.from, minute);
-    const to = Math.max(selection.to, minute + step);
-    // a range may not jump over a busy cell: start over from the tapped one instead
-    state.selection = cellsAreFree(date, from, to) ? { date, from, to } : { date, from: minute, to: minute + step };
+    const spanFrom = Math.min(selection.from, from);
+    const spanTo = Math.max(selection.to, to);
+    // a booking range may not jump over a busy cell: start over from the tapped one instead
+    state.selection = state.takeover || cellsAreFree(date, spanFrom, spanTo) ? { date, from: spanFrom, to: spanTo } : { date, from, to };
   }
   applySelection();
 }
 
 function applySelection() {
   const selection = state.selection;
-  for (const cell of document.querySelectorAll("td.free")) {
-    const minute = timeToMinutes(cell.dataset.time);
-    const selected = Boolean(selection) && cell.dataset.date === selection.date && minute >= selection.from && minute < selection.to;
+  for (const cell of document.querySelectorAll("td[data-from]")) {
+    const selected =
+      Boolean(selection) && cell.dataset.date === selection.date && Number(cell.dataset.from) >= selection.from && Number(cell.dataset.to) <= selection.to;
     cell.classList.toggle("selected", selected);
   }
   renderSelectionBar();
@@ -247,11 +247,11 @@ function renderSelectionBar() {
       ` ${minutesToTime(selection.from)}–${minutesToTime(selection.to)} · ${formatMinutes(selection.to - selection.from)}`,
     ]),
     el("button", { className: "btn secondary", type: "button", text: t("webapp.select.clear") }),
-    el("button", { className: "btn", type: "button", text: t("webapp.select.book") })
+    el("button", { className: "btn", type: "button", text: t(state.takeover ? "webapp.takeover.take" : "webapp.select.book") })
   );
   const [clear, book] = bar.querySelectorAll("button");
   clear.addEventListener("click", () => { state.selection = null; applySelection(); });
-  book.addEventListener("click", openBookingForm);
+  book.addEventListener("click", state.takeover ? openTakeoverForm : openBookingForm);
 }
 
 async function renderSchedule(screen, token) {
@@ -260,7 +260,8 @@ async function renderSchedule(screen, token) {
   state.data = data;
   state.free = new Map(Object.entries(data.free_slots).map(([date, times]) => [date, new Set(times)]));
   const selection = state.selection;
-  if (selection && !cellsAreFree(selection.date, selection.from, selection.to)) state.selection = null;
+  if (!canTakeOver()) state.takeover = false;
+  if (selection && !state.takeover && !cellsAreFree(selection.date, selection.from, selection.to)) state.selection = null;
 
   const byStart = new Map();
   const covered = new Set();
@@ -309,6 +310,16 @@ async function renderSchedule(screen, token) {
   ]);
   const rows = [head];
   const bookable = canBook();
+  const step = data.slot_minutes;
+  const nowMinutes = timeToMinutes(data.now.slice(11, 16));
+  // In takeover mode any cell that has not started yet can be picked, busy or not.
+  const markPickable = (cell, date, from, to) => {
+    cell.dataset.date = date;
+    cell.dataset.from = String(from);
+    cell.dataset.to = String(to);
+    cell.classList.add("pick");
+  };
+  const upcoming = (date, from) => date > data.today || (date === data.today && from > nowMinutes);
   for (let minute = data.window_start_minutes; minute < data.window_end_minutes; minute += data.slot_minutes) {
     const time = minutesToTime(minute);
     const row = el("tr", {}, [el("td", { className: "time", text: time })]);
@@ -322,8 +333,12 @@ async function renderSchedule(screen, token) {
         const block = bookingBlock(item);
         if (cell.rowSpan === 1) block.classList.add("short");
         cell.append(block);
+        if (state.takeover && upcoming(day.date, timeToMinutes(item.start_time))) {
+          markPickable(cell, day.date, timeToMinutes(item.start_time), timeToMinutes(item.end_time));
+        }
       } else if (closedStart.has(key)) {
         cell.rowSpan = closedStart.get(key);
+        if (state.takeover && upcoming(day.date, minute)) markPickable(cell, day.date, minute, minute + cell.rowSpan * step);
         cell.append(el("div", { className: "closed" }, [
           el("div", { className: "closed-label" }, [
             el("div", { className: "closed-title", text: t("webapp.day_busy") }),
@@ -332,10 +347,11 @@ async function renderSchedule(screen, token) {
         ]));
       } else {
         const isFree = state.free.has(day.date) && state.free.get(day.date).has(time);
-        if (isFree && bookable) {
+        if (state.takeover) {
+          if (upcoming(day.date, minute)) markPickable(cell, day.date, minute, minute + step);
+        } else if (isFree && bookable) {
           cell.className = "free";
-          cell.dataset.date = day.date;
-          cell.dataset.time = time;
+          markPickable(cell, day.date, minute, minute + step);
         }
         cell.append(el("span", { className: "empty", text: isFree ? t("webapp.free") : "" }));
       }
@@ -344,15 +360,17 @@ async function renderSchedule(screen, token) {
     rows.push(row);
   }
 
-  const table = el("table", { className: "schedule" }, rows);
+  const table = el("table", { className: `schedule${state.takeover ? " takeover" : ""}` }, rows);
   table.addEventListener("click", (event) => {
-    const cell = event.target.closest("td.free");
-    if (cell) pickCell(cell.dataset.date, timeToMinutes(cell.dataset.time));
+    const cell = event.target.closest("td[data-from]");
+    if (cell) pickRange(cell.dataset.date, Number(cell.dataset.from), Number(cell.dataset.to));
   });
   const previous = screen.querySelector(".grid-wrap");
   const wrap = el("div", { className: "grid-wrap" }, [table]);
-  const hint = el("div", { className: "notice hint", text: t(bookable ? "webapp.select.hint" : "webapp.select.hint_readonly") });
-  screen.replaceChildren(hint, wrap);
+  const hintKey = state.takeover ? "webapp.takeover.hint" : bookable ? "webapp.select.hint" : "webapp.select.hint_readonly";
+  const hint = el("div", { className: "notice hint", text: t(hintKey) });
+  const toggle = canTakeOver() ? takeoverToggle() : null;
+  screen.replaceChildren(hint, toggle, wrap);
   if (previous) {
     wrap.scrollLeft = previous.scrollLeft;
     wrap.scrollTop = previous.scrollTop;
@@ -374,8 +392,109 @@ function bookingBlock(item) {
     responsible ? el("div", { className: "resp", text: responsible }) : null,
     el("div", { className: "purpose", text: `${item.start_time.slice(0, 5)}-${item.end_time.slice(0, 5)} · ${purpose}` }),
   ]);
-  block.addEventListener("click", () => openBookingCard(item));
+  // In takeover mode the tap belongs to the cell (it selects the whole booking), not to the card.
+  block.addEventListener("click", () => { if (!state.takeover) openBookingCard(item); });
   return block;
+}
+
+/* ---------- takeover (DSVR / admin) ---------- */
+
+function canTakeOver() {
+  return Boolean(canBook() && (state.me.is_dsvr || state.me.is_admin));
+}
+
+function takeoverToggle() {
+  const toggle = el("button", {
+    className: `btn takeover-toggle${state.takeover ? "" : " secondary"}`,
+    type: "button",
+    text: t(state.takeover ? "webapp.takeover.off" : "webapp.takeover.on"),
+  });
+  toggle.addEventListener("click", () => {
+    state.takeover = !state.takeover;
+    state.selection = null;
+    render();
+  });
+  return toggle;
+}
+
+function affectedLine(row) {
+  const who = row.responsible_name ? `${row.band_name} (${t("webapp.responsible_short")}: ${row.responsible_name})` : row.band_name;
+  return `${row.start_time.slice(0, 5)}–${row.end_time.slice(0, 5)} · ${who} · ${row.song_title || t("webapp.song_missing")}`;
+}
+
+async function openTakeoverForm() {
+  const selection = state.selection;
+  if (!selection) return;
+  const query = new URLSearchParams({
+    booking_date: selection.date,
+    start_time: minutesToTime(selection.from),
+    end_time: minutesToTime(selection.to),
+  });
+  let affected;
+  try {
+    affected = (await api(`/priority/preview?${query}`)).bookings;
+  } catch (failure) {
+    toast(sessionAwareMessage(failure, "webapp.takeover.error"), true);
+    return;
+  }
+  const summary = el("div", { className: "summary", text: `${weekdayLabel(selection.date)} ${shortDate(selection.date)} · ${minutesToTime(selection.from)}–${minutesToTime(selection.to)} · ${formatMinutes(selection.to - selection.from)}` });
+  const title = textField(t("webapp.takeover.title_field"), "takeover-title", "", 150);
+  const error = el("div", { className: "form-error" });
+  const submit = el("button", {
+    className: "btn",
+    type: "submit",
+    text: affected.length ? `${t("webapp.takeover.submit_n")}: ${affected.length}` : t("webapp.takeover.submit"),
+  });
+  const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.form.cancel") });
+  cancel.addEventListener("click", closeSheet);
+  const impact = affected.length
+    ? el("div", { className: "notice error" }, [
+        el("strong", { text: t("webapp.takeover.affected") }),
+        ...affected.map((row) => el("div", { text: affectedLine(row) })),
+      ])
+    : el("div", { className: "notice", text: t("webapp.takeover.none") });
+  const form = el("form", { className: "form" }, [
+    el("h2", { text: t("webapp.takeover.heading") }),
+    summary,
+    impact,
+    title.field,
+    error,
+    el("div", { className: "actions" }, [submit, cancel]),
+  ]);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = title.input.value.trim();
+    if (!name) {
+      error.textContent = t("webapp.takeover.title_required");
+      return;
+    }
+    submit.disabled = true;
+    error.textContent = "";
+    try {
+      await api("/priority", {
+        method: "POST",
+        body: {
+          booking_date: selection.date,
+          start_time: minutesToTime(selection.from),
+          end_time: minutesToTime(selection.to),
+          title: name,
+        },
+      });
+    } catch (failure) {
+      submit.disabled = false;
+      error.textContent = sessionAwareMessage(failure, "webapp.takeover.error");
+      if (failure.status === 409) render();
+      haptic("error");
+      return;
+    }
+    state.selection = null;
+    state.takeover = false;
+    closeSheet();
+    haptic("success");
+    toast(t("webapp.takeover.done"));
+    render();
+  });
+  openSheet([form]);
 }
 
 function detailRow(label, value) {
@@ -1475,6 +1594,7 @@ async function render() {
   clearTimeout(state.refreshTimer);
   if (route !== "schedule") {
     state.selection = null;
+    state.takeover = false;
     renderSelectionBar();
   }
   try {
