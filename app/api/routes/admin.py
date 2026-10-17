@@ -14,7 +14,7 @@ from app.schemas.admin import (
     WeeklyBookingLimitUpdate,
 )
 from app.schemas.bookings import AvailableSlotRead
-from app.services import admin, audit
+from app.services import admin, audit, outbox
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
@@ -22,6 +22,7 @@ router = APIRouter(dependencies=[Depends(verify_internal_token)])
 @router.put("/days", response_model=dict)
 async def update_day(payload: DayUpdate, session: AsyncSession = Depends(get_session)):
     day = await admin.update_available_day(session, payload.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by)
+    await outbox.commit_and_publish(session)
     return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled, "occupied_by": day.occupied_by}
 
 
@@ -72,7 +73,9 @@ async def get_booking_window(telegram_id: int, session: AsyncSession = Depends(g
 
 @router.put("/settings/booking-window")
 async def update_booking_window(payload: BookingWindowUpdate, session: AsyncSession = Depends(get_session)):
-    return await admin.update_booking_window(session, payload.telegram_id, payload.start_time, payload.end_time)
+    window = await admin.update_booking_window(session, payload.telegram_id, payload.start_time, payload.end_time)
+    await outbox.commit_and_publish(session)
+    return window
 
 
 @router.get("/settings/personal-bookings")

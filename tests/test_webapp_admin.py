@@ -1,6 +1,6 @@
 """Mini App admin API: requests, users and roles, plus the user notifications those actions queue."""
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.core.config import settings
 from app.db import models
@@ -283,3 +283,96 @@ async def test_registration_buttons_only_act_on_pending_requests(monkeypatch, ac
     assert bool(calls) is acted
     if not acted:
         assert callback.answers == [("Заявка уже обработана", True)]
+
+
+SETTINGS = f"{API}/settings"
+
+
+async def test_settings_are_for_the_main_admin_only(client, session, make_user):
+    _, group_admin, _, _ = await staff(make_user, session)
+    dsvr = await make_user(role="dsvr")
+    plain = await make_user()
+    bodies = {
+        "days": {"day_of_week": 1, "is_enabled": False},
+        "window": {"start_time": "09:00", "end_time": "20:00"},
+        "limits": {"weekly_hours": 3},
+        "personal": {"enabled": False},
+    }
+    for user in (group_admin, dsvr, plain):
+        headers = tg(user.telegram_id)
+        assert (await client.get(SETTINGS, headers=headers)).status_code == 403
+        for name, body in bodies.items():
+            assert (await client.put(f"{SETTINGS}/{name}", json=body, headers=headers)).status_code == 403
+    assert (await client.get(SETTINGS)).status_code == 401
+
+
+async def test_settings_start_with_the_club_defaults(client, session, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    await session.execute(delete(models.AvailableDay))  # the test database seeds every day open; an unseeded club has the defaults
+    await session.commit()
+    data = (await client.get(SETTINGS, headers=tg(admin.telegram_id))).json()
+
+    assert [item["day_of_week"] for item in data["days"]] == list(range(7))
+    assert [item["is_enabled"] for item in data["days"]] == [True] * 6 + [False]
+    assert data["window"] == {"start_time": "08:00", "end_time": "21:00"}
+    assert (data["weekly_hours"], data["daily_hours"], data["max_future_bookings"]) == (4, 0, 0)
+    assert data["personal_enabled"] is True
+
+
+async def test_closing_a_day_is_saved_announced_and_reopening_clears_the_note(client, make_user, published):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+
+    closed = await client.put(
+        f"{SETTINGS}/days", json={"day_of_week": 2, "is_enabled": False, "occupied_by": " Debate Club "}, headers=headers
+    )
+    assert closed.status_code == 200
+    assert closed.json() == {"day_of_week": 2, "is_enabled": False, "occupied_by": "Debate Club"}
+    assert {"type": "schedule_changed"} in published
+    days = (await client.get(SETTINGS, headers=headers)).json()["days"]
+    assert days[2] == {"day_of_week": 2, "is_enabled": False, "occupied_by": "Debate Club"}
+
+    reopened = await client.put(f"{SETTINGS}/days", json={"day_of_week": 2, "is_enabled": True}, headers=headers)
+    assert reopened.json()["occupied_by"] is None
+    assert (await client.put(f"{SETTINGS}/days", json={"day_of_week": 7, "is_enabled": True}, headers=headers)).status_code == 422
+
+
+async def test_the_room_hours_reach_the_schedule_and_must_be_ordered(client, make_user, published):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+
+    saved = await client.put(f"{SETTINGS}/window", json={"start_time": "10:00", "end_time": "20:30"}, headers=headers)
+    assert saved.status_code == 200 and saved.json() == {"start_time": "10:00", "end_time": "20:30"}
+    assert {"type": "schedule_changed"} in published
+    schedule = (await client.get("/webapp/api/schedule", headers=headers)).json()
+    assert (schedule["window_start_minutes"], schedule["window_end_minutes"]) == (600, 1230)
+
+    for start, end in (("20:00", "10:00"), ("10:00", "10:00")):
+        response = await client.put(f"{SETTINGS}/window", json={"start_time": start, "end_time": end}, headers=headers)
+        assert response.status_code == 409
+    assert (await client.get(SETTINGS, headers=headers)).json()["window"] == {"start_time": "10:00", "end_time": "20:30"}
+
+
+async def test_limits_change_only_what_is_sent(client, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+
+    first = await client.put(f"{SETTINGS}/limits", json={"weekly_hours": 3.5, "max_future_bookings": 3}, headers=headers)
+    assert first.json() == {"weekly_hours": 3.5, "daily_hours": 0, "max_future_bookings": 3}
+    second = await client.put(f"{SETTINGS}/limits", json={"daily_hours": 1.5}, headers=headers)
+    assert second.json() == {"weekly_hours": 3.5, "daily_hours": 1.5, "max_future_bookings": 3}
+    off = await client.put(f"{SETTINGS}/limits", json={"daily_hours": 0, "max_future_bookings": 0}, headers=headers)
+    assert off.json() == {"weekly_hours": 3.5, "daily_hours": 0, "max_future_bookings": 0}
+
+    for bad in ({"weekly_hours": 0}, {"weekly_hours": 25}, {"daily_hours": -1}, {"max_future_bookings": 101}):
+        assert (await client.put(f"{SETTINGS}/limits", json=bad, headers=headers)).status_code == 422
+
+
+async def test_personal_rehearsals_can_be_switched_off_for_everyone(client, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    member = await make_user()
+
+    off = await client.put(f"{SETTINGS}/personal", json={"enabled": False}, headers=tg(admin.telegram_id))
+    assert off.json() == {"personal_enabled": False}
+    assert (await client.get(SETTINGS, headers=tg(admin.telegram_id))).json()["personal_enabled"] is False
+    assert (await client.get("/webapp/api/my-bands", headers=tg(member.telegram_id))).json()["personal_enabled"] is False

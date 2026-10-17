@@ -1305,7 +1305,8 @@ async function renderBands(screen, token) {
 
 /* ---------- admin ---------- */
 
-const ADMIN_TABS = ["requests", "users", "roles"];
+const ADMIN_TABS = ["requests", "users", "roles", "settings"];
+const MAIN_ADMIN_TABS = ["roles", "settings"];
 const USER_STATUSES = ["pending", "approved", "rejected", "banned", "deleted"];
 const REASON_ACTIONS = ["reject", "ban", "delete"];
 const SEARCH_DEBOUNCE_MS = 300;
@@ -1515,15 +1516,142 @@ function roleSections(staff) {
   ];
 }
 
+/* ---------- admin: settings ---------- */
+
+function inputField(label, id, attrs, value) {
+  const input = el("input", { id, autocomplete: "off", ...attrs });
+  input.value = value;
+  return { input, field: el("label", {}, [label, input]) };
+}
+
+function hoursText(hours, zeroKey = null) {
+  if (zeroKey && !hours) return t(zeroKey);
+  return fill("webapp.admin.settings.hours", { n: String(hours) });
+}
+
+function settingsRow(label, value, onClick) {
+  const row = el("div", { className: "member" }, [
+    el("div", {}, [el("div", { className: "member-name", text: label }), el("div", { className: "meta", text: value })]),
+    el("div", { className: "badges" }, [el("span", { className: "badge", text: t("webapp.admin.settings.edit") })]),
+  ]);
+  row.addEventListener("click", onClick);
+  return row;
+}
+
+function putSettings(path, body) {
+  return api(`/admin/settings/${path}`, { method: "PUT", body });
+}
+
+function openSettingsForm(title, fields, run) {
+  openBandForm({
+    title,
+    fields,
+    submitLabel: t("webapp.admin.settings.save"),
+    errorKey: "webapp.admin.settings.error",
+    doneKey: "webapp.admin.settings.saved",
+    run,
+  });
+}
+
+function openDayForm(day) {
+  const status = el("select", { id: "settings-day-state" }, [
+    el("option", { value: "open", text: t("webapp.admin.settings.day_open") }),
+    el("option", { value: "closed", text: t("webapp.admin.settings.day_closed") }),
+  ]);
+  status.value = day.is_enabled ? "open" : "closed";
+  const dayState = { input: status, field: el("label", {}, [t("webapp.admin.settings.day_state"), status]) };
+  const note = inputField(t("webapp.admin.settings.occupied_by"), "settings-day-note", { type: "text", maxlength: "150" }, day.occupied_by || "");
+  const syncNote = () => { note.field.style.display = status.value === "open" ? "none" : ""; };
+  status.addEventListener("change", syncNote);
+  syncNote();
+  openSettingsForm(t(`webapp.weekday.${day.day_of_week}`), [dayState, note], ([value, occupiedBy]) =>
+    putSettings("days", { day_of_week: day.day_of_week, is_enabled: value === "open", occupied_by: value === "open" ? null : occupiedBy || null })
+  );
+}
+
+function openWindowForm(hours) {
+  const attrs = { type: "time", step: "1800" };
+  const start = inputField(t("webapp.admin.settings.window_start"), "settings-window-start", attrs, hours.start_time);
+  const end = inputField(t("webapp.admin.settings.window_end"), "settings-window-end", attrs, hours.end_time);
+  start.required = true;
+  end.required = true;
+  openSettingsForm(t("webapp.admin.settings.window"), [start, end], ([from, to]) => putSettings("window", { start_time: from, end_time: to }));
+}
+
+function parseNumber(value) {
+  const number = Number(value.replace(",", "."));
+  if (!Number.isFinite(number)) throw new ApiError(0, "");
+  return number;
+}
+
+function openLimitsForm(settings) {
+  const number = { type: "text", inputmode: "decimal", maxlength: "5" };
+  const weekly = inputField(t("webapp.admin.settings.weekly"), "settings-weekly", number, String(settings.weekly_hours));
+  const daily = inputField(t("webapp.admin.settings.daily"), "settings-daily", number, String(settings.daily_hours));
+  const future = inputField(t("webapp.admin.settings.future"), "settings-future", { type: "text", inputmode: "numeric", maxlength: "3" }, String(settings.max_future_bookings));
+  for (const item of [weekly, daily, future]) item.required = true;
+  openSettingsForm(t("webapp.admin.settings.limits"), [weekly, daily, future], ([w, d, f]) =>
+    putSettings("limits", { weekly_hours: parseNumber(w), daily_hours: parseNumber(d), max_future_bookings: parseNumber(f) })
+  );
+}
+
+function openPersonalConfirm(enabled) {
+  const next = !enabled;
+  const key = next ? "on" : "off";
+  openConfirm({
+    title: t(`webapp.admin.settings.personal_${key}_title`),
+    text: t(`webapp.admin.settings.personal_${key}_text`),
+    confirmLabel: t(`webapp.admin.settings.personal_${key}`),
+    errorKey: "webapp.admin.settings.error",
+    doneKey: "webapp.admin.settings.saved",
+    run: () => putSettings("personal", { enabled: next }),
+  });
+}
+
+function settingsCards(settings) {
+  const dayRows = settings.days.map((day) =>
+    settingsRow(
+      t(`webapp.weekday.${day.day_of_week}`),
+      day.is_enabled ? t("webapp.admin.settings.day_open") : [t("webapp.admin.settings.day_closed"), day.occupied_by].filter(Boolean).join(" · "),
+      () => openDayForm(day)
+    )
+  );
+  return [
+    el("div", { className: "card" }, [el("h2", { text: t("webapp.admin.settings.days") }), ...dayRows]),
+    el("div", { className: "card" }, [
+      el("h2", { text: t("webapp.admin.settings.window") }),
+      settingsRow(`${settings.window.start_time}–${settings.window.end_time}`, "", () => openWindowForm(settings.window)),
+    ]),
+    el("div", { className: "card" }, [
+      el("h2", { text: t("webapp.admin.settings.limits") }),
+      settingsRow(t("webapp.admin.settings.weekly"), hoursText(settings.weekly_hours), () => openLimitsForm(settings)),
+      settingsRow(t("webapp.admin.settings.daily"), hoursText(settings.daily_hours, "webapp.admin.settings.none"), () => openLimitsForm(settings)),
+      settingsRow(t("webapp.admin.settings.future"), settings.max_future_bookings || t("webapp.admin.settings.none"), () => openLimitsForm(settings)),
+    ]),
+    el("div", { className: "card" }, [
+      el("h2", { text: t("webapp.admin.settings.personal") }),
+      settingsRow(
+        t(settings.personal_enabled ? "webapp.admin.settings.on" : "webapp.admin.settings.off"),
+        "",
+        () => openPersonalConfirm(settings.personal_enabled)
+      ),
+    ]),
+  ];
+}
+
 async function renderAdmin(screen, token) {
   document.getElementById("meta").textContent = "";
   if (!canAdmin()) {
     screen.replaceChildren(notice(t("webapp.admin.not_allowed"), true));
     return;
   }
-  const tabs = state.me.is_admin ? ADMIN_TABS : ADMIN_TABS.filter((tab) => tab !== "roles");
+  const tabs = state.me.is_admin ? ADMIN_TABS : ADMIN_TABS.filter((tab) => !MAIN_ADMIN_TABS.includes(tab));
   if (!tabs.includes(state.adminTab)) state.adminTab = tabs[0];
-  if (state.adminTab === "roles") {
+  if (state.adminTab === "settings") {
+    const [settings, pending] = await Promise.all([api("/admin/settings"), api("/admin/users?status=pending")]);
+    if (token !== state.renderToken) return;
+    screen.replaceChildren(adminSegments(tabs, pending.counts.pending), ...settingsCards(settings));
+  } else if (state.adminTab === "roles") {
     const [staff, pending] = await Promise.all([api("/admin/staff"), api("/admin/users?status=pending")]);
     if (token !== state.renderToken) return;
     screen.replaceChildren(adminSegments(tabs, pending.counts.pending), ...roleSections(staff));

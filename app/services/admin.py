@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import AvailableDay, ClubSetting, TimeSlot
 from app.services.errors import ConflictError, NotFoundError
+from app.services.outbox import queue_schedule_changed
 from app.services.users import get_user_by_telegram_id, require_admin
 
 
@@ -62,6 +63,7 @@ async def update_available_day(
         f"{'Включил' if is_enabled else 'Выключил'} день недели: {day_of_week}"
         + ("" if is_enabled else f", занято: {note}"),
     )
+    queue_schedule_changed(session)
     await session.commit()
     await session.refresh(day)
     return day
@@ -275,6 +277,7 @@ async def update_booking_window(session: AsyncSession, telegram_id: int, start_t
         "booking_window",
         f"Обновил часы кабинета: {_minutes_to_hhmm(start)}-{_minutes_to_hhmm(end)}",
     )
+    queue_schedule_changed(session)
     await session.commit()
     return {
         "start_minutes": start,
@@ -322,6 +325,36 @@ async def update_personal_bookings_enabled(session: AsyncSession, telegram_id: i
     )
     await session.commit()
     return {"personal_bookings_enabled": is_enabled}
+
+
+async def get_settings(session: AsyncSession, telegram_id: int) -> dict:
+    """Everything the Mini App settings tab shows, in one read."""
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    rows = {item.day_of_week: item for item in (await session.execute(select(AvailableDay))).scalars()}
+    days = [
+        {
+            "day_of_week": day,
+            "is_enabled": rows[day].is_enabled if day in rows else day < 6,
+            "occupied_by": rows[day].occupied_by if day in rows else None,
+        }
+        for day in range(7)
+    ]
+    window = await get_booking_window(session, telegram_id)
+    weekly = await get_weekly_booking_limit(session, telegram_id)
+    daily = await get_daily_booking_limit(session, telegram_id)
+    future = await get_max_future_bookings(session, telegram_id)
+    personal = await get_personal_bookings_enabled(session)
+    return {
+        "days": days,
+        "window": {"start_time": window["start_time"], "end_time": window["end_time"]},
+        "weekly_hours": weekly["weekly_booking_limit_hours"],
+        "daily_hours": daily["daily_booking_limit_hours"],
+        "max_future_bookings": future["max_future_bookings_per_band"],
+        "personal_enabled": personal["personal_bookings_enabled"],
+    }
 
 
 async def booking_history(session: AsyncSession, telegram_id: int) -> list[dict]:

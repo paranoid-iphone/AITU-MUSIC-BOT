@@ -10,7 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.webapp_auth import current_webapp_user, fresh_webapp_user
 from app.db.models import Group, User, UserRole, UserStatus
 from app.db.session import get_session
-from app.schemas.webapp_admin import WebAppModerate, WebAppRoleChange
+from app.schemas.webapp_admin import (
+    WebAppDayUpdate,
+    WebAppLimitsUpdate,
+    WebAppModerate,
+    WebAppPersonalUpdate,
+    WebAppRoleChange,
+    WebAppWindowUpdate,
+)
+from app.services import admin as admin_service
 from app.services import groups as group_service
 from app.services import outbox
 from app.services import users as user_service
@@ -172,3 +180,51 @@ async def set_group_admin(
     target = await change(session, admin.telegram_id, group_id, payload.target)
     await outbox.commit_and_publish(session)
     return await person(session, target)
+
+
+@router.get("/settings")
+async def get_settings(admin: User = Depends(main_admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
+    return await admin_service.get_settings(session, admin.telegram_id)
+
+
+@router.put("/settings/days")
+async def set_day(
+    payload: WebAppDayUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    day = await admin_service.update_available_day(
+        session, admin.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by
+    )
+    await outbox.commit_and_publish(session)
+    return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled, "occupied_by": day.occupied_by}
+
+
+@router.put("/settings/window")
+async def set_window(
+    payload: WebAppWindowUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    window = await admin_service.update_booking_window(session, admin.telegram_id, payload.start_time, payload.end_time)
+    await outbox.commit_and_publish(session)
+    return {"start_time": window["start_time"], "end_time": window["end_time"]}
+
+
+@router.put("/settings/limits")
+async def set_limits(
+    payload: WebAppLimitsUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Only the limits present in the body change."""
+    if payload.weekly_hours is not None:
+        await admin_service.update_weekly_booking_limit(session, admin.telegram_id, payload.weekly_hours)
+    if payload.daily_hours is not None:
+        await admin_service.update_daily_booking_limit(session, admin.telegram_id, payload.daily_hours)
+    if payload.max_future_bookings is not None:
+        await admin_service.update_max_future_bookings(session, admin.telegram_id, payload.max_future_bookings)
+    settings = await admin_service.get_settings(session, admin.telegram_id)
+    return {key: settings[key] for key in ("weekly_hours", "daily_hours", "max_future_bookings")}
+
+
+@router.put("/settings/personal")
+async def set_personal(
+    payload: WebAppPersonalUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    result = await admin_service.update_personal_bookings_enabled(session, admin.telegram_id, payload.enabled)
+    return {"personal_enabled": result["personal_bookings_enabled"]}
