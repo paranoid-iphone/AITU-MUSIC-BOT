@@ -235,3 +235,51 @@ async def test_notifications_respect_the_opt_out(client, session, make_user, pub
     assert notifications(published) == []
     audits_after = (await session.execute(select(func.count()).select_from(models.AuditLog))).scalar_one()
     assert audits_after == audits_before + 1
+
+
+@pytest.mark.parametrize("action", ["reject", "delete"])
+async def test_group_admin_cannot_lift_a_ban_through_reject_or_delete(client, session, make_user, action):
+    main_admin, group_admin, _, _ = await staff(make_user, session)
+    banned = await make_user(status="banned", group_slug="music")
+    url = f"{API}/users/{banned.telegram_id}/{action}"
+
+    assert (await client.post(url, json={}, headers=tg(group_admin.telegram_id))).status_code == 403
+    await session.refresh(banned)
+    assert banned.status == "banned"
+
+    assert (await client.post(url, json={}, headers=tg(main_admin.telegram_id))).status_code == 200
+
+
+class _Callback:
+    def __init__(self, data: str):
+        self.data = data
+        self.from_user = type("User", (), {"id": 1})()
+        self.answers: list[tuple] = []
+
+    async def answer(self, text=None, show_alert=False):
+        self.answers.append((text, show_alert))
+
+
+@pytest.mark.parametrize("action", ["approve", "reject"])
+@pytest.mark.parametrize("status, acted", [("approved", False), ("banned", False), ("rejected", False), ("pending", True)])
+async def test_registration_buttons_only_act_on_pending_requests(monkeypatch, action, status, acted):
+    from app.bot import handlers
+
+    calls: list[tuple] = []
+
+    class FakeApi:
+        async def get_user(self, telegram_id, requester=None):
+            return {"telegram_id": telegram_id, "status": status}
+
+        async def moderate_user(self, *args):
+            calls.append(args)
+            raise RuntimeError("stop here")  # the handler answers "no access" and returns
+
+    monkeypatch.setattr(handlers, "api", FakeApi())
+    callback = _Callback(f"registration:{action}:5")
+    handler = handlers.inline_registration_approve if action == "approve" else handlers.inline_registration_reject
+    await handler(callback)
+
+    assert bool(calls) is acted
+    if not acted:
+        assert callback.answers == [("Заявка уже обработана", True)]

@@ -136,6 +136,12 @@ def require_admin(user: User) -> None:
         raise ForbiddenError("Admin access required")
 
 
+def _guard_banned_or_deleted(admin: User, target: User) -> None:
+    """Group admins must not lift a ban by rejecting or deleting a banned/deleted user (see `approve_user`)."""
+    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not is_global_admin(admin):
+        raise ForbiddenError("Only a main admin can change a banned or deleted user")
+
+
 def _guard_moderation_target(admin: User, target: User) -> None:
     if target.telegram_id == admin.telegram_id:
         raise ForbiddenError("You cannot ban, reject or delete yourself")
@@ -351,6 +357,7 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
+    _guard_banned_or_deleted(admin, target)
     target.status = UserStatus.REJECTED.value
     target.moderation_reason = reason
     target.registration_retry_after = datetime.utcnow() + timedelta(hours=settings.registration_retry_hours)
@@ -410,6 +417,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
+    _guard_banned_or_deleted(admin, target)
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value
     target.first_name = None

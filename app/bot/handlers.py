@@ -1535,10 +1535,25 @@ async def inline_event_create_start(callback: CallbackQuery, state: FSMContext) 
     await answer_callback(callback)
 
 
+async def registration_still_pending(callback: CallbackQuery, target: str) -> bool:
+    """The buttons sit in old notices; once the request was handled (here or in the Mini App) they must do nothing."""
+    try:
+        current = await api.get_user(int(target), callback.from_user.id)
+    except RuntimeError:
+        await answer_callback(callback, "Нет доступа", show_alert=True)
+        return False
+    if current.get("status") != "pending":
+        await answer_callback(callback, "Заявка уже обработана", show_alert=True)
+        return False
+    return True
+
+
 @router.callback_query(F.data.startswith("registration:approve:"))
 async def inline_registration_approve(callback: CallbackQuery) -> None:
     admin = await api.get_user(callback.from_user.id)
     target = callback.data.rsplit(":", maxsplit=1)[-1]
+    if not await registration_still_pending(callback, target):
+        return
     try:
         user = await api.moderate_user("approve", callback.from_user.id, target)
     except RuntimeError:
@@ -1560,6 +1575,8 @@ async def inline_registration_approve(callback: CallbackQuery) -> None:
 async def inline_registration_reject(callback: CallbackQuery) -> None:
     admin = await api.get_user(callback.from_user.id)
     target = callback.data.rsplit(":", maxsplit=1)[-1]
+    if not await registration_still_pending(callback, target):
+        return
     try:
         user = await api.moderate_user("reject", callback.from_user.id, target, "Отклонено админом")
     except RuntimeError:
