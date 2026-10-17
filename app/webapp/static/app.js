@@ -272,6 +272,30 @@ async function renderSchedule(screen, token) {
     }
   }
   const closedByDate = new Map(data.day_closures.map((item) => [item.date, item.occupied_by || ""]));
+  // A closed day is one tall block per gap between bookings, so a booking made before the closure stays visible.
+  const closedStart = new Map();
+  for (const day of data.days) {
+    if (!closedByDate.has(day.date)) continue;
+    let runStart = null;
+    let runLength = 0;
+    const endRun = () => {
+      if (runStart !== null) closedStart.set(`${day.date}|${runStart}`, runLength);
+      runStart = null;
+      runLength = 0;
+    };
+    for (let minute = data.window_start_minutes; minute < data.window_end_minutes; minute += data.slot_minutes) {
+      const time = minutesToTime(minute);
+      const key = `${day.date}|${time}`;
+      if (byStart.has(key) || covered.has(key)) {
+        endRun();
+        continue;
+      }
+      if (runStart === null) runStart = time;
+      else covered.add(key);
+      runLength += 1;
+    }
+    endRun();
+  }
 
   const head = el("tr", {}, [
     el("th", { text: t("webapp.time") }),
@@ -298,10 +322,13 @@ async function renderSchedule(screen, token) {
         const block = bookingBlock(item);
         if (cell.rowSpan === 1) block.classList.add("short");
         cell.append(block);
-      } else if (closedByDate.has(day.date)) {
+      } else if (closedStart.has(key)) {
+        cell.rowSpan = closedStart.get(key);
         cell.append(el("div", { className: "closed" }, [
-          el("div", { className: "closed-title", text: t("webapp.day_busy") }),
-          closedByDate.get(day.date) ? el("div", { className: "closed-note", text: closedByDate.get(day.date) }) : null,
+          el("div", { className: "closed-label" }, [
+            el("div", { className: "closed-title", text: t("webapp.day_busy") }),
+            closedByDate.get(day.date) ? el("div", { className: "closed-note", text: closedByDate.get(day.date) }) : null,
+          ]),
         ]));
       } else {
         const isFree = state.free.has(day.date) && state.free.get(day.date).has(time);

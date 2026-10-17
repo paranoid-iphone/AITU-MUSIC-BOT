@@ -123,12 +123,13 @@ table.schedule {
   position: absolute;
   inset: 4px;
   box-sizing: border-box;
-  overflow: hidden;
   padding: 7px;
   border-radius: 7px;
   color: var(--hint);
   background: repeating-linear-gradient(135deg, var(--closed), var(--closed) 8px, transparent 8px, transparent 9px);
 }
+/* The block can be taller than the screen: keep its label under the sticky day header while scrolling. */
+.closed-label { position: sticky; top: 46px; }
 .closed .closed-title { margin-bottom: 3px; font-size: 12px; font-weight: 700; }
 .closed .closed-title, .closed .closed-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .closed .closed-note { font-size: 11px; line-height: 1.25; }
