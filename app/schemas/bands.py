@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.users import UserRead
 
@@ -71,3 +72,31 @@ class BandDetail(BandRead):
     members: list[BandMemberRead]
     group: GroupRead | None = None
     responsible: UserRead | None = None
+
+
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+Role = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+
+
+class WebAppBandCreate(BaseModel):
+    """Mini App payloads: who acts comes from the signed initData, never from the body."""
+
+    name: Name
+    instrument_role: Role = "owner"
+
+
+class WebAppBandJoin(BaseModel):
+    invite_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
+    instrument_role: Role = "other"
+
+
+class WebAppBandRename(BaseModel):
+    name: Name
+
+
+class WebAppMemberPick(BaseModel):
+    member_id: int
+
+
+class WebAppMemberRole(BaseModel):
+    instrument_role: Role

@@ -28,7 +28,7 @@ from app.services.schedule_history import record_change, snapshot
 from app.services.users import get_user_by_telegram_id, require_approved
 
 
-def _band_load_options():
+def band_load_options():
     return (
         selectinload(Band.members).selectinload(BandMember.user),
         selectinload(Band.responsible),
@@ -70,7 +70,7 @@ async def list_user_bands(session: AsyncSession, telegram_id: int) -> list[Band]
         select(Band)
         .join(BandMember)
         .where(BandMember.user_id == user.id)
-        .options(*_band_load_options())
+        .options(*band_load_options())
         .order_by(Band.created_at.desc())
     )
     return list(result.scalars().unique())
@@ -80,7 +80,7 @@ async def list_all_bands(session: AsyncSession, admin_telegram_id: int) -> list[
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:
         raise NotFoundError("Admin not found")
-    stmt = select(Band).options(*_band_load_options()).order_by(Band.created_at.desc())
+    stmt = select(Band).options(*band_load_options()).order_by(Band.created_at.desc())
     if not is_global_admin(admin):
         group_ids = await administered_group_ids(session, admin)
         if not group_ids or admin.status != UserStatus.APPROVED.value:
@@ -92,7 +92,7 @@ async def list_all_bands(session: AsyncSession, admin_telegram_id: int) -> list[
 
 async def get_band_detail(session: AsyncSession, band_id: int) -> Band:
     result = await session.execute(
-        select(Band).where(Band.id == band_id).options(*_band_load_options())
+        select(Band).where(Band.id == band_id).options(*band_load_options())
     )
     band = result.scalar_one_or_none()
     if band is None:

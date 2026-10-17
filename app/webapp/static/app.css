@@ -53,7 +53,7 @@ h1 { margin: 0; font-size: 19px; line-height: 1.2; }
 h2 { margin: 0 0 12px; font-size: 17px; }
 .meta { margin-top: 2px; color: var(--hint); font-size: 12px; }
 
-.nav { display: flex; gap: 6px; }
+.nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .nav a {
   padding: 6px 12px;
   border-radius: 999px;
@@ -232,3 +232,26 @@ body.has-selbar main { padding-bottom: 84px; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { color: #fff; background: #d65a4a; }
+
+/* bands */
+.toolbar { margin: 0 0 12px; }
+.card .meta { margin: -6px 0 8px; }
+.card .actions .btn { flex: 1 1 auto; }
+.section-title { margin: 14px 0 4px; color: var(--hint); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.code { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 14px; }
+.code > span { color: var(--hint); }
+.code-value { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em; }
+.code .btn { margin-left: auto; padding: 6px 12px; }
+.member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.member:first-of-type { border-top: 0; }
+.member-name { font-size: 15px; }
+.member .meta { margin: 2px 0 0; }
+.member .badges { margin: 0; justify-content: flex-end; }

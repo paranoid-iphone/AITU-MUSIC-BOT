@@ -4,10 +4,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const initData = (tg && tg.initData) || "";
 const REFRESH_MS = 30000;
 const TOAST_MS = 3000;
-const ROUTES = ["schedule", "mine", "me"];
+const ROUTES = ["schedule", "mine", "bands", "me"];
 const TELEGRAM_LANGUAGES = { ru: "ru", en: "en", kk: "kz", kz: "kz" };
 const BOOKABLE_PURPOSES = ["self", "concert"];
 const PERSONAL = "personal";
+const JOIN_PARAM = /^join_([A-Za-z0-9]{1,30})$/;
 
 const state = {
   me: null,
@@ -646,6 +647,258 @@ function openCancelConfirm(item) {
   ]);
 }
 
+/* ---------- bands ---------- */
+
+function fill(key, values) {
+  return Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
+}
+
+function copyText(text) {
+  try {
+    navigator.clipboard.writeText(text).then(() => toast(t("webapp.bands.copied")), () => toast(text));
+  } catch (_) {
+    toast(text);
+  }
+}
+
+function sheetActions(...buttons) {
+  return el("div", { className: "actions" }, buttons);
+}
+
+function textField(label, id, value = "", maxlength = 150) {
+  const input = el("input", { id, type: "text", maxlength: String(maxlength), autocomplete: "off" });
+  input.value = value;
+  return { input, field: el("label", {}, [label, input]) };
+}
+
+// One form sheet: `run(values)` rejects with an ApiError to keep the sheet open.
+function openBandForm({ title, fields, submitLabel, errorKey, doneKey, run }) {
+  const error = el("div", { className: "form-error" });
+  const submit = el("button", { className: "btn", type: "submit", text: submitLabel });
+  const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.form.cancel") });
+  cancel.addEventListener("click", closeSheet);
+  const form = el("form", { className: "form" }, [
+    el("h2", { text: title }),
+    ...fields.map((item) => item.field),
+    error,
+    sheetActions(submit, cancel),
+  ]);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (fields.some((item) => item.required && !item.input.value.trim())) return;
+    submit.disabled = true;
+    error.textContent = "";
+    try {
+      await run(fields.map((item) => item.input.value.trim()));
+    } catch (failure) {
+      submit.disabled = false;
+      error.textContent = sessionAwareMessage(failure, errorKey);
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t(doneKey));
+    render();
+  });
+  openSheet([form]);
+  fields[0].input.focus();
+}
+
+function openConfirm({ title, text, confirmLabel, errorKey, doneKey, run }) {
+  const error = el("div", { className: "form-error" });
+  const confirm = el("button", { className: "btn", type: "button", text: confirmLabel });
+  const keep = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.keep") });
+  keep.addEventListener("click", closeSheet);
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    error.textContent = "";
+    try {
+      await run();
+    } catch (failure) {
+      confirm.disabled = false;
+      error.textContent = sessionAwareMessage(failure, errorKey);
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t(doneKey));
+    render();
+  });
+  openSheet([el("h2", { text: title }), el("div", { className: "summary", text }), error, sheetActions(confirm, keep)]);
+}
+
+function openCreateBandForm() {
+  const name = textField(t("webapp.bands.name"), "band-name");
+  name.required = true;
+  const role = textField(t("webapp.bands.role"), "band-role", "", 80);
+  openBandForm({
+    title: t("webapp.bands.create_title"),
+    fields: [name, role],
+    submitLabel: t("webapp.bands.create_submit"),
+    errorKey: "webapp.bands.create_error",
+    doneKey: "webapp.bands.created",
+    run: ([bandName, bandRole]) => api("/bands", { method: "POST", body: { name: bandName, instrument_role: bandRole || "owner" } }),
+  });
+}
+
+function openJoinForm(code = "") {
+  const codeField = textField(t("webapp.bands.code_input"), "band-code", code, 30);
+  codeField.required = true;
+  const role = textField(t("webapp.bands.role"), "band-join-role", "", 80);
+  openBandForm({
+    title: t("webapp.bands.join_title"),
+    fields: [codeField, role],
+    submitLabel: t("webapp.bands.join_submit"),
+    errorKey: "webapp.bands.join_error",
+    doneKey: "webapp.bands.joined",
+    run: ([inviteCode, bandRole]) => api("/bands/join", { method: "POST", body: { invite_code: inviteCode, instrument_role: bandRole || "other" } }),
+  });
+}
+
+function openRenameForm(band) {
+  const name = textField(t("webapp.bands.name"), "band-rename", band.name);
+  name.required = true;
+  openBandForm({
+    title: t("webapp.bands.rename_title"),
+    fields: [name],
+    submitLabel: t("webapp.bands.save"),
+    errorKey: "webapp.bands.rename_error",
+    doneKey: "webapp.bands.renamed",
+    run: ([bandName]) => api(`/bands/${band.id}`, { method: "PATCH", body: { name: bandName } }),
+  });
+}
+
+function openDeleteBand(band) {
+  openConfirm({
+    title: t("webapp.bands.delete_title"),
+    text: fill("webapp.bands.delete_confirm", { name: band.name }),
+    confirmLabel: t("webapp.bands.delete_yes"),
+    errorKey: "webapp.bands.member_error",
+    doneKey: "webapp.bands.deleted",
+    run: () => api(`/bands/${band.id}`, { method: "DELETE" }),
+  });
+}
+
+function openMemberSheet(band, member) {
+  const buttons = [];
+  if (member.telegram_username && !member.is_me) {
+    const write = el("button", { className: "btn", type: "button", text: t("webapp.bands.write") });
+    write.addEventListener("click", () => openTelegramUser(member.telegram_username));
+    buttons.push(write);
+  }
+  const children = [
+    el("h2", { text: member.name }),
+    detailRow(t("webapp.bands.role_member"), member.instrument_role),
+    detailRow(t("webapp.profile.username"), member.telegram_username ? `@${member.telegram_username}` : ""),
+  ];
+  if (band.can_manage) {
+    const role = textField(t("webapp.bands.role_member"), "member-role", member.instrument_role, 80);
+    const save = el("button", { className: "btn", type: "button", text: t("webapp.bands.save") });
+    const error = el("div", { className: "form-error" });
+    save.addEventListener("click", async () => {
+      const value = role.input.value.trim();
+      if (!value || value === member.instrument_role) return;
+      save.disabled = true;
+      try {
+        await api(`/bands/${band.id}/members/${member.id}`, { method: "PATCH", body: { instrument_role: value } });
+      } catch (failure) {
+        save.disabled = false;
+        error.textContent = sessionAwareMessage(failure, "webapp.bands.member_error");
+        haptic("error");
+        return;
+      }
+      closeSheet();
+      haptic("success");
+      toast(t("webapp.bands.member_saved"));
+      render();
+    });
+    children.push(el("div", { className: "form" }, [role.field, error, sheetActions(save)]));
+
+    const confirmable = (label, text, doneKey, run) => {
+      const button = el("button", { className: "btn secondary", type: "button", text: label });
+      button.addEventListener("click", () => openConfirm({ title: label, text, confirmLabel: label, errorKey: "webapp.bands.member_error", doneKey, run }));
+      buttons.push(button);
+    };
+    if (!member.is_responsible) {
+      confirmable(t("webapp.bands.make_responsible"), member.name, "webapp.bands.responsible_done",
+        () => api(`/bands/${band.id}/responsible`, { method: "PATCH", body: { member_id: member.id } }));
+    }
+    if (!member.is_owner) {
+      confirmable(t("webapp.bands.make_leader"), fill("webapp.bands.leader_confirm", { name: member.name }), "webapp.bands.leader_done",
+        () => api(`/bands/${band.id}/owner`, { method: "PATCH", body: { member_id: member.id } }));
+      confirmable(t("webapp.bands.remove"), fill("webapp.bands.remove_confirm", { name: member.name }), "webapp.bands.removed",
+        () => api(`/bands/${band.id}/members/${member.id}`, { method: "DELETE" }));
+    }
+  }
+  const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.card.close") });
+  close.addEventListener("click", closeSheet);
+  buttons.push(close);
+  children.push(sheetActions(...buttons));
+  openSheet(children);
+}
+
+function memberRow(band, member) {
+  const tags = [];
+  if (member.is_owner) tags.push(t("webapp.bands.leader"));
+  if (member.is_responsible) tags.push(t("webapp.bands.responsible"));
+  if (member.is_me) tags.push(t("webapp.bands.you"));
+  const row = el("div", { className: "member", role: "button", tabindex: "0" }, [
+    el("div", {}, [
+      el("div", { className: "member-name", text: member.name }),
+      el("div", { className: "meta", text: [member.instrument_role, member.study_group].filter(Boolean).join(" · ") }),
+    ]),
+    tags.length ? el("div", { className: "badges" }, tags.map((text) => el("span", { className: "badge", text }))) : null,
+  ]);
+  row.addEventListener("click", () => openMemberSheet(band, member));
+  return row;
+}
+
+function bandCard(band) {
+  const children = [el("h2", { text: band.name })];
+  if (band.group_title) children.push(el("div", { className: "meta", text: band.group_title }));
+  if (band.invite_code) {
+    const copy = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.copy") });
+    copy.addEventListener("click", () => copyText(band.invite_code));
+    children.push(el("div", { className: "code" }, [
+      el("span", { text: t("webapp.bands.code") }),
+      el("strong", { className: "code-value", text: band.invite_code }),
+      copy,
+    ]));
+  }
+  children.push(el("div", { className: "section-title", text: t("webapp.bands.members") }));
+  children.push(...band.members.map((member) => memberRow(band, member)));
+  if (band.can_manage) {
+    const rename = el("button", { className: "btn", type: "button", text: t("webapp.bands.rename") });
+    rename.addEventListener("click", () => openRenameForm(band));
+    const remove = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.delete") });
+    remove.addEventListener("click", () => openDeleteBand(band));
+    children.push(sheetActions(rename, remove));
+  } else {
+    children.push(el("div", { className: "meta", text: t("webapp.bands.read_only") }));
+  }
+  return el("div", { className: "card" }, children);
+}
+
+async function renderBands(screen, token) {
+  document.getElementById("meta").textContent = "";
+  if (!canBook()) {
+    screen.replaceChildren(notice(t("webapp.select.hint_readonly")));
+    return;
+  }
+  const { bands } = await api("/bands");
+  if (token !== state.renderToken) return;
+  const create = el("button", { className: "btn", type: "button", text: t("webapp.bands.create") });
+  create.addEventListener("click", openCreateBandForm);
+  const join = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.join") });
+  join.addEventListener("click", () => openJoinForm());
+  screen.replaceChildren(
+    el("div", { className: "actions toolbar" }, [create, join]),
+    ...(bands.length ? bands.map(bandCard) : [notice(t("webapp.bands.empty"))])
+  );
+}
+
 /* ---------- profile ---------- */
 
 function notice(text, isError = false) {
@@ -706,6 +959,7 @@ async function render() {
   try {
     if (route === "me") renderProfile(screen);
     else if (route === "mine") await renderMine(screen, token);
+    else if (route === "bands") await renderBands(screen, token);
     else await renderSchedule(screen, token);
   } catch (error) {
     if (token === state.renderToken) {
@@ -727,11 +981,16 @@ async function main() {
       else location.hash = "#/schedule";
     });
   }
+  // a link like t.me/<bot>/<app>?startapp=join_<code> opens the join form with the code filled in
+  const startParam = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+  const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || "") : null;
+  if (joinMatch) location.hash = "#/bands";
   window.addEventListener("hashchange", () => { closeSheet(); render(); });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && currentRoute() === "schedule" && !state.closeSheet) render();
   });
-  render();
+  await render();
+  if (joinMatch) openJoinForm(joinMatch[1]);
 }
 
 main();

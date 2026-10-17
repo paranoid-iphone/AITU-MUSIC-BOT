@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.webapp_auth import (
@@ -14,13 +15,20 @@ from app.api.webapp_auth import (
 from app.bot.i18n import load_locale
 from app.core.config import settings
 from app.core.timezone import now_local
-from app.db.models import Group, User
+from app.db.models import Band, Group, User
 from app.db.session import get_session
+from app.schemas.bands import (
+    WebAppBandCreate,
+    WebAppBandJoin,
+    WebAppBandRename,
+    WebAppMemberPick,
+    WebAppMemberRole,
+)
 from app.schemas.bookings import BookingRead, WebAppBookingCreate, WebAppBookingUpdate
 from app.services import bands as band_service
 from app.services import bookings as booking_service
 from app.services.errors import NotFoundError
-from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
+from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin
 
 router = APIRouter(prefix="/webapp/api", tags=["webapp"])
 
@@ -162,6 +170,141 @@ async def cancel_booking(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await booking_service.delete_booking(session, user.telegram_id, booking_id)
+
+
+def _person_name(user: User) -> str:
+    return f"{user.last_name or ''} {user.first_name or ''}".strip() or user.telegram_username or str(user.telegram_id)
+
+
+async def _band_payload(session: AsyncSession, viewer: User, band: Band, invite_visible: bool) -> dict:
+    members = [
+        {
+            "id": member.id,
+            "name": _person_name(member.user),
+            "study_group": member.user.study_group,
+            "telegram_username": member.user.telegram_username,
+            "instrument_role": member.instrument_role,
+            "is_owner": member.is_owner,
+            "is_responsible": member.user_id == band.responsible_user_id,
+            "is_me": member.user_id == viewer.id,
+        }
+        for member in sorted(band.members, key=lambda item: (not item.is_owner, item.id))
+    ]
+    return {
+        "id": band.id,
+        "name": band.name,
+        "group_title": band.group.title if band.group is not None else None,
+        "invite_code": band.invite_code if invite_visible else None,
+        "can_manage": await can_manage_band(session, viewer, band),
+        "members": members,
+    }
+
+
+async def _bands_payload(session: AsyncSession, viewer: User, bands: list[Band]) -> list[dict]:
+    visible = await band_service.invite_code_visible_ids(session, viewer.telegram_id, bands)
+    return [await _band_payload(session, viewer, band, band.id in visible) for band in bands]
+
+
+@router.get("/bands")
+async def bands(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> dict:
+    """The viewer's bands with their members; the join code only for the people who run the band."""
+    return {"bands": await _bands_payload(session, user, await band_service.list_user_bands(session, user.telegram_id))}
+
+
+async def _one_band(session: AsyncSession, user: User, band_id: int) -> dict:
+    await band_service.get_band_for_requester(session, band_id, user.telegram_id)  # visibility check
+    # The session does not expire rows on commit: re-read the band so edits made a moment ago show up.
+    fresh = await session.execute(
+        select(Band)
+        .where(Band.id == band_id)
+        .options(*band_service.band_load_options())
+        .execution_options(populate_existing=True)
+    )
+    return (await _bands_payload(session, user, [fresh.scalar_one()]))[0]
+
+
+@router.post("/bands")
+async def create_band(
+    payload: WebAppBandCreate,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    band = await band_service.create_band(session, user.telegram_id, payload.name, payload.instrument_role)
+    return await _one_band(session, user, band.id)
+
+
+@router.post("/bands/join")
+async def join_band(
+    payload: WebAppBandJoin,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    band = await band_service.join_band(session, user.telegram_id, payload.invite_code, payload.instrument_role)
+    return await _one_band(session, user, band.id)
+
+
+@router.patch("/bands/{band_id}")
+async def rename_band(
+    band_id: int,
+    payload: WebAppBandRename,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await band_service.update_band_name(session, band_id, user.telegram_id, payload.name)
+    return await _one_band(session, user, band_id)
+
+
+@router.patch("/bands/{band_id}/owner")
+async def transfer_owner(
+    band_id: int,
+    payload: WebAppMemberPick,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await band_service.transfer_band_owner(session, band_id, user.telegram_id, payload.member_id)
+    return await _one_band(session, user, band_id)
+
+
+@router.patch("/bands/{band_id}/responsible")
+async def set_responsible(
+    band_id: int,
+    payload: WebAppMemberPick,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await band_service.update_band_responsible(session, band_id, user.telegram_id, payload.member_id)
+    return await _one_band(session, user, band_id)
+
+
+@router.patch("/bands/{band_id}/members/{member_id}")
+async def set_member_role(
+    band_id: int,
+    member_id: int,
+    payload: WebAppMemberRole,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await band_service.update_member_role(session, band_id, member_id, user.telegram_id, payload.instrument_role)
+    return await _one_band(session, user, band_id)
+
+
+@router.delete("/bands/{band_id}/members/{member_id}")
+async def remove_member(
+    band_id: int,
+    member_id: int,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    return await band_service.remove_band_member(session, band_id, member_id, user.telegram_id)
+
+
+@router.delete("/bands/{band_id}")
+async def delete_band(
+    band_id: int,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    return await band_service.delete_band(session, band_id, user.telegram_id)
 
 
 @router.get("/me")

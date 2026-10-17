@@ -26,7 +26,7 @@ Two processes share one codebase and talk over HTTP + Redis:
 - **Backend** (`app/main.py`, `app/api/routes/`, `app/services/`): all business rules live in `app/services/`; routes are
   thin. Every route except `/health` and `/webapp/*` requires `X-Internal-Token`. The Telegram Mini App is vanilla-JS
   static files in `app/webapp/static/` (served at `/webapp/static`, entry `/webapp/schedule`) talking to
-  `app/api/routes/webapp.py` (`/webapp/api/*`: `schedule`, `me`, `locales/{lang}`). Those routes authenticate with the
+  `app/api/routes/webapp.py` (`/webapp/api/*`: `schedule`, `me`, `locales/{lang}`, bookings and `bands` for the signed-in member). Those routes authenticate with the
   signed `X-Telegram-Init-Data` header via `api/webapp_auth.py` (`core/telegram_auth.py` validates it; use
   `fresh_webapp_user`, 1 h max age, for anything that mutates) and take their strings from the `webapp.*` keys of
   `app/locales/*.json`. The bot sets the chat menu button to the Mini App on startup (`bot/menu_button.py`). A middleware hides everything but
