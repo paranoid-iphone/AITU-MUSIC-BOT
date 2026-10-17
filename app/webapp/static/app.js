@@ -4,7 +4,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const initData = (tg && tg.initData) || "";
 const REFRESH_MS = 30000;
 const TOAST_MS = 3000;
-const ROUTES = ["schedule", "mine", "bands", "me"];
+const ROUTES = ["schedule", "mine", "bands", "admin", "me"];
 const TELEGRAM_LANGUAGES = { ru: "ru", en: "en", kk: "kz", kz: "kz" };
 const BOOKABLE_PURPOSES = ["self", "concert"];
 const PERSONAL = "personal";
@@ -19,6 +19,10 @@ const state = {
   free: new Map(), // date -> Set of "HH:MM" cells that can be booked
   selection: null, // { date, from, to } in minutes; `to` is exclusive
   closeSheet: null, // set while a bottom sheet is open
+  adminTab: "requests",
+  adminQuery: "",
+  adminStatus: "",
+  adminSearchToken: 0,
 };
 
 if (tg) {
@@ -151,7 +155,7 @@ function renderChrome(route) {
   document.getElementById("title").textContent = t("webapp.title", "AITU Music Club");
   const nav = document.getElementById("nav");
   nav.replaceChildren(
-    ...ROUTES.map((name) =>
+    ...ROUTES.filter((name) => name !== "admin" || canAdmin()).map((name) =>
       el("a", { href: `#/${name}`, className: name === route ? "active" : "", text: t(`webapp.nav.${name}`) })
     )
   );
@@ -899,6 +903,242 @@ async function renderBands(screen, token) {
   );
 }
 
+/* ---------- admin ---------- */
+
+const ADMIN_TABS = ["requests", "users", "roles"];
+const USER_STATUSES = ["pending", "approved", "rejected", "banned", "deleted"];
+const REASON_ACTIONS = ["reject", "ban", "delete"];
+const SEARCH_DEBOUNCE_MS = 300;
+
+function canAdmin() {
+  return Boolean(canBook() && (state.me.is_admin || state.me.administered_groups.length));
+}
+
+function personName(person) {
+  const full = [person.last_name, person.first_name].filter(Boolean).join(" ");
+  return full || (person.telegram_username ? `@${person.telegram_username}` : String(person.telegram_id));
+}
+
+// Only offer what the backend will accept; it still enforces the same rules.
+function personActions(person) {
+  if (person.telegram_id === state.me.telegram_id) return [];
+  if (person.role !== "user" && !state.me.is_admin) return [];
+  if (person.status === "pending") return ["approve", "reject"];
+  if (person.status === "approved") return ["ban", "delete"];
+  if (person.status === "rejected") return ["approve", "ban"];
+  return state.me.is_admin ? ["restore"] : [];
+}
+
+function runPersonAction(person, action) {
+  const name = personName(person);
+  const endpoint = action === "restore" ? "approve" : action;
+  const path = `/admin/users/${person.telegram_id}/${endpoint}`;
+  const title = t(`webapp.admin.confirm.${action}.title`);
+  const text = fill(`webapp.admin.confirm.${action}.text`, { name });
+  if (!REASON_ACTIONS.includes(action)) {
+    openConfirm({
+      title,
+      text,
+      confirmLabel: t(`webapp.admin.action.${action}`),
+      errorKey: "webapp.admin.error.action",
+      doneKey: `webapp.admin.done.${action}`,
+      run: () => api(path, { method: "POST", body: {} }),
+    });
+    return;
+  }
+  // The reason and the confirmation share one sheet: the submit button is the confirmation.
+  const reason = textField(t("webapp.admin.reason"), "admin-reason", "", 255);
+  reason.field = el("div", {}, [el("div", { className: "summary", text }), reason.field]);
+  openBandForm({
+    title,
+    fields: [reason],
+    submitLabel: t(`webapp.admin.action.${action}`),
+    errorKey: "webapp.admin.error.action",
+    doneKey: `webapp.admin.done.${action}`,
+    run: ([value]) => api(path, { method: "POST", body: { reason: value || null } }),
+  });
+}
+
+function openPersonSheet(person) {
+  const buttons = personActions(person).map((action, index) => {
+    const button = el("button", {
+      className: index === 0 ? "btn" : "btn secondary",
+      type: "button",
+      text: t(`webapp.admin.action.${action}`),
+    });
+    button.addEventListener("click", () => runPersonAction(person, action));
+    return button;
+  });
+  if (person.telegram_username && person.telegram_id !== state.me.telegram_id) {
+    const write = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.write") });
+    write.addEventListener("click", () => openTelegramUser(person.telegram_username));
+    buttons.push(write);
+  }
+  const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.card.close") });
+  close.addEventListener("click", closeSheet);
+  buttons.push(close);
+  openSheet([
+    el("h2", { text: personName(person) }),
+    detailRow(t("webapp.profile.username"), person.telegram_username ? `@${person.telegram_username}` : ""),
+    detailRow(t("webapp.profile.study_group"), person.study_group),
+    detailRow(t("webapp.profile.club_group"), person.group ? person.group.title : ""),
+    detailRow(t("webapp.profile.status"), t(`webapp.admin.status.${person.status}`)),
+    detailRow(t("webapp.profile.roles"), person.role === "user" ? "" : t(`webapp.admin.role.${person.role}`)),
+    detailRow(t("webapp.admin.reason_label"), person.moderation_reason),
+    detailRow(t("webapp.admin.created"), shortDate(person.created_at.slice(0, 10))),
+    personActions(person).length ? null : el("div", { className: "meta", text: t("webapp.admin.no_actions") }),
+    sheetActions(...buttons),
+  ]);
+}
+
+function personRow(person) {
+  const username = person.telegram_username ? `@${person.telegram_username}` : "";
+  const groupTitle = person.group ? person.group.title : "";
+  const badges = [t(`webapp.admin.status.${person.status}`)];
+  if (person.role !== "user") badges.push(t(`webapp.admin.role.${person.role}`));
+  const row = el("div", { className: "member", role: "button", tabindex: "0" }, [
+    el("div", {}, [
+      el("div", { className: "member-name", text: personName(person) }),
+      el("div", { className: "meta", text: [username, person.study_group, groupTitle].filter(Boolean).join(" · ") }),
+    ]),
+    el("div", { className: "badges" }, badges.map((text) => el("span", { className: "badge", text }))),
+  ]);
+  row.addEventListener("click", () => openPersonSheet(person));
+  return row;
+}
+
+function peopleList(people, emptyText) {
+  return people.length ? el("div", { className: "card" }, people.map(personRow)) : notice(emptyText);
+}
+
+function adminSegments(tabs, pending) {
+  return el("div", { className: "segments" }, tabs.map((tab) => {
+    const button = el("button", { className: `segment${tab === state.adminTab ? " active" : ""}`, type: "button" }, [
+      t(`webapp.admin.tab.${tab}`),
+      tab === "requests" && pending ? el("span", { className: "badge-count", text: String(pending) }) : null,
+    ]);
+    button.addEventListener("click", () => { state.adminTab = tab; render(); });
+    return button;
+  }));
+}
+
+function usersPath() {
+  const params = new URLSearchParams();
+  if (state.adminStatus) params.set("status", state.adminStatus);
+  if (state.adminQuery.trim()) params.set("q", state.adminQuery.trim());
+  const query = params.toString();
+  return `/admin/users${query ? `?${query}` : ""}`;
+}
+
+function usersControls(list) {
+  const search = el("input", { type: "search", maxlength: "100", autocomplete: "off", placeholder: t("webapp.admin.search") });
+  search.value = state.adminQuery;
+  const status = el("select", {}, [
+    el("option", { value: "", text: t("webapp.admin.filter.all") }),
+    ...USER_STATUSES.map((value) => el("option", { value, text: t(`webapp.admin.status.${value}`) })),
+  ]);
+  status.value = state.adminStatus;
+  const reload = async () => {
+    const mine = ++state.adminSearchToken;
+    try {
+      const data = await api(usersPath());
+      if (mine === state.adminSearchToken) list.replaceChildren(peopleList(data.users, t("webapp.admin.empty.users")));
+    } catch (_) {
+      if (mine === state.adminSearchToken) list.replaceChildren(notice(t("webapp.error.load"), true));
+    }
+  };
+  let timer = null;
+  search.addEventListener("input", () => {
+    state.adminQuery = search.value;
+    clearTimeout(timer);
+    timer = setTimeout(reload, SEARCH_DEBOUNCE_MS);
+  });
+  status.addEventListener("change", () => { state.adminStatus = status.value; reload(); });
+  return el("div", { className: "form admin-filters" }, [search, status]);
+}
+
+function openRoleForm(target) {
+  const field = textField(t("webapp.admin.roles.target"), "role-target", "", 100);
+  field.required = true;
+  openBandForm({
+    title: t(target.addTitleKey),
+    fields: [field],
+    submitLabel: t("webapp.admin.roles.add"),
+    errorKey: "webapp.admin.error.action",
+    doneKey: "webapp.admin.roles.added",
+    run: ([value]) => api(target.path, { method: "POST", body: { target: value, enabled: true } }),
+  });
+}
+
+function roleRow(person, path) {
+  const username = person.telegram_username ? `@${person.telegram_username}` : "";
+  const children = [
+    el("div", {}, [
+      el("div", { className: "member-name", text: personName(person) }),
+      el("div", { className: "meta", text: username }),
+    ]),
+  ];
+  if (person.telegram_id !== state.me.telegram_id) {
+    const remove = el("button", { className: "btn secondary small", type: "button", text: t("webapp.admin.roles.remove") });
+    remove.addEventListener("click", () => openConfirm({
+      title: t("webapp.admin.roles.remove_title"),
+      text: fill("webapp.admin.roles.remove_text", { name: personName(person) }),
+      confirmLabel: t("webapp.admin.roles.remove"),
+      errorKey: "webapp.admin.error.action",
+      doneKey: "webapp.admin.roles.removed",
+      run: () => api(path, { method: "POST", body: { target: String(person.telegram_id), enabled: false } }),
+    }));
+    children.push(remove);
+  }
+  return el("div", { className: "member" }, children);
+}
+
+function roleSection(title, people, target) {
+  const rows = people.length
+    ? people.map((person) => roleRow(person, target.path))
+    : [el("div", { className: "meta", text: t("webapp.admin.empty.roles") })];
+  const add = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.roles.add") });
+  add.addEventListener("click", () => openRoleForm(target));
+  return el("div", { className: "card" }, [el("h2", { text: title }), ...rows, sheetActions(add)]);
+}
+
+function roleSections(staff) {
+  return [
+    roleSection(t("webapp.admin.roles.admins"), staff.admins, { path: "/admin/staff/admin", addTitleKey: "webapp.admin.roles.add_admin" }),
+    roleSection(t("webapp.admin.roles.dsvr"), staff.dsvr, { path: "/admin/staff/dsvr", addTitleKey: "webapp.admin.roles.add_dsvr" }),
+    ...staff.group_admins.map((item) =>
+      roleSection(`${t("webapp.admin.roles.group_admins")}: ${item.group.title}`, item.admins, {
+        path: `/admin/groups/${item.group.id}/admins`,
+        addTitleKey: "webapp.admin.roles.add_group_admin",
+      })
+    ),
+  ];
+}
+
+async function renderAdmin(screen, token) {
+  document.getElementById("meta").textContent = "";
+  if (!canAdmin()) {
+    screen.replaceChildren(notice(t("webapp.admin.not_allowed"), true));
+    return;
+  }
+  const tabs = state.me.is_admin ? ADMIN_TABS : ADMIN_TABS.filter((tab) => tab !== "roles");
+  if (!tabs.includes(state.adminTab)) state.adminTab = tabs[0];
+  if (state.adminTab === "roles") {
+    const [staff, pending] = await Promise.all([api("/admin/staff"), api("/admin/users?status=pending")]);
+    if (token !== state.renderToken) return;
+    screen.replaceChildren(adminSegments(tabs, pending.counts.pending), ...roleSections(staff));
+  } else if (state.adminTab === "requests") {
+    const data = await api("/admin/users?status=pending");
+    if (token !== state.renderToken) return;
+    screen.replaceChildren(adminSegments(tabs, data.counts.pending), peopleList(data.users, t("webapp.admin.empty.requests")));
+  } else {
+    const data = await api(usersPath());
+    if (token !== state.renderToken) return;
+    const list = el("div", {}, [peopleList(data.users, t("webapp.admin.empty.users"))]);
+    screen.replaceChildren(adminSegments(tabs, data.counts.pending), usersControls(list), list);
+  }
+}
+
 /* ---------- profile ---------- */
 
 function notice(text, isError = false) {
@@ -960,6 +1200,7 @@ async function render() {
     if (route === "me") renderProfile(screen);
     else if (route === "mine") await renderMine(screen, token);
     else if (route === "bands") await renderBands(screen, token);
+    else if (route === "admin") await renderAdmin(screen, token);
     else await renderSchedule(screen, token);
   } catch (error) {
     if (token === state.renderToken) {
@@ -986,6 +1227,7 @@ async function main() {
   const query = new URLSearchParams(location.search);
   const startParam = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
   const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || (query.has("join") ? `join_${query.get("join")}` : "")) : null;
+  if (ADMIN_TABS.includes(query.get("tab"))) state.adminTab = query.get("tab");
   if (joinMatch) location.hash = "#/bands";
   else if (ROUTES.includes(query.get("screen")) && !ROUTES.includes(location.hash.replace(/^#\/?/, "").split("/")[0])) {
     location.hash = `#/${query.get("screen")}`; // Telegram fills the hash with its own launch data, so only a route counts

@@ -539,3 +539,34 @@ def test_every_language_has_the_same_mini_app_strings():
 
     keys = {language: {key for key in load_locale(language) if key.startswith("webapp.")} for language in ("ru", "en", "kz")}
     assert keys["ru"] == keys["en"] == keys["kz"]
+
+
+def test_admin_strings_exist_in_every_language():
+    from app.bot.i18n import load_locale
+
+    required = [
+        "webapp.nav.admin",
+        "webapp.admin.tab.requests",
+        "webapp.admin.tab.users",
+        "webapp.admin.tab.roles",
+        *[f"webapp.admin.status.{status}" for status in ("pending", "approved", "rejected", "banned", "deleted")],
+        *[f"webapp.admin.role.{role}" for role in ("user", "admin", "dsvr", "group_admin")],
+    ]
+    for language in ("ru", "en", "kz"):
+        strings = load_locale(language)
+        assert [key for key in required if not strings.get(key)] == [], language
+
+
+def test_app_js_only_uses_defined_admin_strings():
+    import re
+    from pathlib import Path
+
+    from app.bot.i18n import load_locale
+
+    source = (Path(__file__).resolve().parent.parent / "app" / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    keys = set(re.findall(r'\bt\("(webapp\.admin\.[A-Za-z_.]+)"', source))
+    keys |= set(re.findall(r'\bt\(`(webapp\.admin\.[A-Za-z_.]+)`', source))
+    keys |= set(re.findall(r'"(webapp\.admin\.[A-Za-z_.]+)"', source))
+    assert keys, "the admin screen must use webapp.admin.* strings"
+    ru = load_locale("ru")
+    assert sorted(key for key in keys if key not in ru) == []

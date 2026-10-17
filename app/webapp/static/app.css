@@ -255,3 +255,26 @@ body.has-selbar main { padding-bottom: 84px; }
 .member-name { font-size: 15px; }
 .member .meta { margin: 2px 0 0; }
 .member .badges { margin: 0; justify-content: flex-end; }
+
+/* admin */
+.segments { display: flex; gap: 6px; margin: 0 0 12px; padding: 4px; border-radius: 12px; background: var(--surface); }
+.segment {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+}
+.segment.active { color: var(--accent-text); background: var(--accent); }
+.badge-count { min-width: 18px; padding: 0 6px; border-radius: 999px; color: var(--accent); background: var(--accent-text); font-size: 12px; line-height: 18px; text-align: center; }
+.admin-filters { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+.admin-filters input, .admin-filters select { margin: 0; }
+.btn.small { padding: 6px 12px; font-size: 13px; }
+.member > div:first-child { min-width: 0; overflow-wrap: anywhere; }
