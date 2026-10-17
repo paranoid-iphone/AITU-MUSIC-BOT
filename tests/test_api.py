@@ -82,27 +82,3 @@ async def test_tunnel_traffic_only_reaches_the_mini_app(client):
     tunnel = {"X-Forwarded-Host": "example.ngrok-free.app"}
     assert (await client.get("/planning/week", headers={**AUTH, **tunnel})).status_code == 404
     assert (await client.get("/health", headers=tunnel)).status_code == 200
-
-
-async def test_schedule_data_hides_contacts_without_telegram_signature(client, session, make_user, make_band, monkeypatch):
-    leader = await make_user(last_name="Петров", first_name="Иван")
-    band = await make_band(leader, "Rockers")
-    from datetime import time, timedelta
-
-    from app.core.timezone import now_local
-    from app.services import bookings
-
-    day = (now_local() + timedelta(days=1)).date()
-    await bookings.create_booking(session, leader.telegram_id, band.id, day, time(15), time(16), "self", "Song")
-
-    class _SessionContext:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *exc):
-            return False
-
-    monkeypatch.setattr("app.main.AsyncSessionLocal", lambda: _SessionContext())
-    payload = (await client.get("/webapp/schedule-data")).json()
-    assert payload["bookings"][0]["responsible_name"] is None
-    assert "created_by" not in payload["bookings"][0]

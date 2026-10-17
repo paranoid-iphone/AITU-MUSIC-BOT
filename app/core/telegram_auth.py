@@ -4,6 +4,9 @@ import json
 import time
 from urllib.parse import parse_qsl
 
+# Telegram and this server may disagree on the time by a few seconds; anything further ahead is forged.
+FUTURE_SKEW_SECONDS = 60
+
 
 def validate_init_data(init_data: str | None, bot_token: str, max_age_seconds: int = 24 * 60 * 60) -> dict | None:
     """Validate Telegram Mini App initData and return the Telegram user dict, or None if invalid.
@@ -28,7 +31,8 @@ def validate_init_data(init_data: str | None, bot_token: str, max_age_seconds: i
         auth_date = int(pairs.get("auth_date", "0"))
     except ValueError:
         return None
-    if time.time() - auth_date > max_age_seconds:
+    age = time.time() - auth_date
+    if age > max_age_seconds or age < -FUTURE_SKEW_SECONDS:
         return None
     try:
         user = json.loads(pairs.get("user", "null"))

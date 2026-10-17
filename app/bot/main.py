@@ -11,6 +11,7 @@ from app.bot.handlers_dsvr import router as dsvr_router
 from app.bot.handlers_history import router as history_router
 from app.bot.handlers_planning import router as planning_router
 from app.bot.handlers_groups import router as groups_router
+from app.bot.menu_button import setup_menu_button
 from app.core.config import settings
 
 
@@ -60,10 +61,12 @@ async def main() -> None:
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
     worker = asyncio.create_task(outbox_worker(bot))
+    menu_task = asyncio.create_task(setup_menu_button(bot))  # waits for the tunnel without delaying polling
     try:
         await dispatcher.start_polling(bot)
     finally:
         worker.cancel()
+        menu_task.cancel()
 
 
 if __name__ == "__main__":
