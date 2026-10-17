@@ -13,6 +13,17 @@ class BookingCreate(BaseModel):
     song_title: str | None = Field(default=None, max_length=150)
 
 
+class WebAppBookingCreate(BaseModel):
+    """Mini App booking: who acts comes from the signed initData, never from the body."""
+
+    band_id: int | None = None
+    booking_date: date
+    start_time: time
+    end_time: time
+    purpose: str = Field(default="self", pattern="^(concert|self|personal)$")
+    song_title: str | None = Field(default=None, max_length=150)
+
+
 class BookingUpdate(BaseModel):
     telegram_id: int
     booking_date: date | None = None

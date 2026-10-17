@@ -1,15 +1,23 @@
 """JSON API of the Telegram Mini App. Authenticated by signed `initData`, not by the internal token."""
-from datetime import timedelta
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.webapp_auth import WebAppIdentity, optional_webapp_user, webapp_identity
+from app.api.webapp_auth import (
+    WebAppIdentity,
+    current_webapp_user,
+    fresh_webapp_user,
+    optional_webapp_user,
+    webapp_identity,
+)
 from app.bot.i18n import load_locale
 from app.core.config import settings
 from app.core.timezone import now_local
 from app.db.models import Group, User
 from app.db.session import get_session
+from app.schemas.bookings import BookingRead, WebAppBookingCreate
+from app.services import bands as band_service
 from app.services import bookings as booking_service
 from app.services.errors import NotFoundError
 from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
@@ -45,7 +53,7 @@ async def schedule(
         rows = [{**item, "responsible_name": None, "responsible_username": None} for item in rows]
     bookings = [
         {
-            **{key: value for key, value in item.items() if key != "created_by"},
+            **{key: value for key, value in item.items() if key != "created_by" or contacts_visible},
             "band_name": "Личная репетиция"
             if item["purpose"] == "personal" and item["band_name"].startswith("Личная репетиция")
             else item["band_name"],
@@ -66,7 +74,59 @@ async def schedule(
         "contacts_visible": contacts_visible,
         "bookings": bookings,
         "day_closures": [{**item, "date": item["date"].isoformat()} for item in closures],
+        "free_slots": await _free_slots(session, days),
     }
+
+
+async def _free_slots(session: AsyncSession, days: list[date]) -> dict[str, list[str]]:
+    """Start times of bookable half-hour cells per day: the booking rules (past, closed days, hours) decide, not the page."""
+    free = {}
+    for day in days:
+        slots = await booking_service.list_available_slots(session, day, SLOT_MINUTES)
+        free[day.isoformat()] = [slot["start_time"].strftime("%H:%M") for slot in slots]
+    return free
+
+
+@router.get("/my-bands")
+async def my_bands(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> dict:
+    """Bands the viewer can book for, and whether personal rehearsals are switched on."""
+    bands = await band_service.list_user_bands(session, user.telegram_id)
+    return {
+        "bands": [
+            {"id": band.id, "name": band.name, "group_title": band.group.title if band.group is not None else None}
+            for band in bands
+        ],
+        "personal_enabled": await booking_service.personal_bookings_are_enabled(session),
+    }
+
+
+@router.get("/limits")
+async def limits(
+    band_id: int,
+    target_date: date | None = Query(default=None, alias="date"),
+    user: User = Depends(current_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Weekly and daily booking time left for one of the viewer's bands."""
+    return await booking_service.get_booking_limit_status(session, user.telegram_id, band_id, target_date)
+
+
+@router.post("/bookings", response_model=BookingRead)
+async def create_booking(
+    payload: WebAppBookingCreate,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await booking_service.create_booking(
+        session,
+        user.telegram_id,
+        payload.band_id,
+        payload.booking_date,
+        payload.start_time,
+        payload.end_time,
+        payload.purpose,
+        payload.song_title,
+    )
 
 
 @router.get("/me")

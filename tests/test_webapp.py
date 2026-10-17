@@ -207,3 +207,149 @@ async def test_menu_button_survives_a_telegram_error(monkeypatch):
     monkeypatch.setattr(menu_button, "get_webapp_base_url", base_url)
     error = TelegramBadRequest(method=SetChatMenuButton(), message="Bad Request: only https links are allowed")
     assert await menu_button.setup_menu_button(FakeBot(error)) is False
+
+
+# ---------- step 6: booking from the Mini App ----------
+
+
+def booking_body(band_id, day="2026-10-15", start="10:00", end="11:00", **extra):
+    return {"band_id": band_id, "booking_date": day, "start_time": start, "end_time": end, "purpose": "self", **extra}
+
+
+async def test_schedule_lists_free_half_hour_cells_and_skips_taken_and_past_ones(client, session, make_user, make_band, freeze_now):
+    await booked_schedule(session, make_user, make_band, freeze_now)  # today 15:00-16:00 is taken, "now" is 12:00
+    free = (await client.get("/webapp/api/schedule")).json()["free_slots"]
+    assert set(free) == {f"2026-10-{day}" for day in range(14, 21)}
+    today = free["2026-10-14"]
+    assert "12:00" not in today and "12:30" in today  # the past is not bookable
+    assert "15:00" not in today and "15:30" not in today  # the booked hour
+    assert "16:00" in today
+    assert free["2026-10-15"][0] == "08:00" and free["2026-10-15"][-1] == "20:30"
+
+
+async def test_schedule_free_cells_skip_closed_days(client, session, make_user, freeze_now):
+    from app.services import admin as admin_service
+
+    freeze_now(NOW)
+    admin = await make_user(role="admin")
+    await admin_service.update_available_day(session, admin.telegram_id, 3, False, "другой клуб")  # Thursday
+    free = (await client.get("/webapp/api/schedule")).json()["free_slots"]
+    assert free["2026-10-15"] == []
+
+
+async def test_schedule_shows_who_booked_to_approved_members_only(client, session, make_user, make_band, freeze_now):
+    leader = await booked_schedule(session, make_user, make_band, freeze_now)
+    anonymous = (await client.get("/webapp/api/schedule")).json()["bookings"][0]
+    assert "created_by" not in anonymous
+    member = (await client.get("/webapp/api/schedule", headers=tg(leader.telegram_id))).json()["bookings"][0]
+    assert member["created_by"] == "Петров Иван"
+
+
+async def test_my_bands_lists_only_own_bands_and_personal_flag(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    other = await make_user()
+    mine = await make_band(leader, "Rockers")
+    await make_band(other, "Strangers")
+    payload = (await client.get("/webapp/api/my-bands", headers=tg(leader.telegram_id))).json()
+    assert [band["id"] for band in payload["bands"]] == [mine.id]
+    assert payload["bands"][0]["name"] == "Rockers"
+    assert payload["personal_enabled"] is True
+
+
+async def test_my_bands_and_limits_need_an_approved_member(client, make_user):
+    pending = await make_user(status="pending")
+    assert (await client.get("/webapp/api/my-bands")).status_code == 401
+    assert (await client.get("/webapp/api/my-bands", headers=tg(pending.telegram_id))).status_code == 403
+    assert (await client.get("/webapp/api/limits?band_id=1", headers=tg(pending.telegram_id))).status_code == 403
+
+
+async def test_limits_report_the_remaining_time_and_refuse_foreign_bands(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    stranger = await make_user()
+    band = await make_band(leader, "Rockers")
+    limits = (await client.get(f"/webapp/api/limits?band_id={band.id}&date=2026-10-15", headers=tg(leader.telegram_id))).json()
+    assert limits["remaining_minutes"] == limits["weekly_limit_minutes"] > 0
+    assert (await client.get(f"/webapp/api/limits?band_id={band.id}", headers=tg(stranger.telegram_id))).status_code == 403
+
+
+async def test_member_books_a_slot_for_their_band(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    response = await client.post(
+        "/webapp/api/bookings", json=booking_body(band.id, song_title="Song"), headers=tg(leader.telegram_id)
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["start_time"] == "10:00:00" and response.json()["status"] == "confirmed"
+    schedule = (await client.get("/webapp/api/schedule", headers=tg(leader.telegram_id))).json()
+    assert [(item["band_name"], item["song_title"]) for item in schedule["bookings"]] == [("Rockers", "Song")]
+    assert "10:00" not in schedule["free_slots"]["2026-10-15"] and "11:00" in schedule["free_slots"]["2026-10-15"]
+
+
+async def test_personal_booking_without_a_band(client, session, make_user, freeze_now):
+    freeze_now(NOW)
+    user = await make_user()
+    body = booking_body(None, purpose="personal")
+    assert (await client.post("/webapp/api/bookings", json=body, headers=tg(user.telegram_id))).status_code == 200
+
+
+async def test_booking_a_taken_slot_is_a_conflict(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    other = await make_user()
+    rivals = await make_band(other, "Rivals")
+    assert (await client.post("/webapp/api/bookings", json=booking_body(band.id), headers=tg(leader.telegram_id))).status_code == 200
+    clash = await client.post("/webapp/api/bookings", json=booking_body(rivals.id, start="10:30", end="11:30"), headers=tg(other.telegram_id))
+    assert clash.status_code == 409 and "not available" in clash.json()["detail"]
+
+
+async def test_booking_for_a_foreign_band_is_forbidden(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    stranger = await make_user()
+    band = await make_band(leader, "Rockers")
+    response = await client.post("/webapp/api/bookings", json=booking_body(band.id), headers=tg(stranger.telegram_id))
+    assert response.status_code == 403
+
+
+async def test_booking_requires_a_fresh_signature_and_ignores_a_smuggled_telegram_id(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    stranger = await make_user()
+    band = await make_band(leader, "Rockers")
+    stale = {"X-Telegram-Init-Data": init_data(leader.telegram_id, age=2 * 60 * 60)}
+    assert (await client.post("/webapp/api/bookings", json=booking_body(band.id), headers=stale)).status_code == 401
+    assert (await client.post("/webapp/api/bookings", json=booking_body(band.id))).status_code == 401
+    # the acting user always comes from the signature, never from the body
+    spoofed = booking_body(band.id, telegram_id=leader.telegram_id)
+    assert (await client.post("/webapp/api/bookings", json=spoofed, headers=tg(stranger.telegram_id))).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"purpose": "staff"},
+        {"purpose": "personal"},  # band booking cannot be personal
+        {"song_title": "x" * 151},
+        {"start_time": "10:00", "end_time": "10:00"},
+        {"booking_date": "not-a-date"},
+    ],
+)
+async def test_invalid_booking_payloads_are_rejected(client, session, make_user, make_band, freeze_now, overrides):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    body = {**booking_body(band.id), **overrides}
+    assert (await client.post("/webapp/api/bookings", json=body, headers=tg(leader.telegram_id))).status_code in (409, 422)
+
+
+def test_rehearsals_menu_leads_with_the_mini_app_booking_button():
+    from app.bot import keyboards
+
+    rows = keyboards.rehearsals_menu_keyboard("https://club.example/").inline_keyboard
+    assert rows[0][0].web_app.url == "https://club.example/webapp/schedule"
+    assert any(button.callback_data == "menu:booking" for row in rows for button in row)  # the old flow stays
+    assert all(button.web_app is None for row in keyboards.rehearsals_menu_keyboard().inline_keyboard for button in row)
