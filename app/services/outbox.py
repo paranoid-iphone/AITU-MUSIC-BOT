@@ -29,6 +29,12 @@ def queue_notification(session: AsyncSession, telegram_id: int, text: str) -> No
     session.info.setdefault("outbox", []).append({"type": "notify", "telegram_id": telegram_id, "text": text})
 
 
+def queue_repeat_offer(session: AsyncSession, telegram_id: int, booking_id: int, text: str, button: str) -> None:
+    session.info.setdefault("outbox", []).append(
+        {"type": "repeat_offer", "telegram_id": telegram_id, "booking_id": booking_id, "text": text, "button": button}
+    )
+
+
 def queue_schedule_changed(session: AsyncSession) -> None:
     events = session.info.setdefault("outbox", [])
     if not any(item["type"] == "schedule_changed" for item in events):

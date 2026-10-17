@@ -53,13 +53,18 @@ The default model is a sliding 7-day window (`WEEKLY_PLANNING_ENABLED=false`, th
 buttons and `plan:*` entry points then (`settings.weekly_planning_enabled` is read by the bot process too). The optional
 `club_settings` key `max_future_bookings_per_band` (0 = off) caps a band's not-yet-started bookings in `create_booking`.
 Users with `notifications_enabled=False` are skipped when queuing notifications (history is still written).
+"Repeat next week": the slot a week after a booking only enters the sliding window once that booking has started, so an
+APScheduler interval job (`run_repeat_offers`, every 5 min, always on) calls `services/repeat_offers.offer_repeats`: for bookings
+that started in the last 2 h with a free slot +7 days it sets `bookings.repeat_offered_at` and queues a `repeat_offer` outbox event
+(text + button). The bot sends it with a `repeat:<booking_id>` button; `handlers_repeat.py` calls `POST /bookings/{id}/repeat`
+(`repeat_offers.repeat_booking` → `create_booking`, the date is derived server-side).
 
 The opt-in weekly mode: `services/planning.py` stores weekly requests (up to 5 priority windows) and runs the allocation; `services/allocator.py`
 is the **pure** algorithm (no DB) — keep it that way and unit-test it directly. `services/weeks.py` holds week/deadline
 math; days of a week that is still "collecting" are closed for manual booking (`is_date_open_for_booking`).
 A cron job (APScheduler, started in `on_startup`) runs the allocation on Sunday at `ALLOCATION_TIME`;
-`catch_up_allocations` runs on startup for missed weeks. `WEEKLY_PLANNING_ENABLED=false` disables the scheduler and the
-closing of future days.
+`catch_up_allocations` runs on startup for missed weeks. `WEEKLY_PLANNING_ENABLED=false` skips that job and the
+closing of future days (the scheduler itself still runs for the repeat-offer job).
 
 ### Schedule history and Sheets backup
 

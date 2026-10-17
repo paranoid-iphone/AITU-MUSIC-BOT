@@ -13,7 +13,7 @@ from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
-from app.services import sheets_sync
+from app.services import repeat_offers, sheets_sync
 from app.services.errors import AppError
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
@@ -22,6 +22,7 @@ app = FastAPI(title=settings.app_name)
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 sheets_task: asyncio.Task | None = None
+REPEAT_OFFER_JOB_MINUTES = 5
 
 
 async def run_sunday_allocation() -> None:
@@ -34,6 +35,17 @@ async def run_sunday_allocation() -> None:
             logger.info("Weekly allocation skipped: %s", exc)
         except Exception:
             logger.exception("Weekly allocation failed")
+
+
+async def run_repeat_offers() -> None:
+    """Offer to repeat rehearsals that have just started (their slot a week later is now bookable)."""
+    async with AsyncSessionLocal() as session:
+        try:
+            offered = await repeat_offers.offer_repeats(session)
+            if offered:
+                logger.info("Queued %s repeat offer(s)", offered)
+        except Exception:
+            logger.exception("Repeat offers failed")
 
 
 async def catch_up_missed_allocations() -> None:
@@ -51,10 +63,12 @@ async def on_startup() -> None:
     await create_db_and_tables()
     async with AsyncSessionLocal() as session:
         await seed_default_schedule(session)
+    scheduler.add_job(run_repeat_offers, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="repeat_offers")
     if settings.weekly_planning_enabled:
         run_at = allocation_time()
         scheduler.add_job(run_sunday_allocation, "cron", day_of_week="sun", hour=run_at.hour, minute=run_at.minute, id="weekly_allocation")
-        scheduler.start()
+    scheduler.start()
+    if settings.weekly_planning_enabled:
         await catch_up_missed_allocations()
     global sheets_task
     if sheets_sync.is_enabled():

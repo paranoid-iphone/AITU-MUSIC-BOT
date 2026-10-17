@@ -9,13 +9,14 @@ from app.schemas.bookings import (
     AvailableSlotRead,
     BookingCreate,
     BookingRead,
+    BookingRepeat,
     BookingUpdate,
     PriorityBookingCreate,
     PriorityBookingResult,
     ScheduleBookingRead,
     StaffBookingCreate,
 )
-from app.services import bookings
+from app.services import bookings, repeat_offers
 from app.services import admin as admin_service
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -109,6 +110,11 @@ async def create_priority_booking(payload: PriorityBookingCreate, session: Async
     return await bookings.create_priority_booking(
         session, payload.telegram_id, payload.booking_date, payload.start_time, payload.end_time, payload.title
     )
+
+
+@router.post("/{booking_id}/repeat", response_model=BookingRead)
+async def repeat_booking(booking_id: int, payload: BookingRepeat, session: AsyncSession = Depends(get_session)):
+    return await repeat_offers.repeat_booking(session, payload.telegram_id, booking_id)
 
 
 @router.patch("/{booking_id}", response_model=BookingRead)

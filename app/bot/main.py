@@ -4,6 +4,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from redis.asyncio import Redis
 
 from app.bot.handlers import refresh_all_schedule_menus, router
@@ -11,6 +12,7 @@ from app.bot.handlers_dsvr import router as dsvr_router
 from app.bot.handlers_history import router as history_router
 from app.bot.handlers_planning import router as planning_router
 from app.bot.handlers_groups import router as groups_router
+from app.bot.handlers_repeat import router as repeat_router
 from app.bot.menu_button import setup_menu_button
 from app.core.config import settings
 
@@ -38,6 +40,17 @@ async def outbox_worker(bot: Bot) -> None:
                     await bot.send_message(event["telegram_id"], event["text"])
                 except Exception as exc:
                     logger.info("Could not deliver notification to %s: %s", event.get("telegram_id"), exc)
+            elif event.get("type") == "repeat_offer":
+                try:
+                    await bot.send_message(
+                        event["telegram_id"],
+                        event["text"],
+                        reply_markup=InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton(text=event["button"], callback_data=f"repeat:{event['booking_id']}")]]
+                        ),
+                    )
+                except Exception as exc:
+                    logger.info("Could not deliver repeat offer to %s: %s", event.get("telegram_id"), exc)
             elif event.get("type") == "schedule_changed":
                 menus_dirty = True
         except asyncio.CancelledError:
@@ -58,6 +71,7 @@ async def main() -> None:
     dispatcher.include_router(history_router)
     dispatcher.include_router(dsvr_router)
     dispatcher.include_router(planning_router)
+    dispatcher.include_router(repeat_router)
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
     worker = asyncio.create_task(outbox_worker(bot))

@@ -178,6 +178,7 @@ class Booking(Base):
     request_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    repeat_offered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     band: Mapped[Band | None] = relationship(back_populates="bookings")

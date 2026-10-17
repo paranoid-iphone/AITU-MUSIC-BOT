@@ -190,6 +190,9 @@ class BackendClient:
             json={"telegram_id": telegram_id, "is_enabled": is_enabled},
         )
 
+    async def repeat_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
+        return await self.request("POST", f"/bookings/{booking_id}/repeat", json={"telegram_id": telegram_id})
+
     async def delete_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/bookings/{booking_id}", params={"telegram_id": telegram_id})
 

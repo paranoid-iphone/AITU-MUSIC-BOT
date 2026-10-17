@@ -13,6 +13,10 @@ class BookingCreate(BaseModel):
     song_title: str | None = Field(default=None, max_length=150)
 
 
+class BookingRepeat(BaseModel):
+    telegram_id: int
+
+
 class WebAppBookingCreate(BaseModel):
     """Mini App booking: who acts comes from the signed initData, never from the body."""
 
