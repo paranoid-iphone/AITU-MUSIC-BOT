@@ -68,6 +68,16 @@ moves the booking through `update_booking(authorized=True, commit=False)` so his
 any edit, and the request status commits in the same transaction; nothing is booked for the requester. Requests expire
 after 24 h or at the booking's start (APScheduler job `expire_move_requests`, plus a lazy check on every answer).
 
+Waiting list: a member can queue for the exact range of an occupied, non-staff booking, for one of their bands or as a
+personal rehearsal (`services/waitlist.py`, table `waitlist_entries`, created by `create_all`; max 5 per person).
+`bookings.delete_booking`, `update_booking` (old slot) and `create_priority_booking` (leftovers of a preempted booking)
+call `_offer_freed` → `waitlist.notify_freed` before committing: every waiter whose range is now entirely free gets a
+`waitlist_offer` outbox event (button `waitlist:take:<id>`, `handlers_waitlist.py` → internal `/waitlist/{id}/take`; the
+Mini App has "Встать в очередь" on a booking card and a section on "Мои брони" → `/webapp/api/waitlist*`). Nothing is
+reserved: the first `take` wins, which deletes the entry and runs `create_booking` in one transaction (a failed take rolls
+back and the entry stays). Entries are dropped when their start passes (`cleanup_waitlist` job, lazily on listing), when
+the band is deleted or the member removed from it.
+
 The opt-in weekly mode: `services/planning.py` stores weekly requests (up to 5 priority windows) and runs the allocation; `services/allocator.py`
 is the **pure** algorithm (no DB) — keep it that way and unit-test it directly. `services/weeks.py` holds week/deadline
 math; days of a week that is still "collecting" are closed for manual booking (`is_date_open_for_booking`).

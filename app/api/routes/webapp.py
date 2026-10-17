@@ -26,9 +26,11 @@ from app.schemas.bands import (
 )
 from app.schemas.bookings import BookingRead, WebAppBookingCreate, WebAppBookingUpdate
 from app.schemas.move_requests import MoveRequestRead, WebAppMoveRequestCreate
+from app.schemas.waitlist import WebAppWaitlistJoin
 from app.services import bands as band_service
 from app.services import bookings as booking_service
 from app.services import move_requests as move_request_service
+from app.services import waitlist as waitlist_service
 from app.services.errors import NotFoundError
 from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin
 
@@ -228,6 +230,48 @@ async def cancel_move_request(
     request_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
 ):
     return await move_request_service.cancel(session, user.telegram_id, request_id)
+
+
+@router.get("/waitlist")
+async def waitlist(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> dict:
+    """The viewer's waiting-list entries; `is_free` marks the ones that can be booked right now."""
+    rows = await waitlist_service.list_for_user(session, user.telegram_id)
+    return {
+        "entries": [
+            {
+                **row,
+                "booking_date": row["booking_date"].isoformat(),
+                "start_time": row["start_time"].isoformat(),
+                "end_time": row["end_time"].isoformat(),
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/waitlist")
+async def join_waitlist(
+    payload: WebAppWaitlistJoin, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+) -> dict:
+    entry = await waitlist_service.join(
+        session, user.telegram_id, payload.band_id, payload.booking_date, payload.start_time, payload.end_time
+    )
+    return {"id": entry.id}
+
+
+@router.post("/waitlist/{entry_id}/leave")
+async def leave_waitlist(
+    entry_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+) -> dict:
+    await waitlist_service.leave(session, user.telegram_id, entry_id)
+    return {"id": entry_id}
+
+
+@router.post("/waitlist/{entry_id}/take", response_model=BookingRead)
+async def take_waitlist(
+    entry_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+):
+    return await waitlist_service.take(session, user.telegram_id, entry_id)
 
 
 def _person_name(user: User) -> str:

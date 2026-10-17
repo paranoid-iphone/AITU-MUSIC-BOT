@@ -193,6 +193,9 @@ class BackendClient:
     async def repeat_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
         return await self.request("POST", f"/bookings/{booking_id}/repeat", json={"telegram_id": telegram_id})
 
+    async def take_waitlist(self, telegram_id: int, entry_id: int) -> dict[str, Any]:
+        return await self.request("POST", f"/waitlist/{entry_id}/take", json={"telegram_id": telegram_id})
+
     async def answer_move_request(self, telegram_id: int, request_id: int, action: str) -> dict[str, Any]:
         return await self.request("POST", f"/move-requests/{request_id}/{action}", json={"telegram_id": telegram_id})
 

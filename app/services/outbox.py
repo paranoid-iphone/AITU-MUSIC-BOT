@@ -50,6 +50,12 @@ def queue_move_request(
     )
 
 
+def queue_waitlist_offer(session: AsyncSession, telegram_id: int, entry_id: int, text: str, button: str) -> None:
+    session.info.setdefault("outbox", []).append(
+        {"type": "waitlist_offer", "telegram_id": telegram_id, "entry_id": entry_id, "text": text, "button": button}
+    )
+
+
 def queue_schedule_changed(session: AsyncSession) -> None:
     events = session.info.setdefault("outbox", [])
     if not any(item["type"] == "schedule_changed" for item in events):

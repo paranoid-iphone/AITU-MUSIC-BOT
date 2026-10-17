@@ -397,6 +397,11 @@ function openBookingCard(item) {
     ask.addEventListener("click", () => openMoveForm(item));
     actions.push(ask);
   }
+  if (canWait(item)) {
+    const wait = el("button", { className: "btn", type: "button", text: t("webapp.waitlist.join") });
+    wait.addEventListener("click", () => openWaitlistForm(item));
+    actions.push(wait);
+  }
   const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.card.close") });
   close.addEventListener("click", closeSheet);
   actions.push(close);
@@ -486,6 +491,104 @@ function openMoveForm(item) {
     toast(t("webapp.move.sent"));
   });
   openSheet([form]);
+}
+
+/* ---------- waiting list ---------- */
+
+// Same people as for "ask to move": staff time is not waited for, and one's own booking can be changed directly.
+function canWait(item) {
+  return canAskToMove(item);
+}
+
+async function openWaitlistForm(item) {
+  let options;
+  try {
+    options = await api("/my-bands");
+  } catch (error) {
+    toast(error.status === 401 ? t("webapp.error.session") : t("webapp.error.load"), true);
+    return;
+  }
+  const choices = options.bands.map((band) => el("option", { value: String(band.id), text: band.name }));
+  if (options.personal_enabled) choices.push(el("option", { value: PERSONAL, text: t("webapp.form.personal") }));
+  const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.form.cancel") });
+  close.addEventListener("click", closeSheet);
+  const summary = el("div", { className: "summary", text: `${weekdayLabel(item.booking_date)} ${shortDate(item.booking_date)} · ${item.start_time.slice(0, 5)}–${item.end_time.slice(0, 5)}` });
+  if (!choices.length) {
+    openSheet([el("h2", { text: t("webapp.waitlist.title") }), summary, el("div", { className: "notice", text: t("webapp.form.no_bands") }), el("div", { className: "actions" }, [close])]);
+    return;
+  }
+  const who = el("select", { id: "wait-who" }, choices);
+  const error = el("div", { className: "form-error" });
+  const send = el("button", { className: "btn", type: "submit", text: t("webapp.waitlist.send") });
+  const form = el("form", { className: "form" }, [
+    el("h2", { text: t("webapp.waitlist.title") }),
+    summary,
+    el("div", { className: "meta", text: t("webapp.waitlist.hint") }),
+    el("label", {}, [t("webapp.form.who"), who]),
+    error,
+    el("div", { className: "actions" }, [send, close]),
+  ]);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    send.disabled = true;
+    error.textContent = "";
+    try {
+      await api("/waitlist", {
+        method: "POST",
+        body: {
+          band_id: who.value === PERSONAL ? null : Number(who.value),
+          booking_date: item.booking_date,
+          start_time: item.start_time.slice(0, 5),
+          end_time: item.end_time.slice(0, 5),
+        },
+      });
+    } catch (failure) {
+      send.disabled = false;
+      error.textContent = sessionAwareMessage(failure, "webapp.waitlist.error");
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t("webapp.waitlist.joined"));
+  });
+  openSheet([form]);
+}
+
+async function answerWaitlist(entry, action, doneKey) {
+  try {
+    await api(`/waitlist/${entry.id}/${action}`, { method: "POST" });
+  } catch (failure) {
+    toast(sessionAwareMessage(failure, "webapp.waitlist.action_error"), true);
+    haptic("error");
+    render();
+    return;
+  }
+  haptic("success");
+  toast(t(doneKey));
+  render();
+}
+
+function waitlistCard(entry) {
+  const buttons = [];
+  const press = (labelKey, className, action, doneKey) => {
+    const button = el("button", { className, type: "button", text: t(labelKey) });
+    button.addEventListener("click", () => { buttons.forEach((item) => { item.disabled = true; }); answerWaitlist(entry, action, doneKey); });
+    buttons.push(button);
+  };
+  if (entry.is_free) press("webapp.waitlist.take", "btn", "take", "webapp.waitlist.taken");
+  press("webapp.waitlist.leave", "btn secondary", "leave", "webapp.waitlist.left");
+  return el("div", { className: "card" }, [
+    el("h2", { text: entry.band_name }),
+    el("div", { className: "summary", text: bookingWhen(entry) }),
+    el("div", { className: "meta", text: t(entry.is_free ? "webapp.waitlist.free" : "webapp.waitlist.waiting") }),
+    el("div", { className: "actions" }, buttons),
+  ]);
+}
+
+function waitlistSection(entries) {
+  if (!entries.length) return [];
+  return [el("div", { className: "section-title", text: t("webapp.waitlist.section") }), ...entries.map(waitlistCard)];
 }
 
 /* ---------- booking form ---------- */
@@ -655,9 +758,9 @@ async function renderMine(screen, token) {
     screen.replaceChildren(notice(t("webapp.select.hint_readonly")));
     return;
   }
-  const [{ bookings }, requests] = await Promise.all([api("/my-bookings"), api("/move-requests")]);
+  const [{ bookings }, requests, { entries }] = await Promise.all([api("/my-bookings"), api("/move-requests"), api("/waitlist")]);
   if (token !== state.renderToken) return;
-  const requestCards = moveRequestSections(requests);
+  const requestCards = [...moveRequestSections(requests), ...waitlistSection(entries)];
   if (!bookings.length && !requestCards.length) {
     screen.replaceChildren(notice(t("webapp.mine.empty")));
     return;

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,6 +14,7 @@ from app.db.models import (
     EventApplication,
     EventApplicationMember,
     UserStatus,
+    WaitlistEntry,
 )
 from app.services.errors import ForbiddenError, NotFoundError
 from app.services.outbox import commit_and_publish
@@ -262,6 +263,7 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
         f"Удалил участника из коллектива #{band_id}: {user_name}",
     )
     await session.delete(member)
+    await session.execute(delete(WaitlistEntry).where(WaitlistEntry.band_id == band_id, WaitlistEntry.user_id == member.user_id))
     await session.commit()
     return deleted
 
@@ -288,6 +290,7 @@ async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id
         # Past and cancelled bookings stay as history; ScheduleChange keeps the band name.
         booking.band_id = None
 
+    await session.execute(delete(WaitlistEntry).where(WaitlistEntry.band_id == band_id))
     requests_result = await session.execute(select(AvailabilityRequest).where(AvailabilityRequest.band_id == band_id))
     for availability_request in requests_result.scalars():
         await session.delete(availability_request)

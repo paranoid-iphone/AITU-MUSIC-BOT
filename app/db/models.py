@@ -215,6 +215,23 @@ class MoveRequest(Base):
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
 
 
+class WaitlistEntry(Base):
+    """`user_id` waits for an occupied range to free up, to book it for `band_id` (null = a personal rehearsal)."""
+
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id"), nullable=True, index=True)
+    booking_date: Mapped[date] = mapped_column(Date, index=True)
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+    band: Mapped[Band | None] = relationship()
+
+
 class WeekStatus(str, Enum):
     COLLECTING = "collecting"
     PUBLISHED = "published"

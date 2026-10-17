@@ -100,19 +100,26 @@ def _ensure_booking_not_past(booking: Booking) -> None:
 _BOOKING_LOCK_KEY = 7351001
 
 
+async def _offer_freed(session: AsyncSession, freed: list[tuple[date, time, time]]) -> None:
+    """Tell the waiting list about time that was just freed (lazy import: the waiting list uses this module)."""
+    from app.services.waitlist import notify_freed
+
+    await notify_freed(session, freed)
+
+
 async def _lock_bookings(session: AsyncSession) -> None:
     """Serialize booking writes so overlap checks and inserts are atomic (released on commit/rollback)."""
     await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _BOOKING_LOCK_KEY})
 
 
-async def _ensure_booking_time_available(
+async def _ensure_booking_range_valid(
     session: AsyncSession,
     booking_date: date,
     start_time: time,
     end_time: time,
-    exclude_booking_id: int | None = None,
     privileged: bool = False,
 ) -> None:
+    """Everything that makes a range bookable except it being unoccupied."""
     now = now_local()
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
@@ -130,6 +137,17 @@ async def _ensure_booking_time_available(
     day_result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == booking_date.weekday(), AvailableDay.is_enabled.is_(True)))
     if day_result.scalar_one_or_none() is None:
         raise ConflictError("This day is not available")
+
+
+async def _ensure_booking_time_available(
+    session: AsyncSession,
+    booking_date: date,
+    start_time: time,
+    end_time: time,
+    exclude_booking_id: int | None = None,
+    privileged: bool = False,
+) -> None:
+    await _ensure_booking_range_valid(session, booking_date, start_time, end_time, privileged)
     stmt = select(Booking).where(Booking.booking_date == booking_date, Booking.status == BookingStatus.CONFIRMED.value)
     if exclude_booking_id is not None:
         stmt = stmt.where(Booking.id != exclude_booking_id)
@@ -543,6 +561,8 @@ async def create_priority_booking(
         f"ДСВР занял кабинет: {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {title}; отменено броней: {len(affected)}",
     )
     await record_change(session, booking, "created", user, reason=f"Приоритет ДСВР, отменено броней: {len(affected)}")
+    # A preempted booking can be longer than the DSVR slot; whatever is left of it is free again.
+    await _offer_freed(session, [(item.booking_date, item.start_time, item.end_time) for item in affected])
     await commit_and_publish(session)
     await session.refresh(booking)
     return {"booking": booking, "cancelled": cancelled_rows}
@@ -596,6 +616,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     booking.status = BookingStatus.CANCELLED.value
     booking.cancelled_by_id = user.id
     await record_change(session, booking, "cancelled", user, before=before)
+    await _offer_freed(session, [(booking.booking_date, booking.start_time, booking.end_time)])
     await commit_and_publish(session)
     return deleted
 
@@ -674,6 +695,9 @@ async def update_booking(
         f"Изменил бронь #{booking.id}: {booking.booking_date.isoformat()} {booking.start_time.strftime('%H:%M')}-{booking.end_time.strftime('%H:%M')}",
     )
     await record_change(session, booking, "updated", user, before=before)
+    old_slot = (date.fromisoformat(before["date"]), time.fromisoformat(before["start"]), time.fromisoformat(before["end"]))
+    if old_slot != (booking.booking_date, booking.start_time, booking.end_time):
+        await _offer_freed(session, [old_slot])
     if commit:
         await commit_and_publish(session)
         await session.refresh(booking)
