@@ -190,6 +190,43 @@ async def update_daily_booking_limit(session: AsyncSession, telegram_id: int, ho
     return {"daily_booking_limit_minutes": minutes, "daily_booking_limit_hours": minutes / 60}
 
 
+async def get_max_future_bookings(session: AsyncSession, telegram_id: int) -> dict:
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    from app.services.bookings import get_max_future_bookings_per_band
+
+    return {"max_future_bookings_per_band": await get_max_future_bookings_per_band(session)}
+
+
+async def update_max_future_bookings(session: AsyncSession, telegram_id: int, count: int) -> dict:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    if count < 0:
+        raise ConflictError("Limit must not be negative")
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "max_future_bookings_per_band"))
+    setting = result.scalar_one_or_none()
+    if setting is None:
+        session.add(ClubSetting(key="max_future_bookings_per_band", value=str(count)))
+    else:
+        setting.value = str(count)
+    await log_action(
+        session,
+        user.id,
+        "settings.max_future_bookings.update",
+        "club_setting",
+        "max_future_bookings_per_band",
+        f"Обновил лимит будущих броней на номер: {'выключен' if count == 0 else count}",
+    )
+    await session.commit()
+    return {"max_future_bookings_per_band": count}
+
+
 async def get_booking_window(session: AsyncSession, telegram_id: int) -> dict:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:

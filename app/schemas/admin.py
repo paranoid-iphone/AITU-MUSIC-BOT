@@ -32,6 +32,11 @@ class DailyBookingLimitUpdate(BaseModel):
     hours: float = Field(ge=0, le=24)
 
 
+class MaxFutureBookingsUpdate(BaseModel):
+    telegram_id: int
+    count: int = Field(ge=0, le=100)
+
+
 class BookingWindowUpdate(BaseModel):
     telegram_id: int
     start_time: time

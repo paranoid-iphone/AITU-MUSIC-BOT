@@ -361,6 +361,16 @@ class BackendClient:
             json={"telegram_id": telegram_id, "hours": hours},
         )
 
+    async def get_max_future_bookings(self, telegram_id: int) -> dict[str, Any]:
+        return await self.request("GET", "/admin/settings/max-future-bookings", params={"telegram_id": telegram_id})
+
+    async def update_max_future_bookings(self, telegram_id: int, count: int) -> dict[str, Any]:
+        return await self.request(
+            "PUT",
+            "/admin/settings/max-future-bookings",
+            json={"telegram_id": telegram_id, "count": count},
+        )
+
     async def get_booking_window(self, telegram_id: int) -> dict[str, Any]:
         return await self.request("GET", "/admin/settings/booking-window", params={"telegram_id": telegram_id})
 

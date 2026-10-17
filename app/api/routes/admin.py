@@ -3,7 +3,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.admin import BookingWindowUpdate, DailyBookingLimitUpdate, DayUpdate, PersonalBookingToggle, SlotCreate, SlotToggle, WeeklyBookingLimitUpdate
+from app.schemas.admin import (
+    BookingWindowUpdate,
+    DailyBookingLimitUpdate,
+    DayUpdate,
+    MaxFutureBookingsUpdate,
+    PersonalBookingToggle,
+    SlotCreate,
+    SlotToggle,
+    WeeklyBookingLimitUpdate,
+)
 from app.schemas.bookings import AvailableSlotRead
 from app.services import admin, audit
 
@@ -44,6 +53,16 @@ async def get_daily_booking_limit(telegram_id: int, session: AsyncSession = Depe
 @router.put("/settings/daily-booking-limit")
 async def update_daily_booking_limit(payload: DailyBookingLimitUpdate, session: AsyncSession = Depends(get_session)):
     return await admin.update_daily_booking_limit(session, payload.telegram_id, payload.hours)
+
+
+@router.get("/settings/max-future-bookings")
+async def get_max_future_bookings(telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await admin.get_max_future_bookings(session, telegram_id)
+
+
+@router.put("/settings/max-future-bookings")
+async def update_max_future_bookings(payload: MaxFutureBookingsUpdate, session: AsyncSession = Depends(get_session)):
+    return await admin.update_max_future_bookings(session, payload.telegram_id, payload.count)
 
 
 @router.get("/settings/booking-window")

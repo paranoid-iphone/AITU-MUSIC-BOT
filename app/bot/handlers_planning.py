@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.bot.handlers import answer_callback, api, edit_screen, parse_booking_window
 from app.bot.keyboards import flow_cancel_keyboard
 from app.bot.states import PlanFlow
+from app.core.config import settings
 
 router = Router()
 
@@ -52,8 +53,18 @@ def _deadline_text(week: dict) -> str:
 # ---------- member side ----------
 
 
+async def _planning_disabled(callback: CallbackQuery) -> bool:
+    """Stale buttons from before planning was switched off must not open the flow."""
+    if settings.weekly_planning_enabled:
+        return False
+    await answer_callback(callback, "Планирование недели отключено: бронируйте свободное время напрямую.", show_alert=True)
+    return True
+
+
 @router.callback_query(F.data == "plan:start")
 async def plan_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if await _planning_disabled(callback):
+        return
     await state.clear()
     week = await api.planning_week()
     if not week["is_open"]:
@@ -291,6 +302,8 @@ async def _require_admin(callback: CallbackQuery) -> bool:
 
 @router.callback_query(F.data == "plan:admin")
 async def plan_admin(callback: CallbackQuery) -> None:
+    if await _planning_disabled(callback):
+        return
     if not await _require_admin(callback):
         return
     week = await api.planning_week()

@@ -4,7 +4,19 @@ Telegram bot + FastAPI backend that plans a **shared rehearsal room** for severa
 cheerleading): weekly requests with priorities, an automatic Sunday allocation, DSVR priority, schedule history and a
 Google Sheets backup.
 
-## How the week works
+## How booking works
+
+By default (`WEEKLY_PLANNING_ENABLED=false`) the room uses a **sliding 7-day window**: at any moment a band can book any
+free 30-minute-step slot that starts within the next 7 days, first come first served. Everyone sees who booked each slot
+and who is responsible for that band, so people can agree among themselves. Admins can cap how much one band takes:
+*Админ → Настройки бронирования* has the weekly and daily limits and **«Макс. броней на номер»** (how many not-yet-started
+bookings a band may hold at once; 0 = no cap). Users who switched notifications off in their profile get no bot messages
+about schedule changes; the change itself is still recorded in the history.
+
+## Optional: weekly planning
+
+Set `WEEKLY_PLANNING_ENABLED=true` to replace the sliding window with the Sunday allocation (the planning buttons appear
+in the bot only in this mode):
 
 1. **Mon–Sun:** a band's leader (or its responsible person) submits a request for *next* week in
    *Репетиции → Заявка на неделю*: rehearsal length plus up to five time windows ordered by priority
@@ -19,7 +31,6 @@ Google Sheets backup.
 4. Days of an upcoming week stay closed for manual booking until that week is published.
 
 If the server was down on Sunday evening, the missed allocation runs automatically on the next start.
-Set `WEEKLY_PLANNING_ENABLED=false` to go back to plain first-come-first-served booking.
 
 ## Roles
 
@@ -83,7 +94,7 @@ Users listed in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and canno
 |----------|---------|
 | `BOT_TOKEN`, `INTERNAL_API_TOKEN` | Telegram bot token; shared secret between bot and backend |
 | `TIMEZONE` (`Asia/Almaty`) | club clock used for bookings, deadlines and the Sunday job |
-| `WEEKLY_PLANNING_ENABLED`, `ALLOCATION_TIME` | weekly planning switch; Sunday allocation time `HH:MM` |
+| `WEEKLY_PLANNING_ENABLED`, `ALLOCATION_TIME` | weekly planning switch (default `false` = sliding 7-day window); Sunday allocation time `HH:MM` |
 | `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE` | enable the Sheets backup |
 | `REGISTRATION_RETRY_HOURS` | cooldown before a rejected registration may be resubmitted |
 

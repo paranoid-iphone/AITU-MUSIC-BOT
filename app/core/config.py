@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     registration_retry_hours: int = 24
     default_language: str = "ru"
     timezone: str = "Asia/Almaty"
-    weekly_planning_enabled: bool = True
+    weekly_planning_enabled: bool = False
     allocation_time: str = "18:00"
     google_sheets_id: str = ""
     google_service_account_file: str = ""

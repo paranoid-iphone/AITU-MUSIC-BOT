@@ -36,9 +36,14 @@ Two processes share one codebase and talk over HTTP + Redis:
   and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst). In tests
   `outbox.publish` is monkeypatched to collect events (see `tests/conftest.py`).
 
-### Weekly planning
+### Booking model and weekly planning
 
-`services/planning.py` stores weekly requests (up to 5 priority windows) and runs the allocation; `services/allocator.py`
+The default model is a sliding 7-day window (`WEEKLY_PLANNING_ENABLED=false`, the default); the bot hides the planning
+buttons and `plan:*` entry points then (`settings.weekly_planning_enabled` is read by the bot process too). The optional
+`club_settings` key `max_future_bookings_per_band` (0 = off) caps a band's not-yet-started bookings in `create_booking`.
+Users with `notifications_enabled=False` are skipped when queuing notifications (history is still written).
+
+The opt-in weekly mode: `services/planning.py` stores weekly requests (up to 5 priority windows) and runs the allocation; `services/allocator.py`
 is the **pure** algorithm (no DB) — keep it that way and unit-test it directly. `services/weeks.py` holds week/deadline
 math; days of a week that is still "collecting" are closed for manual booking (`is_date_open_for_booking`).
 A cron job (APScheduler, started in `on_startup`) runs the allocation on Sunday at `ALLOCATION_TIME`;

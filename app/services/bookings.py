@@ -153,6 +153,29 @@ async def get_daily_booking_limit_minutes(session: AsyncSession) -> int:
         return 0
 
 
+async def get_max_future_bookings_per_band(session: AsyncSession) -> int:
+    """Cap on a band's not-yet-started bookings (anti-hoarding); 0 means no cap. Read-only like the other getters."""
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "max_future_bookings_per_band"))
+    setting = result.scalar_one_or_none()
+    if setting is None:
+        return 0
+    try:
+        return max(0, int(setting.value))
+    except ValueError:
+        return 0
+
+
+async def count_band_future_bookings(session: AsyncSession, band_id: int, now: datetime) -> int:
+    result = await session.execute(
+        select(Booking).where(
+            Booking.band_id == band_id,
+            Booking.status == BookingStatus.CONFIRMED.value,
+            Booking.booking_date >= now.date(),
+        )
+    )
+    return sum(1 for item in result.scalars() if datetime.combine(item.booking_date, item.start_time) > now)
+
+
 async def get_booking_window_minutes(session: AsyncSession) -> tuple[int, int]:
     result = await session.execute(
         select(ClubSetting).where(ClubSetting.key.in_(["booking_window_start_minutes", "booking_window_end_minutes"]))
@@ -324,6 +347,10 @@ async def create_booking(
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
     await _lock_bookings(session)
+    if band_id is not None:
+        max_future = await get_max_future_bookings_per_band(session)
+        if max_future > 0 and await count_band_future_bookings(session, band_id, now_local()) >= max_future:
+            raise ConflictError(f"Too many future bookings: at most {max_future} per band")
     slots = await list_available_slots(session, booking_date, duration, band_id)
     if not any(slot["start_time"] == start_time and slot["end_time"] == end_time for slot in slots):
         raise ConflictError("Slot is not available")

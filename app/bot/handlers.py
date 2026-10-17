@@ -209,6 +209,13 @@ async def answer_callback(callback: CallbackQuery, text: str | None = None, show
             raise
 
 
+def no_free_time_text() -> str:
+    text = "На ближайшие 7 дней нет свободного времени."
+    if settings.weekly_planning_enabled:
+        text += "\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции»."
+    return text
+
+
 def format_purpose(value: str) -> str:
     return {"concert": "к концерту", "self": "для себя", "staff": "ивент / стафф", "personal": "личная репетиция"}.get(value, value)
 
@@ -1194,7 +1201,7 @@ async def inline_booking_personal(callback: CallbackQuery, state: FSMContext) ->
     if not days:
         await state.clear()
         user = await api.get_user(callback.from_user.id)
-        await edit_screen(callback, "На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».", main_menu_inline(has_admin_menu(user)))
+        await edit_screen(callback, no_free_time_text(), main_menu_inline(has_admin_menu(user)))
         await answer_callback(callback)
         return
     await state.update_data(booking_dates=days)
@@ -1230,7 +1237,7 @@ async def inline_booking_band(callback: CallbackQuery, state: FSMContext) -> Non
         user = await api.get_user(callback.from_user.id)
         await edit_screen(
             callback,
-            "На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».",
+            no_free_time_text(),
             main_menu_inline(has_admin_menu(user)),
         )
         await answer_callback(callback)
@@ -2163,6 +2170,19 @@ async def inline_weekly_booking_limit_start(callback: CallbackQuery, state: FSMC
     await answer_callback(callback)
 
 
+@router.callback_query(F.data == "admin:max_future_bookings")
+async def inline_max_future_bookings_start(callback: CallbackQuery, state: FSMContext) -> None:
+    current = await api.get_max_future_bookings(callback.from_user.id)
+    await state.set_state(AdminFlow.max_future_bookings)
+    value = current["max_future_bookings_per_band"]
+    await callback.message.answer(
+        f"Макс. будущих броней на номер: {'выключено' if value == 0 else value}.\n"
+        "Введите новое целое число. Введите 0, чтобы выключить ограничение.",
+        reply_markup=flow_cancel_keyboard(),
+    )
+    await answer_callback(callback)
+
+
 @router.callback_query(F.data == "admin:daily_booking_limit")
 async def inline_daily_booking_limit_start(callback: CallbackQuery, state: FSMContext) -> None:
     current = await api.get_daily_booking_limit(callback.from_user.id)
@@ -2920,7 +2940,7 @@ async def booking_band(message: Message, state: FSMContext) -> None:
         if day_slots:
             dates.append({"date": target_date.isoformat(), "count": len(day_slots)})
     if not dates:
-        await message.answer("На ближайшие 7 дней нет свободного времени.\nДни следующей недели откроются для ручной брони после воскресного распределения: подайте заявку на неделю в разделе «Репетиции».")
+        await message.answer(no_free_time_text())
         await state.clear()
         return
     await state.update_data(booking_dates=dates)
@@ -3521,6 +3541,23 @@ async def daily_booking_limit_save(message: Message, state: FSMContext) -> None:
         text = "Дневной лимит выключен."
     else:
         text = f"Дневной лимит обновлен: {format_hours(updated['daily_booking_limit_minutes'])} в день на коллектив."
+    await message.answer(text, reply_markup=admin_settings_keyboard())
+
+
+@router.message(AdminFlow.max_future_bookings)
+async def max_future_bookings_save(message: Message, state: FSMContext) -> None:
+    try:
+        count = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите целое число. Например: 3. Для выключения: 0", reply_markup=flow_cancel_keyboard())
+        return
+    if count < 0 or count > 100:
+        await message.answer("Число должно быть от 0 до 100.", reply_markup=flow_cancel_keyboard())
+        return
+    updated = await api.update_max_future_bookings(message.from_user.id, count)
+    await state.clear()
+    value = updated["max_future_bookings_per_band"]
+    text = "Ограничение выключено." if value == 0 else f"Макс. будущих броней на номер: {value}."
     await message.answer(text, reply_markup=admin_settings_keyboard())
 
 

@@ -58,6 +58,12 @@ async def create_db_and_tables() -> None:
                 "ON CONFLICT (key) DO NOTHING"
             )
         )
+        await conn.execute(
+            text(
+                "INSERT INTO club_settings (key, value) VALUES ('max_future_bookings_per_band', '0') "
+                "ON CONFLICT (key) DO NOTHING"
+            )
+        )
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual' NOT NULL"))
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS request_id INTEGER"))
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancelled_by_id INTEGER REFERENCES users(id)"))

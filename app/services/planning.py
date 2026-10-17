@@ -431,7 +431,7 @@ async def _notify_request_people(session: AsyncSession, request: AvailabilityReq
         recipient_ids.append(request.submitted_by_id)
     for user_id in recipient_ids:
         user = await session.get(User, user_id)
-        if user is not None:
+        if user is not None and user.notifications_enabled:
             queue_notification(session, user.telegram_id, text)
 
 

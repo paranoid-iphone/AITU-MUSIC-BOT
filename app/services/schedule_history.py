@@ -100,7 +100,7 @@ async def record_change(
             if actor is not None and user_id == actor.id:
                 continue
             recipient = await session.get(User, user_id)
-            if recipient is not None:
+            if recipient is not None and recipient.notifications_enabled:
                 queue_notification(session, recipient.telegram_id, text)
     return change
 

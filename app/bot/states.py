@@ -52,6 +52,7 @@ class AdminFlow(StatesGroup):
     booking_edit_value = State()
     weekly_booking_limit = State()
     daily_booking_limit = State()
+    max_future_bookings = State()
     booking_window = State()
     staff_booking_date = State()
     staff_booking_time = State()
