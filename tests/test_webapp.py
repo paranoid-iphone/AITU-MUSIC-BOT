@@ -633,3 +633,46 @@ def test_stale_moderation_buttons_are_routed_to_the_legacy_handler():
         assert data.startswith(tuple(prefixes)), data
     for data in ("admin_section:schedule", "admin:back", "admin:action_history", "groups:list", "registration:approve:5"):
         assert not data.startswith(tuple(prefixes)), data
+
+
+# ---------- step 11.1: change any booking from its card on the grid ----------
+
+
+async def test_schedule_says_who_may_change_each_booking(client, session, make_user, make_band, freeze_now):
+    from sqlalchemy import select
+
+    from app.db import models
+
+    leader = await booked_schedule(session, make_user, make_band, freeze_now)
+    admin = await make_user(role="admin")
+    dsvr = await make_user(role="dsvr")
+    stranger = await make_user()
+    group_admin = await make_user()
+    band_group = (await session.execute(select(models.Band.group_id))).scalar_one()
+    session.add(models.GroupAdmin(group_id=band_group, user_id=group_admin.id))
+    await session.commit()
+
+    async def can_manage(user):
+        payload = (await client.get("/webapp/api/schedule", headers=tg(user.telegram_id))).json()
+        return payload["bookings"][0]["can_manage"]
+
+    assert [await can_manage(user) for user in (leader, admin, dsvr, group_admin, stranger)] == [True, True, True, True, False]
+    anonymous = (await client.get("/webapp/api/schedule")).json()["bookings"][0]
+    assert "can_manage" not in anonymous
+    assert anonymous["band_id"] is not None
+
+
+async def test_admin_moves_and_cancels_somebody_elses_booking_past_the_limits(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    admin = await make_user(role="admin")
+    band = await make_band(leader, "Rockers")
+    booking = await book(session, leader, band)
+    body = {"booking_date": "2026-10-16", "start_time": "10:00", "end_time": "18:00"}  # 8 h, over the weekly limit of 4 h
+    moved = await client.patch(f"/webapp/api/bookings/{booking.id}", json=body, headers=tg(admin.telegram_id))
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["end_time"] == "18:00:00"
+    cancelled = await client.delete(f"/webapp/api/bookings/{booking.id}", headers=tg(admin.telegram_id))
+    assert cancelled.status_code == 200
+    await session.refresh(booking)
+    assert booking.status == "cancelled"

@@ -762,7 +762,8 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
     return rows
 
 
-async def list_schedule(session: AsyncSession) -> list[dict]:
+async def list_schedule(session: AsyncSession, viewer=None) -> list[dict]:
+    """Confirmed bookings of the next 7 days; with a `viewer` each row also says whether they may change it."""
     now = now_local()
     window_end = now + timedelta(days=7)
     result = await session.execute(
@@ -784,6 +785,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
         rows.append(
             {
                 "id": booking.id,
+                "band_id": booking.band_id,
                 "band_name": _booking_owner_label(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
@@ -794,6 +796,7 @@ async def list_schedule(session: AsyncSession) -> list[dict]:
                 "purpose": booking.purpose,
                 "song_title": booking.song_title,
                 "status": booking.status,
+                **({"can_manage": await _can_manage_booking(session, viewer, booking)} if viewer is not None else {}),
                 **_band_info(booking),
             }
         )

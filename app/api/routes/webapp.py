@@ -57,7 +57,7 @@ async def schedule(
 ) -> dict:
     """The sliding 7-day window. The club clock (not the browser's) decides what "today" is."""
     now = now_local()
-    rows = await booking_service.list_schedule(session)
+    rows = await booking_service.list_schedule(session, viewer)
     closures = await booking_service.list_day_closures(session)
     window_start, window_end = await booking_service.get_booking_window_minutes(session)
     contacts_visible = viewer is not None  # contact details are for approved members opening the app from Telegram

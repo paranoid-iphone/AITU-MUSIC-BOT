@@ -392,6 +392,13 @@ function openBookingCard(item) {
     write.addEventListener("click", () => openTelegramUser(item.responsible_username));
     actions.push(write);
   }
+  if (item.can_manage) {
+    const edit = el("button", { className: "btn", type: "button", text: t("webapp.mine.edit") });
+    edit.addEventListener("click", () => openEditForm(item));
+    const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.mine.cancel") });
+    cancel.addEventListener("click", () => openCancelConfirm(item));
+    actions.push(edit, cancel);
+  }
   if (canAskToMove(item)) {
     const ask = el("button", { className: "btn", type: "button", text: t("webapp.move.ask") });
     ask.addEventListener("click", () => openMoveForm(item));
@@ -419,9 +426,9 @@ function openBookingCard(item) {
 
 /* ---------- ask to move ---------- */
 
-// Staff, admin and DSVR bookings are changed directly, and so are the viewer's own bookings.
+// Staff time is not asked for, and whoever may change a booking (own, admin, DSVR, group admin, band owner) does so directly.
 function canAskToMove(item) {
-  return canBook() && item.is_mine === false && item.purpose !== "staff" && !state.me.is_admin && !state.me.is_dsvr;
+  return canBook() && item.is_mine === false && item.purpose !== "staff" && !item.can_manage;
 }
 
 function movePlaces(item) {
