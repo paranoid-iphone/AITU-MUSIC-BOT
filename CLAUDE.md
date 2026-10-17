@@ -38,6 +38,10 @@ Two processes share one codebase and talk over HTTP + Redis:
   only in the Mini App: the bot's Репетиции/Коллективы menus and the `start=join_<code>` deep link just offer `web_app`
   buttons (`keyboards.mini_app_*`; a web_app button cannot carry `start_param`, so the target goes in `?screen=` / `?join=`,
   which `app.js` reads). Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
+  Registration requests, user moderation and admin/DSVR/group-admin roles also live only in the Mini App ("Админ" tab,
+  `app/api/routes/webapp_admin.py` → `/webapp/api/admin/*`, `?screen=admin&tab=requests|users|roles`); the bot's admin
+  menu has `web_app` buttons for them. The user-facing notifications for approve / reject / role changes are queued by
+  the services (`services/users.py`, `services/groups.py`), so every caller must publish with `outbox.commit_and_publish`.
 - **Backend → bot notifications:** services call `outbox.queue_notification` / `queue_schedule_changed` on the session
   and then `outbox.commit_and_publish(session)`; events are pushed to the Redis list `bot:outbox` only after the commit,
   and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst). In tests

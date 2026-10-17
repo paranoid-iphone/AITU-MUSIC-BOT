@@ -63,23 +63,6 @@ class BackendClient:
             json={"admin_telegram_id": admin_telegram_id, "target": target, "reason": reason},
         )
 
-    async def promote_admin(self, admin_telegram_id: int, target: str) -> dict[str, Any]:
-        return await self.request(
-            "POST",
-            "/users/promote-admin",
-            json={"admin_telegram_id": admin_telegram_id, "target": target},
-        )
-
-    async def demote_admin(self, admin_telegram_id: int, target: str) -> dict[str, Any]:
-        return await self.request(
-            "POST",
-            "/users/demote-admin",
-            json={"admin_telegram_id": admin_telegram_id, "target": target},
-        )
-
-    async def list_admins(self, admin_telegram_id: int) -> list[dict[str, Any]]:
-        return await self.request("GET", "/users/admins/list", params={"admin_telegram_id": admin_telegram_id})
-
     async def list_groups(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/groups")
 

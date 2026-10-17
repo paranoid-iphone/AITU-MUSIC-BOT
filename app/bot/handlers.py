@@ -15,7 +15,6 @@ from app.bot.api_client import BackendClient
 from app.bot.i18n import t
 from app.bot.keyboards import (
     admin_actions_keyboard,
-    admin_admins_keyboard,
     admin_band_detail_keyboard,
     admin_band_members_keyboard,
     admin_bands_keyboard,
@@ -28,13 +27,8 @@ from app.bot.keyboards import (
     admin_inline_keyboard,
     staff_inline_keyboard,
     admin_member_remove_confirm_keyboard,
-    admin_user_detail_keyboard,
-    admin_user_list_keyboard,
-    admin_keyboard,
     admin_schedule_keyboard,
     admin_settings_keyboard,
-    admin_users_manual_keyboard,
-    admin_users_keyboard,
     bands_menu_keyboard,
     concerts_menu_keyboard,
     event_bands_keyboard,
@@ -116,10 +110,11 @@ def has_admin_menu(user: dict) -> bool:
     return user.get("role") in {"admin", "dsvr"} or bool(user.get("is_group_admin"))
 
 
-def admin_menu_keyboard_for(user: dict):
+async def admin_menu_keyboard_for(user: dict):
+    base_url = await get_webapp_base_url()
     if user.get("role") == "admin":
-        return admin_inline_keyboard()
-    return staff_inline_keyboard(bool(user.get("is_group_admin")), user.get("role") == "dsvr")
+        return admin_inline_keyboard(base_url)
+    return staff_inline_keyboard(bool(user.get("is_group_admin")), user.get("role") == "dsvr", base_url)
 
 
 async def show_menu(message: Message, user: dict) -> None:
@@ -210,33 +205,6 @@ def format_application_card(application: dict) -> str:
         lines.append(f"- {name} | {user.get('study_group') or '-'} | {member['instrument_role']}")
     lines.append("")
     lines.append("Выберите действие:")
-    return "\n".join(lines)
-
-
-def format_user_card(user: dict) -> str:
-    name = f"{user.get('last_name') or '-'} {user.get('first_name') or '-'}".strip()
-    return (
-        f"Пользователь\n"
-        f"Имя: {name}\n"
-        f"Группа: {user.get('study_group') or '-'}\n"
-        f"Telegram: @{user.get('telegram_username') or '-'}\n"
-        f"Telegram ID: {user['telegram_id']}\n"
-        f"Роль: {user['role']}\n"
-        f"Статус: {user['status']}\n"
-        f"Причина: {user.get('moderation_reason') or '-'}\n"
-        f"Повторная подача: {user.get('registration_retry_after') or '-'}"
-    )
-
-
-def format_admins_list(users: list[dict]) -> str:
-    admins = [user for user in users if user.get("role") == "admin" and user.get("status") == "approved"]
-    if not admins:
-        return "Управление админами\n\nАдминов пока не найдено."
-    lines = ["Управление админами", "", "Текущие админы:"]
-    for index, user in enumerate(admins, start=1):
-        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
-        username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
-        lines.append(f"{index}. {name or username} | {username}")
     return "\n".join(lines)
 
 
@@ -734,6 +702,33 @@ LEGACY_MINI_APP_SCREENS = {
         "🎵 Мои коллективы",
         "Коллективы теперь в мини-приложении.",
     ),
+    "admin": (
+        (
+            "admin_section:users",
+            "admin_section:admins",
+            "admin_users:",
+            "admin_user:",
+            "admin_user_action:",
+            "admin:pending_users",
+            "admin:approve_user",
+            "admin:reject_user",
+            "admin:ban_user",
+            "admin:delete_user",
+            "admin:add_admin",
+            "admin:remove_admin",
+        ),
+        "⚙️ Админка",
+        "Заявки, пользователи и роли теперь в мини-приложении.",
+    ),
+}
+
+REMOVED_ADMIN_TEXTS = {
+    "Заявки пользователей",
+    "Одобрить пользователя",
+    "Отклонить пользователя",
+    "Забанить пользователя",
+    "Удалить пользователя",
+    "Добавить админа",
 }
 
 
@@ -749,6 +744,13 @@ async def legacy_flow_button(callback: CallbackQuery, state: FSMContext) -> None
             await send_mini_app_notice(callback.message, text, button, screen)
             break
     await answer_callback(callback)
+
+
+@router.message(F.text.in_(REMOVED_ADMIN_TEXTS))
+async def legacy_admin_text(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    prefixes, button, text = LEGACY_MINI_APP_SCREENS["admin"]
+    await send_mini_app_notice(message, text, button, "admin")
 
 
 @router.callback_query(F.data.startswith(("admin_band_edit:", "admin_booking_edit:", "admin_booking_purpose:")))
@@ -944,7 +946,7 @@ async def inline_admin(callback: CallbackQuery) -> None:
         await edit_screen(callback, "Нет доступа.")
         await answer_callback(callback)
         return
-    keyboard = admin_menu_keyboard_for(user)
+    keyboard = await admin_menu_keyboard_for(user)
     await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
@@ -1183,14 +1185,6 @@ async def inline_personal_event_delete_confirm(callback: CallbackQuery, state: F
     await answer_callback(callback, "Готово")
 
 
-@router.callback_query(F.data == "admin:pending_users")
-async def inline_pending_users(callback: CallbackQuery) -> None:
-    users = await api.list_users(callback.from_user.id, "pending")
-    text = "Заявки на регистрацию" if users else "Новых заявок нет."
-    await edit_screen(callback, text, admin_user_list_keyboard(users, "pending"))
-    await answer_callback(callback)
-
-
 @router.callback_query(F.data == "admin:action_history")
 async def inline_action_history(callback: CallbackQuery) -> None:
     rows = await api.action_history(callback.from_user.id)
@@ -1209,7 +1203,7 @@ async def inline_action_history(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "admin:back")
 async def inline_admin_back(callback: CallbackQuery) -> None:
     user = await api.get_user(callback.from_user.id)
-    keyboard = admin_menu_keyboard_for(user)
+    keyboard = await admin_menu_keyboard_for(user)
     await edit_screen(callback, "Админ-меню", keyboard)
     await answer_callback(callback)
 
@@ -1221,9 +1215,7 @@ async def inline_admin_section(callback: CallbackQuery) -> None:
     if viewer["role"] != "admin" and section not in {"users", "bands"}:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
-    if section == "users":
-        await edit_screen(callback, "Пользователи и заявки", admin_users_keyboard())
-    elif section == "actions":
+    if section == "actions":
         await edit_screen(callback, "История действий", admin_actions_keyboard())
     elif section == "schedule":
         await edit_screen(callback, "Репетиции и часы кабинета", admin_schedule_keyboard())
@@ -1239,59 +1231,11 @@ async def inline_admin_section(callback: CallbackQuery) -> None:
         events = await api.list_events()
         text = "Концерты" if events else "Концертов пока нет."
         await edit_screen(callback, text, admin_events_keyboard(events))
-    elif section == "admins":
-        users = await api.list_admins(callback.from_user.id)
-        await edit_screen(callback, format_admins_list(users), admin_admins_keyboard())
     elif section == "guide":
-        await edit_screen(callback, admin_guide_text(), admin_inline_keyboard())
+        await edit_screen(callback, admin_guide_text(), admin_inline_keyboard(await get_webapp_base_url()))
     else:
-        await edit_screen(callback, "Админ-меню", admin_inline_keyboard())
+        await edit_screen(callback, "Админ-меню", admin_inline_keyboard(await get_webapp_base_url()))
     await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin_users:manual")
-async def inline_admin_users_manual(callback: CallbackQuery) -> None:
-    await edit_screen(
-        callback,
-        "Ручное действие по @username или Telegram ID",
-        admin_users_manual_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_users:"))
-async def inline_admin_users_list(callback: CallbackQuery) -> None:
-    _, status, page_raw = callback.data.split(":")
-    page = int(page_raw)
-    users = await api.list_users(callback.from_user.id, status)
-    titles = {
-        "pending": "Заявки на регистрацию",
-        "approved": "Одобренные пользователи",
-        "rejected": "Отклоненные пользователи",
-        "banned": "Забаненные пользователи",
-    }
-    text = titles.get(status, "Пользователи")
-    if not users:
-        text += "\n\nСписок пуст."
-    await edit_screen(callback, text, admin_user_list_keyboard(users, status, page))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_user:"))
-async def inline_admin_user_detail(callback: CallbackQuery) -> None:
-    _, telegram_id, origin_status, page_raw = callback.data.split(":")
-    user = await api.get_user(int(telegram_id), callback.from_user.id)
-    await edit_screen(callback, format_user_card(user), admin_user_detail_keyboard(user, origin_status, int(page_raw)))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_user_action:"))
-async def inline_admin_user_action(callback: CallbackQuery) -> None:
-    _, action, telegram_id = callback.data.split(":")
-    reason = "Действие из админ-панели" if action in {"reject", "ban", "delete"} else None
-    user = await api.moderate_user(action, callback.from_user.id, telegram_id, reason)
-    await edit_screen(callback, format_user_card(user), admin_user_detail_keyboard(user, user["status"], 0))
-    await answer_callback(callback, "Готово")
 
 
 @router.callback_query(F.data.startswith("admin_bands:"))
@@ -1422,48 +1366,6 @@ async def inline_admin_event_applications(callback: CallbackQuery) -> None:
             name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or f"@{user.get('telegram_username') or '-'}"
             lines.append(f"- {name} | {user.get('study_group') or '-'} | {member['instrument_role']}")
     await edit_screen(callback, "\n".join(lines), admin_event_applications_keyboard(event_id))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:approve_user")
-async def inline_approve_user_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.approve_user)
-    await callback.message.answer("Введите @username или Telegram ID пользователя для одобрения:", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:reject_user")
-async def inline_reject_user_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.reject_user)
-    await callback.message.answer("Введите @username или Telegram ID и причину через пробел.", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:ban_user")
-async def inline_ban_user_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.ban_user)
-    await callback.message.answer("Введите @username или Telegram ID и причину через пробел:", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:delete_user")
-async def inline_delete_user_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.delete_user)
-    await callback.message.answer("Введите @username или Telegram ID и причину через пробел:", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:add_admin")
-async def inline_add_admin_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.add_admin)
-    await callback.message.answer("Введите @username или Telegram ID пользователя, которому нужно выдать админку:", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:remove_admin")
-async def inline_remove_admin_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.remove_admin)
-    await callback.message.answer("Введите @username или Telegram ID админа, у которого нужно снять права:", reply_markup=flow_cancel_keyboard())
     await answer_callback(callback)
 
 
@@ -2100,23 +2002,8 @@ async def admin_menu(message: Message) -> None:
     if not has_admin_menu(user):
         await message.answer("Нет доступа.")
         return
-    keyboard = admin_menu_keyboard_for(user)
+    keyboard = await admin_menu_keyboard_for(user)
     await message.answer("Админ-меню", reply_markup=keyboard)
-
-
-@router.message(F.text == "Заявки пользователей")
-async def pending_users(message: Message) -> None:
-    users = await api.list_users(message.from_user.id, "pending")
-    if not users:
-        await message.answer("Новых заявок нет.")
-        return
-    lines = ["Заявки на регистрацию:"]
-    for user in users:
-        lines.append(
-            f"{user['telegram_id']} | {user['last_name'] or '-'} {user['first_name'] or '-'} | "
-            f"{user['study_group'] or '-'} | @{user['telegram_username'] or '-'}"
-        )
-    await message.answer("\n".join(lines))
 
 
 @router.message(F.text.in_({"История броней", "История действий"}))
@@ -2130,121 +2017,6 @@ async def action_history(message: Message) -> None:
         created_at = item["created_at"].replace("T", " ")[:16]
         lines.append(f"{created_at} | {item['actor_name']} | {item['description'] or item['action']}")
     await message.answer("\n".join(lines))
-
-
-@router.message(F.text == "Одобрить пользователя")
-async def approve_user_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.approve_user)
-    await message.answer("Введите @username или Telegram ID пользователя для одобрения:", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(F.text == "Добавить админа")
-async def add_admin_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.add_admin)
-    await message.answer("Введите @username или Telegram ID пользователя, которому нужно выдать админку:", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(AdminFlow.approve_user)
-async def approve_user_save(message: Message, state: FSMContext) -> None:
-    target = message.text.strip()
-    if not target:
-        await message.answer("Введите @username или Telegram ID.")
-        return
-    user = await api.moderate_user("approve", message.from_user.id, target)
-    await state.clear()
-    await message.answer("Пользователь одобрен.", reply_markup=admin_users_keyboard())
-
-
-@router.message(AdminFlow.add_admin)
-async def add_admin_save(message: Message, state: FSMContext) -> None:
-    target = message.text.strip()
-    if not target:
-        await message.answer("Введите @username или Telegram ID.")
-        return
-    try:
-        user = await api.promote_admin(message.from_user.id, target)
-    except RuntimeError as exc:
-        await message.answer(f"Не получилось добавить админа: {exc}", reply_markup=admin_users_keyboard())
-        await state.clear()
-        return
-    await state.clear()
-    name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
-    username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
-    await message.answer(f"Админ добавлен: {name or username}", reply_markup=admin_admins_keyboard())
-
-
-@router.message(AdminFlow.remove_admin)
-async def remove_admin_save(message: Message, state: FSMContext) -> None:
-    target = message.text.strip()
-    if not target:
-        await message.answer("Введите @username или Telegram ID.")
-        return
-    try:
-        user = await api.demote_admin(message.from_user.id, target)
-    except RuntimeError as exc:
-        await message.answer(f"Не получилось снять админку: {exc}", reply_markup=admin_admins_keyboard())
-        await state.clear()
-        return
-    await state.clear()
-    name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
-    username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
-    admins = await api.list_admins(message.from_user.id)
-    await message.answer(f"Админка снята: {name or username}\n\n{format_admins_list(admins)}", reply_markup=admin_admins_keyboard())
-
-
-@router.message(F.text == "Отклонить пользователя")
-async def reject_user_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.reject_user)
-    await message.answer(
-        "Введите @username или Telegram ID и причину через пробел. Например: @username не студент AITU",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(AdminFlow.reject_user)
-async def reject_user_save(message: Message, state: FSMContext) -> None:
-    parts = message.text.strip().split(maxsplit=1)
-    if not parts:
-        await message.answer("Первым должен быть @username или Telegram ID.")
-        return
-    reason = parts[1] if len(parts) > 1 else None
-    await api.moderate_user("reject", message.from_user.id, parts[0], reason)
-    await state.clear()
-    await message.answer("Пользователь отклонен.", reply_markup=admin_users_keyboard())
-
-
-@router.message(F.text == "Забанить пользователя")
-async def ban_user_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.ban_user)
-    await message.answer("Введите @username или Telegram ID и причину через пробел:", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(AdminFlow.ban_user)
-async def ban_user_save(message: Message, state: FSMContext) -> None:
-    parts = message.text.strip().split(maxsplit=1)
-    if not parts:
-        await message.answer("Первым должен быть @username или Telegram ID.")
-        return
-    await api.moderate_user("ban", message.from_user.id, parts[0], parts[1] if len(parts) > 1 else None)
-    await state.clear()
-    await message.answer("Пользователь забанен.", reply_markup=admin_users_keyboard())
-
-
-@router.message(F.text == "Удалить пользователя")
-async def delete_user_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.delete_user)
-    await message.answer("Введите @username или Telegram ID и причину через пробел:", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(AdminFlow.delete_user)
-async def delete_user_save(message: Message, state: FSMContext) -> None:
-    parts = message.text.strip().split(maxsplit=1)
-    if not parts:
-        await message.answer("Первым должен быть @username или Telegram ID.")
-        return
-    await api.moderate_user("delete", message.from_user.id, parts[0], parts[1] if len(parts) > 1 else None)
-    await state.clear()
-    await message.answer("Пользователь удален из активной базы.", reply_markup=admin_users_keyboard())
 
 
 @router.message(F.text.in_({"Включить день", "Выключить день"}))
@@ -2519,7 +2291,7 @@ async def event_edit_save(message: Message, state: FSMContext) -> None:
         payload[field] = raw
     else:
         await state.clear()
-        await message.answer("Это поле нельзя редактировать.", reply_markup=admin_inline_keyboard())
+        await message.answer("Это поле нельзя редактировать.", reply_markup=admin_inline_keyboard(await get_webapp_base_url()))
         return
     updated = await api.update_event(message.from_user.id, event_id, payload)
     await state.clear()

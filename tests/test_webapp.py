@@ -570,3 +570,66 @@ def test_app_js_only_uses_defined_admin_strings():
     assert keys, "the admin screen must use webapp.admin.* strings"
     ru = load_locale("ru")
     assert sorted(key for key in keys if key not in ru) == []
+
+
+ADMIN_BASE = "https://club.example/"
+ADMIN_REQUESTS_URL = "https://club.example/webapp/schedule?screen=admin&tab=requests"
+ADMIN_ROLES_URL = "https://club.example/webapp/schedule?screen=admin&tab=roles"
+
+
+def test_mini_app_url_can_target_an_admin_tab():
+    from app.bot.keyboards import mini_app_url
+
+    assert mini_app_url("https://club.example", "admin", tab="requests") == ADMIN_REQUESTS_URL
+    assert mini_app_url("https://club.example", "mine") == "https://club.example/webapp/schedule?screen=mine"
+
+
+def test_admin_menus_open_the_mini_app():
+    from app.bot import keyboards
+
+    admin_urls = _web_app_urls(keyboards.admin_inline_keyboard(ADMIN_BASE))
+    assert ADMIN_REQUESTS_URL in admin_urls and ADMIN_ROLES_URL in admin_urls
+    group_admin_urls = _web_app_urls(keyboards.staff_inline_keyboard(True, False, ADMIN_BASE))
+    assert ADMIN_REQUESTS_URL in group_admin_urls and ADMIN_ROLES_URL not in group_admin_urls
+    assert [url for url in _web_app_urls(keyboards.staff_inline_keyboard(False, True, ADMIN_BASE)) if "screen=admin" in url] == []
+
+
+def test_admin_menus_drop_the_moderation_callbacks():
+    from app.bot import keyboards
+
+    for markup in (
+        keyboards.admin_inline_keyboard(ADMIN_BASE),
+        keyboards.admin_inline_keyboard(),
+        keyboards.staff_inline_keyboard(True, False, ADMIN_BASE),
+        keyboards.staff_inline_keyboard(True, False),
+    ):
+        callbacks = _callbacks(markup)
+        assert "admin_section:users" not in callbacks and "admin_section:admins" not in callbacks
+        assert "menu:back" in callbacks
+    assert "admin_section:schedule" in _callbacks(keyboards.admin_inline_keyboard())
+    assert "groups:list" in _callbacks(keyboards.admin_inline_keyboard())
+    assert _web_app_urls(keyboards.admin_inline_keyboard()) == []  # no public URL: no dead web_app buttons
+
+
+def test_stale_moderation_buttons_are_routed_to_the_legacy_handler():
+    from app.bot.handlers import LEGACY_MINI_APP_SCREENS
+
+    prefixes, _button, _text = LEGACY_MINI_APP_SCREENS["admin"]
+    for data in (
+        "admin_section:users",
+        "admin_section:admins",
+        "admin_users:pending:0",
+        "admin_users:manual",
+        "admin_user:5:pending:0",
+        "admin_user_action:ban:5",
+        "admin:pending_users",
+        "admin:approve_user",
+        "admin:reject_user",
+        "admin:ban_user",
+        "admin:delete_user",
+        "admin:add_admin",
+        "admin:remove_admin",
+    ):
+        assert data.startswith(tuple(prefixes)), data
+    for data in ("admin_section:schedule", "admin:back", "admin:action_history", "groups:list", "registration:approve:5"):
+        assert not data.startswith(tuple(prefixes)), data

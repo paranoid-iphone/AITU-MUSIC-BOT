@@ -24,12 +24,6 @@ class ProfileFlow(StatesGroup):
 class AdminFlow(StatesGroup):
     day_toggle = State()
     day_occupied_by = State()
-    approve_user = State()
-    reject_user = State()
-    ban_user = State()
-    delete_user = State()
-    add_admin = State()
-    remove_admin = State()
     weekly_booking_limit = State()
     daily_booking_limit = State()
     max_future_bookings = State()

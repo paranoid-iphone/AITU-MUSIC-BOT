@@ -51,7 +51,7 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def mini_app_url(base_url: str, screen: str = "schedule", join_code: str | None = None) -> str:
+def mini_app_url(base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None) -> str:
     """The Mini App entry. web_app buttons cannot carry a start_param, so the target screen goes in the query."""
     url = f"{base_url.rstrip('/')}/webapp/schedule"
     params = {}
@@ -59,11 +59,15 @@ def mini_app_url(base_url: str, screen: str = "schedule", join_code: str | None 
         params["screen"] = screen
     if join_code:
         params["join"] = join_code
+    if tab:
+        params["tab"] = tab
     return f"{url}?{urlencode(params)}" if params else url
 
 
-def mini_app_button(text: str, base_url: str, screen: str = "schedule", join_code: str | None = None) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code)))
+def mini_app_button(
+    text: str, base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None
+) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code, tab)))
 
 
 def mini_app_keyboard(text: str, base_url: str | None, screen: str = "schedule", join_code: str | None = None) -> InlineKeyboardMarkup:
@@ -176,31 +180,16 @@ def profile_personal_event_delete_confirm_keyboard(item_id: int) -> InlineKeyboa
     )
 
 
-def admin_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Заявки пользователей"), KeyboardButton(text="История действий")],
-            [KeyboardButton(text="Одобрить пользователя"), KeyboardButton(text="Отклонить пользователя")],
-            [KeyboardButton(text="Забанить пользователя"), KeyboardButton(text="Удалить пользователя")],
-            [KeyboardButton(text="Добавить админа")],
-            [KeyboardButton(text="Включить день"), KeyboardButton(text="Выключить день")],
-            [KeyboardButton(text="Занять время"), KeyboardButton(text="Удалить бронь")],
-            [KeyboardButton(text="Часы кабинета")],
-            [KeyboardButton(text="Лимит в неделю"), KeyboardButton(text="Лимит в день")],
-            [KeyboardButton(text="Создать концерт")],
-            [KeyboardButton(text="Назад")],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def admin_inline_keyboard() -> InlineKeyboardMarkup:
+def admin_inline_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
+    """Main admin menu. Requests and admins live in the Mini App, so those buttons exist only with a public URL."""
+    first_row = [InlineKeyboardButton(text="История", callback_data="admin_section:actions")]
+    last_but_one = [InlineKeyboardButton(text="Группы", callback_data="groups:list")]
+    if webapp_base_url:
+        first_row.insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
+        last_but_one.insert(0, mini_app_button("Админы", webapp_base_url, "admin", tab="roles"))
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Заявки", callback_data="admin_section:users"),
-                InlineKeyboardButton(text="История", callback_data="admin_section:actions"),
-            ],
+            first_row,
             [
                 InlineKeyboardButton(text="Репетиции", callback_data="admin_section:schedule"),
                 InlineKeyboardButton(text="Настройки", callback_data="admin_section:settings"),
@@ -209,26 +198,21 @@ def admin_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
                 InlineKeyboardButton(text="Концерты", callback_data="admin_section:events"),
             ],
-            [
-                InlineKeyboardButton(text="Админы", callback_data="admin_section:admins"),
-                InlineKeyboardButton(text="Группы", callback_data="groups:list"),
-            ],
+            last_but_one,
             [InlineKeyboardButton(text="Инструкция", callback_data="admin_section:guide")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )
 
 
-def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool) -> InlineKeyboardMarkup:
+def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool, webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
     """Admin menu for people who are not main admins: group admins and/or DSVR."""
     rows = []
     if is_group_admin:
-        rows.append(
-            [
-                InlineKeyboardButton(text="Заявки", callback_data="admin_section:users"),
-                InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
-            ]
-        )
+        row = [InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands")]
+        if webapp_base_url:
+            row.insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
+        rows.append(row)
     if is_dsvr:
         rows.append([InlineKeyboardButton(text="Занять время (приоритет ДСВР)", callback_data="dsvr:start")])
     rows.append([InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")])
@@ -250,52 +234,6 @@ def group_detail_keyboard(group_id: int, admins: list[dict]) -> InlineKeyboardMa
     rows.append([InlineKeyboardButton(text="Добавить админа группы", callback_data=f"groups:add:{group_id}")])
     rows.append([InlineKeyboardButton(text="К группам", callback_data="groups:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_users_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Заявки", callback_data="admin_users:pending:0"),
-                InlineKeyboardButton(text="Одобренные", callback_data="admin_users:approved:0"),
-            ],
-            [
-                InlineKeyboardButton(text="Отклоненные", callback_data="admin_users:rejected:0"),
-                InlineKeyboardButton(text="Забаненные", callback_data="admin_users:banned:0"),
-            ],
-            [InlineKeyboardButton(text="Ручное действие", callback_data="admin_users:manual")],
-            [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
-        ]
-    )
-
-
-def admin_users_manual_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text="Одобрить", callback_data="admin:approve_user"),
-            InlineKeyboardButton(text="Отклонить", callback_data="admin:reject_user"),
-        ],
-        [
-            InlineKeyboardButton(text="Забанить", callback_data="admin:ban_user"),
-            InlineKeyboardButton(text="Удалить", callback_data="admin:delete_user"),
-        ],
-    ]
-    rows.append([InlineKeyboardButton(text="Назад", callback_data="admin_section:users")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_admins_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Добавить админа", callback_data="admin:add_admin")],
-            [InlineKeyboardButton(text="Снять админку", callback_data="admin:remove_admin")],
-            [
-                InlineKeyboardButton(text="Назначить ДСВР", callback_data="dsvr:grant"),
-                InlineKeyboardButton(text="Снять ДСВР", callback_data="dsvr:revoke"),
-            ],
-            [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
-        ]
-    )
 
 
 def admin_bands_keyboard(bands: list[dict], page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
@@ -360,40 +298,6 @@ def admin_member_remove_confirm_keyboard(band_id: int, member_id: int) -> Inline
             [InlineKeyboardButton(text="Назад", callback_data=f"admin_band_members:{band_id}:remove:0")],
         ]
     )
-
-
-def admin_user_list_keyboard(users: list[dict], status: str, page: int = 0, page_size: int = 6) -> InlineKeyboardMarkup:
-    pages = max(1, (len(users) + page_size - 1) // page_size)
-    page = max(0, min(page, pages - 1))
-    start = page * page_size
-    rows = []
-    for user in users[start : start + page_size]:
-        name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or user.get("telegram_full_name") or "Без имени"
-        username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
-        rows.append([InlineKeyboardButton(text=f"{name} | {username}", callback_data=f"admin_user:{user['telegram_id']}:{status}:{page}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"admin_users:{status}:{page - 1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"admin_users:{status}:{page + 1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="К пользователям", callback_data="admin_section:users")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_user_detail_keyboard(user: dict, origin_status: str = "pending", page: int = 0) -> InlineKeyboardMarkup:
-    telegram_id = user["telegram_id"]
-    rows = []
-    if user["status"] in {"pending", "rejected", "banned"}:
-        rows.append([InlineKeyboardButton(text="Одобрить", callback_data=f"admin_user_action:approve:{telegram_id}")])
-    if user["status"] in {"pending", "approved"}:
-        rows.append([InlineKeyboardButton(text="Отклонить", callback_data=f"admin_user_action:reject:{telegram_id}")])
-    if user["status"] != "banned":
-        rows.append([InlineKeyboardButton(text="Забанить", callback_data=f"admin_user_action:ban:{telegram_id}")])
-    rows.append([InlineKeyboardButton(text="Удалить", callback_data=f"admin_user_action:delete:{telegram_id}")])
-    rows.append([InlineKeyboardButton(text="Назад к списку", callback_data=f"admin_users:{origin_status}:{page}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_actions_keyboard() -> InlineKeyboardMarkup:

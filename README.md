@@ -43,7 +43,9 @@ If the server was down on Sunday evening, the missed allocation runs automatical
 | admin | everything, including groups, group admins, DSVR role, limits, working hours, allocation preview/run |
 
 New users pick their group (music / dance / cheer) during registration; the request goes to that group's admins and
-to the main admins. Main admins assign group admins in *Админ → Группы* and DSVR in *Админ → Админы*.
+to the main admins. Registration requests, user moderation (approve / reject / ban / delete) and the admin, DSVR and
+group-admin roles are managed in the Mini App's **Админ** tab (*Заявки / Пользователи / Роли*); the bot's admin menu only
+opens it. Group admins see only their own group and have no *Роли* tab.
 
 ## Schedule history and notifications
 
