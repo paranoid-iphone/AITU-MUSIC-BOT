@@ -522,18 +522,19 @@ async def create_priority_booking(
     end_time: time,
     title: str,
 ) -> dict:
-    """DSVR takes the room: overlapping bookings are cancelled (and their people notified), then the slot is theirs."""
+    """DSVR or an admin takes the room: overlapping bookings are cancelled (and their people notified), then the slot is theirs."""
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
     _require_priority_rights(user)
+    by_admin = not is_dsvr(user)
     await _lock_bookings(session)
     await _validate_priority_slot(session, booking_date, start_time, end_time)
     affected = await _overlapping_confirmed(session, booking_date, start_time, end_time)
     cancelled_rows = [_preempted_row(item) for item in affected]
-    reason = f"Вытеснено ДСВР: {title}"[:255]
+    reason = f"Вытеснено {'админом' if by_admin else 'ДСВР'}: {title}"[:255]
     for item in affected:
         before = snapshot(item)
         item.status = BookingStatus.CANCELLED.value
@@ -548,19 +549,26 @@ async def create_priority_booking(
         end_time=end_time,
         purpose="staff",
         song_title=title,
-        source="dsvr",
+        source="staff" if by_admin else "dsvr",
     )
     session.add(booking)
     await session.flush()
+    window = f"{booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
     await log_action(
         session,
         user.id,
-        "booking.priority_create",
+        "booking.staff_create" if by_admin else "booking.priority_create",
         "booking",
         booking.id,
-        f"ДСВР занял кабинет: {booking_date.isoformat()} {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}, {title}; отменено броней: {len(affected)}",
+        f"{'Админ' if by_admin else 'ДСВР'} занял кабинет: {window}, {title}; отменено броней: {len(affected)}",
     )
-    await record_change(session, booking, "created", user, reason=f"Приоритет ДСВР, отменено броней: {len(affected)}")
+    await record_change(
+        session,
+        booking,
+        "created",
+        user,
+        reason=f"{'Админ занял время' if by_admin else 'Приоритет ДСВР'}, отменено броней: {len(affected)}",
+    )
     # A preempted booking can be longer than the DSVR slot; whatever is left of it is free again.
     await _offer_freed(session, [(item.booking_date, item.start_time, item.end_time) for item in affected])
     await commit_and_publish(session)

@@ -729,3 +729,31 @@ async def test_takeover_rejects_bad_title_and_time(client, session, make_user, f
     assert (await client.post("/webapp/api/priority", json=past, headers=headers)).status_code == 409
     odd = {**PRIORITY, "end_time": "16:10", "title": "Кривое"}
     assert (await client.post("/webapp/api/priority", json=odd, headers=headers)).status_code == 409
+
+
+# ---------- step 11.3: an admin occupies time through the same mode ----------
+
+
+async def test_admin_takeover_is_recorded_as_staff_and_dsvr_as_dsvr(client, session, make_user, freeze_now):
+    from sqlalchemy import select
+
+    from app.db.models import AuditLog, Booking, ScheduleChange
+
+    freeze_now(NOW)
+    admin = await make_user(role="admin")
+    dsvr = await make_user(role="dsvr", group_slug=None)
+    first = await client.post("/webapp/api/priority", json={**PRIORITY, "title": "Ремонт"}, headers=tg(admin.telegram_id))
+    assert first.status_code == 200, first.text
+    later = {"booking_date": "2026-10-14", "start_time": "17:00", "end_time": "18:00", "title": "Ректор"}
+    second = await client.post("/webapp/api/priority", json=later, headers=tg(dsvr.telegram_id))
+    assert second.status_code == 200, second.text
+
+    sources = {row.id: row.source for row in (await session.execute(select(Booking))).scalars()}
+    assert sources[first.json()["booking"]["id"]] == "staff"
+    assert sources[second.json()["booking"]["id"]] == "dsvr"
+
+    actions = {row.action for row in (await session.execute(select(AuditLog))).scalars()}
+    assert {"booking.staff_create", "booking.priority_create"} <= actions
+    reasons = [row.reason for row in (await session.execute(select(ScheduleChange))).scalars()]
+    assert any(reason and reason.startswith("Админ занял время") for reason in reasons)
+    assert any(reason and reason.startswith("Приоритет ДСВР") for reason in reasons)
