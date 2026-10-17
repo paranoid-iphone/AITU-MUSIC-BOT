@@ -69,7 +69,7 @@ async def schedule_history_all(callback: CallbackQuery) -> None:
 async def band_history(callback: CallbackQuery) -> None:
     _, band_id_raw, origin = callback.data.split(":")
     band_id = int(band_id_raw)
-    back = f"admin_band:{band_id}:0" if origin == "a" else f"user_band:{band_id}:0"
+    back = f"admin_band:{band_id}:0" if origin == "a" else "menu:back"
     try:
         rows = await api.schedule_history(callback.from_user.id, band_id=band_id, limit=15)
     except RuntimeError:

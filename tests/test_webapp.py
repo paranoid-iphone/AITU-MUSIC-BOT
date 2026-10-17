@@ -346,13 +346,74 @@ async def test_invalid_booking_payloads_are_rejected(client, session, make_user,
     assert (await client.post("/webapp/api/bookings", json=body, headers=tg(leader.telegram_id))).status_code in (409, 422)
 
 
-def test_rehearsals_menu_leads_with_the_mini_app_booking_button():
+def _web_app_urls(markup) -> list[str]:
+    return [button.web_app.url for row in markup.inline_keyboard for button in row if button.web_app]
+
+
+def _callbacks(markup) -> set[str]:
+    return {button.callback_data for row in markup.inline_keyboard for button in row if button.callback_data}
+
+
+def test_mini_app_url_puts_the_target_screen_and_join_code_in_the_query():
+    from app.bot.keyboards import mini_app_url
+
+    assert mini_app_url("https://club.example/") == "https://club.example/webapp/schedule"
+    assert mini_app_url("https://club.example", "mine") == "https://club.example/webapp/schedule?screen=mine"
+    assert mini_app_url("https://club.example", "bands", "ab12") == "https://club.example/webapp/schedule?screen=bands&join=ab12"
+
+
+def test_rehearsals_and_bands_menus_open_the_mini_app():
     from app.bot import keyboards
 
-    rows = keyboards.rehearsals_menu_keyboard("https://club.example/").inline_keyboard
-    assert rows[0][0].web_app.url == "https://club.example/webapp/schedule"
-    assert any(button.callback_data == "menu:booking" for row in rows for button in row)  # the old flow stays
-    assert all(button.web_app is None for row in keyboards.rehearsals_menu_keyboard().inline_keyboard for button in row)
+    assert _web_app_urls(keyboards.rehearsals_menu_keyboard("https://club.example/")) == [
+        "https://club.example/webapp/schedule",
+        "https://club.example/webapp/schedule?screen=mine",
+    ]
+    assert _web_app_urls(keyboards.bands_menu_keyboard("https://club.example/")) == [
+        "https://club.example/webapp/schedule?screen=bands"
+    ]
+
+
+def test_menus_without_a_public_url_only_offer_the_way_back():
+    from app.bot import keyboards
+
+    for markup in (keyboards.rehearsals_menu_keyboard(), keyboards.bands_menu_keyboard()):
+        assert not _web_app_urls(markup)
+        assert _callbacks(markup) == {"menu:back"}
+
+
+def test_removed_bot_flows_leave_no_buttons_behind():
+    from app.bot import keyboards
+
+    removed = {"menu:booking", "user_bookings:0", "menu:bands", "menu:create_band", "menu:join_band"}
+    for markup in (
+        keyboards.rehearsals_menu_keyboard("https://club.example"),
+        keyboards.bands_menu_keyboard("https://club.example"),
+        keyboards.main_menu_inline(True),
+        keyboards.admin_schedule_keyboard(),
+        keyboards.admin_band_detail_keyboard(1),
+        keyboards.admin_booking_detail_keyboard(1),
+    ):
+        assert not removed & _callbacks(markup)
+        assert not any(c.startswith(("admin_band_edit:", "admin_booking_edit:")) for c in _callbacks(markup))
+
+
+def test_old_buttons_in_chat_history_are_routed_to_the_mini_app():
+    from app.bot import handlers
+
+    prefixes = handlers._legacy_prefixes()
+    for stale in ("menu:booking", "booking:slot:3", "user_bookings:0", "user_booking_delete_confirm:5", "menu:bands",
+                  "menu:create_band", "menu:join_band", "user_band:2:0", "user_band_member:1:2:role"):
+        assert stale.startswith(prefixes), stale
+    for live in ("menu:back", "menu:events", "admin_band:1:0", "admin_bands:0", "menu_section:bands", "plan:start"):
+        assert not live.startswith(prefixes), live
+
+
+def test_the_removed_flow_states_are_gone():
+    from app.bot import states
+
+    assert not hasattr(states, "BookingFlow") and not hasattr(states, "BandFlow")
+    assert not hasattr(states.AdminFlow, "band_edit_value") and not hasattr(states.AdminFlow, "booking_edit_value")
 
 
 # ---------- step 7a: my bookings from the Mini App ----------

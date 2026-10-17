@@ -981,10 +981,15 @@ async function main() {
       else location.hash = "#/schedule";
     });
   }
-  // a link like t.me/<bot>/<app>?startapp=join_<code> opens the join form with the code filled in
+  // The bot's web_app buttons cannot carry a start_param, so they pass ?screen=<route> and ?join=<code> instead.
+  // A direct link like t.me/<bot>/<app>?startapp=join_<code> arrives as start_param.
+  const query = new URLSearchParams(location.search);
   const startParam = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
-  const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || "") : null;
+  const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || (query.has("join") ? `join_${query.get("join")}` : "")) : null;
   if (joinMatch) location.hash = "#/bands";
+  else if (ROUTES.includes(query.get("screen")) && !ROUTES.includes(location.hash.replace(/^#\/?/, "").split("/")[0])) {
+    location.hash = `#/${query.get("screen")}`; // Telegram fills the hash with its own launch data, so only a route counts
+  }
   window.addEventListener("hashchange", () => { closeSheet(); render(); });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && currentRoute() === "schedule" && !state.closeSheet) render();

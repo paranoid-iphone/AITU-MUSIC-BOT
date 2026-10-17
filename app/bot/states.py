@@ -9,14 +9,6 @@ class Onboarding(StatesGroup):
     language = State()
 
 
-class BandFlow(StatesGroup):
-    create_name = State()
-    create_role = State()
-    join_code = State()
-    join_role = State()
-    edit_value = State()
-
-
 class ProfileFlow(StatesGroup):
     first_name = State()
     last_name = State()
@@ -29,16 +21,6 @@ class ProfileFlow(StatesGroup):
     personal_event_edit_value = State()
 
 
-class BookingFlow(StatesGroup):
-    band_id = State()
-    booking_date = State()
-    slot = State()
-    end_time = State()
-    purpose = State()
-    song_title = State()
-    edit_value = State()
-
-
 class AdminFlow(StatesGroup):
     day_toggle = State()
     day_occupied_by = State()
@@ -48,8 +30,6 @@ class AdminFlow(StatesGroup):
     delete_user = State()
     add_admin = State()
     remove_admin = State()
-    band_edit_value = State()
-    booking_edit_value = State()
     weekly_booking_limit = State()
     daily_booking_limit = State()
     max_future_bookings = State()
