@@ -9,8 +9,8 @@ Google Sheets backup.
 By default (`WEEKLY_PLANNING_ENABLED=false`) the room uses a **sliding 7-day window**: at any moment a band can book any
 free 30-minute-step slot that starts within the next 7 days, first come first served. Everyone sees who booked each slot
 and who is responsible for that band, so people can agree among themselves. Admins can cap how much one band takes:
-*Админ → Настройки бронирования* has the weekly and daily limits and **«Макс. броней на номер»** (how many not-yet-started
-bookings a band may hold at once; 0 = no cap). Users who switched notifications off in their profile get no bot messages
+the Mini App's *Админ → Настройки* tab has the weekly and daily limits and **«Макс. броней на номер»** (how many
+not-yet-started bookings a band may hold at once; 0 = no cap). Users who switched notifications off in their profile get no bot messages
 about schedule changes; the change itself is still recorded in the history.
 
 ## Optional: weekly planning
@@ -43,15 +43,16 @@ If the server was down on Sunday evening, the missed allocation runs automatical
 | admin | everything, including groups, group admins, DSVR role, limits, working hours, allocation preview/run |
 
 New users pick their group (music / dance / cheer) during registration; the request goes to that group's admins and
-to the main admins. Registration requests, user moderation (approve / reject / ban / delete) and the admin, DSVR and
-group-admin roles are managed in the Mini App's **Админ** tab (*Заявки / Пользователи / Роли*); the bot's admin menu only
-opens it. Group admins see only their own group and have no *Роли* tab.
+to the main admins. Registration requests, user moderation (approve / reject / ban / delete), the admin, DSVR and
+group-admin roles, settings and the schedule history are managed in the Mini App's **Админ** tab
+(*Заявки / Пользователи / Роли / Настройки / История*); the bot's admin menu only opens it. A user whose DSVR role is
+granted or removed gets a bot message. Group admins see only their own group and have no *Роли* tab.
 
 ## Schedule history and notifications
 
 Every create / edit / cancel / DSVR takeover / automatic assignment is stored with who did it and before/after values
-(*Админ → История → История расписания*, and *История изменений* on a band card). Deleting a booking cancels it, so
-it stays in the history. The backend pushes notifications to a Redis list (`bot:outbox`); the bot delivers them and
+(the Mini App's *Админ → История* tab, filterable by group; the bot's *Админ → История* keeps the action journal).
+Deleting a booking cancels it, so it stays in the history. The backend pushes notifications to a Redis list (`bot:outbox`); the bot delivers them and
 refreshes the schedule menus.
 
 ## Google Sheets backup
@@ -100,7 +101,9 @@ Users listed in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and canno
 | `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE` | enable the Sheets backup |
 | `REGISTRATION_RETRY_HOURS` | cooldown before a rejected registration may be resubmitted |
 
-Booking limits, room hours and closed weekdays are changed by admins in the bot.
+Booking limits, room hours and closed weekdays are changed by the main admin in the Mini App (*Админ → Настройки*).
+Taking the room with priority (DSVR) or for staff events, and changing or cancelling any booking, happen on the Mini App
+schedule grid; the bot's admin menu only opens those screens.
 
 ## Project layout
 

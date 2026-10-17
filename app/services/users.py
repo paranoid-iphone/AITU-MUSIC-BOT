@@ -330,6 +330,7 @@ async def set_dsvr_role(session: AsyncSession, admin_telegram_id: int, target_id
         target.telegram_id,
         f"{'Назначил' if enabled else 'Снял'} ДСВР: @{target.telegram_username or target.telegram_id}",
     )
+    _notify(session, target, "Вам выдана роль ДСВР в AITU Music Club Bot." if enabled else "С вас сняли роль ДСВР в AITU Music Club Bot.")
     await session.commit()
     await session.refresh(target)
     return target

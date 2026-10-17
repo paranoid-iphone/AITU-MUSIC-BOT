@@ -181,28 +181,24 @@ def profile_personal_event_delete_confirm_keyboard(item_id: int) -> InlineKeyboa
 
 
 def admin_inline_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
-    """Main admin menu. Requests and admins live in the Mini App, so those buttons exist only with a public URL."""
-    first_row = [InlineKeyboardButton(text="История", callback_data="admin_section:actions")]
-    last_but_one = [InlineKeyboardButton(text="Группы", callback_data="groups:list")]
+    """Main admin menu. Requests, settings, roles and groups live in the Mini App, so those buttons exist only with a public URL."""
+    rows = [[InlineKeyboardButton(text="История", callback_data="admin_section:actions")]]
     if webapp_base_url:
-        first_row.insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
-        last_but_one.insert(0, mini_app_button("Админы", webapp_base_url, "admin", tab="roles"))
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            first_row,
-            [
-                InlineKeyboardButton(text="Репетиции", callback_data="admin_section:schedule"),
-                InlineKeyboardButton(text="Настройки", callback_data="admin_section:settings"),
-            ],
-            [
-                InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
-                InlineKeyboardButton(text="Концерты", callback_data="admin_section:events"),
-            ],
-            last_but_one,
-            [InlineKeyboardButton(text="Инструкция", callback_data="admin_section:guide")],
-            [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
+        rows[0].insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
+    rows.append([InlineKeyboardButton(text="Репетиции", callback_data="admin_section:schedule")])
+    if webapp_base_url:
+        rows[-1].append(mini_app_button("Настройки", webapp_base_url, "admin", tab="settings"))
+    rows.append(
+        [
+            InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"),
+            InlineKeyboardButton(text="Концерты", callback_data="admin_section:events"),
         ]
     )
+    if webapp_base_url:
+        rows.append([mini_app_button("Админы и группы", webapp_base_url, "admin", tab="roles")])
+    rows.append([InlineKeyboardButton(text="Инструкция", callback_data="admin_section:guide")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool, webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
@@ -213,26 +209,11 @@ def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool, webapp_base_url: 
         if webapp_base_url:
             row.insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
         rows.append(row)
-    if is_dsvr:
-        rows.append([InlineKeyboardButton(text="Занять время (приоритет ДСВР)", callback_data="dsvr:start")])
-    rows.append([InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")])
+    if webapp_base_url:
+        if is_dsvr:
+            rows.append([mini_app_button("Занять время (приоритет ДСВР)", webapp_base_url, "schedule")])
+        rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def groups_keyboard(groups: list[dict]) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=group["title"], callback_data=f"groups:open:{group['id']}")] for group in groups]
-    rows.append([InlineKeyboardButton(text="Назад", callback_data="admin:back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def group_detail_keyboard(group_id: int, admins: list[dict]) -> InlineKeyboardMarkup:
-    rows = []
-    for admin in admins:
-        name = f"{admin.get('last_name') or ''} {admin.get('first_name') or ''}".strip() or admin.get("telegram_username") or str(admin["telegram_id"])
-        rows.append([InlineKeyboardButton(text=f"Снять: {name}"[:64], callback_data=f"groups:remove:{group_id}:{admin['telegram_id']}")])
-    rows.append([InlineKeyboardButton(text="Добавить админа группы", callback_data=f"groups:add:{group_id}")])
-    rows.append([InlineKeyboardButton(text="К группам", callback_data="groups:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -263,7 +244,6 @@ def admin_band_detail_keyboard(band_id: int, page: int = 0) -> InlineKeyboardMar
                 InlineKeyboardButton(text="Участники", callback_data=f"admin_band_members:{band_id}:remove:0"),
             ],
             [InlineKeyboardButton(text="Ответственный", callback_data=f"admin_band_members:{band_id}:responsible:0")],
-            [InlineKeyboardButton(text="История изменений", callback_data=f"band_history:{band_id}:a")],
             [InlineKeyboardButton(text="Назад к коллективам", callback_data=f"admin_bands:{page}")],
         ]
     )
@@ -300,95 +280,25 @@ def admin_member_remove_confirm_keyboard(band_id: int, member_id: int) -> Inline
     )
 
 
-def admin_actions_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="История расписания", callback_data="sched_history:all")],
-            [InlineKeyboardButton(text="Последние действия", callback_data="admin:action_history")],
-            [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
-        ]
-    )
+def admin_actions_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+    if webapp_base_url:
+        rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
+    rows.append([InlineKeyboardButton(text="Последние действия", callback_data="admin:action_history")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="admin:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_schedule_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text="Включить день", callback_data="admin:enable_day"),
-            InlineKeyboardButton(text="Выключить день", callback_data="admin:disable_day"),
-        ],
-        [
-            InlineKeyboardButton(text="Занять время", callback_data="admin:staff_booking"),
-            InlineKeyboardButton(text="Отменить бронь", callback_data="admin_bookings_manage:0"),
-        ],
-        [InlineKeyboardButton(text="Занять с вытеснением (ДСВР)", callback_data="dsvr:start")],
-    ]
+def admin_schedule_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
+    """Rehearsals section: taking the room, cancelling and room hours are on the Mini App grid and settings tab."""
+    rows = []
+    if webapp_base_url:
+        rows.append([mini_app_button("Расписание: занять, изменить, отменить", webapp_base_url, "schedule")])
+        rows.append([mini_app_button("Дни и часы кабинета", webapp_base_url, "admin", tab="settings")])
     if settings.weekly_planning_enabled:
         rows.append([InlineKeyboardButton(text="Планирование недели", callback_data="plan:admin")])
-    rows += [
-        [InlineKeyboardButton(text="Часы кабинета", callback_data="admin:booking_window")],
-        [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
-    ]
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="admin:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_booking_delete_list_keyboard(
-    bookings: list[dict],
-    page: int = 0,
-    page_size: int = 6,
-    action_prefix: str = "admin_booking_delete",
-    page_prefix: str = "admin_bookings_delete",
-) -> InlineKeyboardMarkup:
-    pages = max(1, (len(bookings) + page_size - 1) // page_size)
-    page = max(0, min(page, pages - 1))
-    start = page * page_size
-    rows = []
-    for booking in bookings[start : start + page_size]:
-        title = booking.get("song_title") or booking["band_name"]
-        text = f"{booking['booking_date']} {booking['start_time'][:5]}-{booking['end_time'][:5]} | {title}"
-        rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"{action_prefix}:{booking['id']}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"{page_prefix}:{page - 1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton(text="Дальше", callback_data=f"{page_prefix}:{page + 1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="К расписанию", callback_data="admin_section:schedule")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_booking_delete_confirm_keyboard(booking_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Удалить", callback_data=f"admin_booking_delete_confirm:{booking_id}"),
-                InlineKeyboardButton(text="Назад", callback_data="admin_bookings_delete:0"),
-            ],
-        ]
-    )
-
-
-def admin_booking_detail_keyboard(booking_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Удалить", callback_data=f"admin_booking_delete:{booking_id}")],
-            [InlineKeyboardButton(text="Назад к репетициям", callback_data="admin_bookings_manage:0")],
-        ]
-    )
-
-
-def admin_settings_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Лимит в неделю", callback_data="admin:weekly_booking_limit"),
-                InlineKeyboardButton(text="Лимит в день", callback_data="admin:daily_booking_limit"),
-            ],
-            [InlineKeyboardButton(text="Макс. броней на номер", callback_data="admin:max_future_bookings")],
-            [InlineKeyboardButton(text="Личные репетиции вкл/выкл", callback_data="admin:personal_bookings_toggle")],
-            [InlineKeyboardButton(text="Назад", callback_data="admin:back")],
-        ]
-    )
 
 
 def admin_events_keyboard(events: list[dict]) -> InlineKeyboardMarkup:

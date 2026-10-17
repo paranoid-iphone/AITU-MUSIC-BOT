@@ -32,7 +32,7 @@ Two processes share one codebase and talk over HTTP + Redis:
   `app/locales/*.json`. The bot sets the chat menu button to the Mini App on startup (`bot/menu_button.py`). A middleware hides everything but
   `/webapp/*` and `/health` from requests carrying `X-Forwarded-Host` (i.e. coming through the ngrok tunnel).
 - **Bot** (`app/bot/`): never touches the DB. It calls the backend through `BackendClient` (`api_client.py`), which turns
-  HTTP errors into `RuntimeError(detail)`. Feature routers (`handlers_groups/history/dsvr/planning`) are included
+  HTTP errors into `RuntimeError(detail)`. Feature routers (`handlers_planning/repeat/move/waitlist`) are included
   **before** the main `handlers.router` because the latter has catch-all fallback handlers. FSM state is in Redis.
   User-facing strings go through `i18n.py` / `app/locales/{ru,en,kz}.json`. Booking rehearsals and managing bands happen
   only in the Mini App: the bot's Репетиции/Коллективы menus and the `start=join_<code>` deep link just offer `web_app`
@@ -40,8 +40,14 @@ Two processes share one codebase and talk over HTTP + Redis:
   which `app.js` reads). Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
   Registration requests, user moderation and admin/DSVR/group-admin roles also live only in the Mini App ("Админ" tab,
   `app/api/routes/webapp_admin.py` → `/webapp/api/admin/*`, `?screen=admin&tab=requests|users|roles`); the bot's admin
-  menu has `web_app` buttons for them. The user-facing notifications for approve / reject / role changes are queued by
-  the services (`services/users.py`, `services/groups.py`), so every caller must publish with `outbox.commit_and_publish`.
+  menu has `web_app` buttons for them. The user-facing notifications for approve / reject / role changes (admin, DSVR,
+  group admin) are queued by the services (`services/users.py`, `services/groups.py`), so every caller must publish with
+  `outbox.commit_and_publish`. Taking the room (DSVR priority, staff booking), editing or cancelling any booking, the days /
+  room hours / limits / personal-rehearsal settings and the schedule history are Mini App only too (grid modes and the
+  "Настройки" / "История" admin tabs); the bot keeps just the concerts, the admin band list, the action journal and
+  weekly-planning admin screens. Stale buttons and reply-keyboard texts of the removed admin flows are listed in
+  `LEGACY_MINI_APP_SCREENS["admin"]` / `REMOVED_ADMIN_TEXTS`: add new removals there, and keep prefixes narrow (`admin:` as a
+  whole would also swallow `admin:back`).
 - **Backend → bot notifications:** services call `outbox.queue_notification` / `queue_schedule_changed` on the session
   and then `outbox.commit_and_publish(session)`; events are pushed to the Redis list `bot:outbox` only after the commit,
   and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst). In tests

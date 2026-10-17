@@ -52,7 +52,9 @@ async def demote_admin(payload: AdminRoleUpdate, session: AsyncSession = Depends
 
 @router.post("/dsvr", response_model=UserRead)
 async def set_dsvr(payload: DsvrRoleUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.set_dsvr_role(session, payload.admin_telegram_id, payload.target, payload.enabled)
+    user = await users.set_dsvr_role(session, payload.admin_telegram_id, payload.target, payload.enabled)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.post("/reject", response_model=UserRead)

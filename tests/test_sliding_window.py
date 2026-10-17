@@ -49,10 +49,6 @@ def test_planning_buttons_shown_when_planning_is_on(monkeypatch):
     assert "plan:admin" in _callbacks(keyboards.admin_schedule_keyboard())
 
 
-def test_admin_settings_has_max_bookings_button():
-    assert "admin:max_future_bookings" in _callbacks(keyboards.admin_settings_keyboard())
-
-
 # ---------- max future bookings per band ----------
 
 

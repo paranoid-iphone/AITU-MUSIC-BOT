@@ -22,21 +22,11 @@ class ProfileFlow(StatesGroup):
 
 
 class AdminFlow(StatesGroup):
-    day_toggle = State()
-    day_occupied_by = State()
-    weekly_booking_limit = State()
-    daily_booking_limit = State()
-    max_future_bookings = State()
-    booking_window = State()
-    staff_booking_date = State()
-    staff_booking_time = State()
-    staff_booking_title = State()
     event_title = State()
     event_date = State()
     event_location = State()
     event_deadline = State()
     event_edit_value = State()
-    group_admin_add = State()
 
 
 class PlanFlow(StatesGroup):
@@ -47,15 +37,6 @@ class PlanFlow(StatesGroup):
     more = State()
     purpose = State()
     song = State()
-
-
-class DsvrFlow(StatesGroup):
-    date = State()
-    time = State()
-    title = State()
-    confirm = State()
-    grant_target = State()
-    revoke_target = State()
 
 
 class EventFlow(StatesGroup):

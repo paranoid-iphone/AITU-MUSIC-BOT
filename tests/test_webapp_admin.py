@@ -20,6 +20,8 @@ REJECTED_TEXT = (
 PROMOTED_TEXT = "Вам выдали права админа в AITU Music Club Bot."
 DEMOTED_TEXT = "С вас сняли права админа в AITU Music Club Bot."
 GROUP_ADMIN_TEXT = "Вас назначили админом группы. Откройте /start, чтобы увидеть админ-меню."
+DSVR_ON_TEXT = "Вам выдана роль ДСВР в AITU Music Club Bot."
+DSVR_OFF_TEXT = "С вас сняли роль ДСВР в AITU Music Club Bot."
 
 
 async def group_id(session, slug: str) -> int:
@@ -194,10 +196,12 @@ async def test_staff_lists_and_role_changes(client, session, make_user, publishe
 
     on = await client.post(f"{API}/staff/dsvr", json={"target": str(candidate.telegram_id), "enabled": True}, headers=headers)
     assert on.json()["role"] == "dsvr"
+    assert notifications(published)[-1] == {"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_ON_TEXT}
     listed = (await client.get(f"{API}/staff", headers=headers)).json()
     assert candidate.telegram_id in {item["telegram_id"] for item in listed["dsvr"]}
     off = await client.post(f"{API}/staff/dsvr", json={"target": str(candidate.telegram_id), "enabled": False}, headers=headers)
     assert off.json()["role"] == "user"
+    assert notifications(published)[-1] == {"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_OFF_TEXT}
 
     before = len(notifications(published))
     added = await client.post(
@@ -219,6 +223,30 @@ async def test_staff_lists_and_role_changes(client, session, make_user, publishe
     listed = (await client.get(f"{API}/staff", headers=headers)).json()
     music_row = next(item for item in listed["group_admins"] if item["group"]["id"] == music)
     assert candidate.telegram_id not in {item["telegram_id"] for item in music_row["admins"]}
+
+
+async def test_dsvr_role_change_with_notifications_off_queues_nothing(client, session, make_user, published):
+    main_admin, _, _, _ = await staff(make_user, session)
+    quiet = await make_user(notifications_enabled=False)
+    response = await client.post(
+        f"{API}/staff/dsvr", json={"target": str(quiet.telegram_id), "enabled": True}, headers=tg(main_admin.telegram_id)
+    )
+    assert response.status_code == 200 and response.json()["role"] == "dsvr"
+    assert notifications(published) == []
+
+
+async def test_internal_dsvr_route_publishes_the_notification(client, session, make_user, published):
+    from app.core.config import settings as app_settings
+
+    main_admin = await make_user(role="admin", group_slug=None)
+    candidate = await make_user()
+    response = await client.post(
+        "/users/dsvr",
+        json={"admin_telegram_id": main_admin.telegram_id, "target": str(candidate.telegram_id), "enabled": True},
+        headers={"X-Internal-Token": app_settings.internal_api_token},
+    )
+    assert response.status_code == 200, response.text
+    assert notifications(published) == [{"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_ON_TEXT}]
 
 
 @pytest.mark.parametrize("path", ["staff/admin", "staff/dsvr"])

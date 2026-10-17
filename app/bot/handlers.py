@@ -2,7 +2,7 @@ import logging
 import hashlib
 import json
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -18,9 +18,6 @@ from app.bot.keyboards import (
     admin_band_detail_keyboard,
     admin_band_members_keyboard,
     admin_bands_keyboard,
-    admin_booking_delete_confirm_keyboard,
-    admin_booking_delete_list_keyboard,
-    admin_booking_detail_keyboard,
     admin_event_detail_keyboard,
     admin_events_keyboard,
     admin_event_applications_keyboard,
@@ -28,7 +25,6 @@ from app.bot.keyboards import (
     staff_inline_keyboard,
     admin_member_remove_confirm_keyboard,
     admin_schedule_keyboard,
-    admin_settings_keyboard,
     bands_menu_keyboard,
     concerts_menu_keyboard,
     event_bands_keyboard,
@@ -56,7 +52,6 @@ from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, EventFlow, Onboarding, ProfileFlow
 from app.bot.webapp_url import get_webapp_base_url
 from app.core.config import settings
-from app.core.timezone import now_local
 
 router = Router()
 api = BackendClient()
@@ -172,11 +167,6 @@ def format_purpose(value: str) -> str:
     return {"concert": "к концерту", "self": "для себя", "staff": "ивент / стафф", "personal": "личная репетиция"}.get(value, value)
 
 
-def format_hours(minutes: int) -> str:
-    hours = minutes / 60
-    return f"{hours:g} ч"
-
-
 def format_event_card(event: dict) -> str:
     status = "открыт" if event["status"] == "open" else "закрыт"
     return (
@@ -237,12 +227,15 @@ def admin_guide_text() -> str:
     return (
         "Инструкция админа\n\n"
         "Заявки: проверяй имя, фамилию и группу. Отклонение не банит пользователя, он сможет подать заявку позже.\n\n"
-        "Репетиции: можно занять кабинет под стафф/ивент, изменить дату, время, песню или цель любой брони, а также удалить бронь.\n\n"
-        "Личные репетиции: в настройках можно включить или выключить бронь без коллектива.\n\n"
+        "Репетиции (мини-приложение): на сетке расписания открой карточку брони, чтобы изменить или отменить её. "
+        "Кнопка «Занять зал» занимает время под стафф/ивент или с приоритетом ДСВР: пересекающиеся брони отменяются.\n\n"
+        "Настройки (мини-приложение): рабочие дни и часы зала, лимиты на коллектив, личные репетиции.\n\n"
         "Коллективы: можно переименовать коллектив, поменять лидера, отредактировать роли участников или удалить участника из коллектива.\n\n"
         "Концерты: создай концерт, открой прием номеров, затем смотри заявки номеров со списками участников.\n\n"
-        "Админы: добавляй админа по @username или Telegram ID. Initial admins защищены от снятия роли.\n\n"
-        "История: раздел показывает последние действия: кто кого одобрил, удалил, изменил бронь, коллектив или концерт."
+        "Админы и группы (мини-приложение, вкладка «Роли»): админы, ДСВР и админы групп по @username или Telegram ID. "
+        "Initial admins защищены от снятия роли.\n\n"
+        "История: журнал действий в боте показывает, кто кого одобрил, удалил, изменил коллектив или концерт; "
+        "история расписания открывается в мини-приложении."
     )
 
 
@@ -305,24 +298,6 @@ def format_personal_event_card(item: dict) -> str:
         f"Дата: {event_date_value}\n"
         f"Место: {location or '-'}\n"
         f"Роль: {role}\n\n"
-        "Выберите действие:"
-    )
-
-
-def format_booking_card(booking: dict) -> str:
-    title = booking.get("song_title") or "-"
-    owner = booking.get("band_name") or ("Личная репетиция" if booking.get("purpose") == "personal" else "-")
-    return (
-        f"Бронь #{booking['id']}\n"
-        f"Дата: {booking['booking_date']}\n"
-        f"Время: {booking['start_time'][:5]}-{booking['end_time'][:5]}\n"
-        f"Кто занял: {owner}\n"
-        + (f"Ответственный: {booking['responsible_name']}"
-           + (f" (@{booking['responsible_username']})" if booking.get("responsible_username") else "")
-           + "\n" if booking.get("responsible_name") else "")
-        + f"Создал: {booking.get('created_by') or '-'}\n"
-        f"Цель: {format_purpose(booking['purpose'])}\n"
-        f"Песня/название: {title}\n\n"
         "Выберите действие:"
     )
 
@@ -716,9 +691,25 @@ LEGACY_MINI_APP_SCREENS = {
             "admin:delete_user",
             "admin:add_admin",
             "admin:remove_admin",
+            "admin_section:settings",
+            "admin:enable_day",
+            "admin:disable_day",
+            "admin:weekly_booking_limit",
+            "admin:daily_booking_limit",
+            "admin:max_future_bookings",
+            "admin:personal_bookings_toggle",
+            "admin:booking_window",
+            "admin:staff_booking",
+            "admin_bookings_",
+            "admin_booking_manage:",
+            "admin_booking_delete",
+            "groups:",
+            "dsvr:",
+            "sched_history:",
+            "band_history:",
         ),
         "⚙️ Админка",
-        "Заявки, пользователи и роли теперь в мини-приложении.",
+        "Заявки, пользователи, роли, настройки, захват зала и история теперь в мини-приложении.",
     ),
 }
 
@@ -729,6 +720,14 @@ REMOVED_ADMIN_TEXTS = {
     "Забанить пользователя",
     "Удалить пользователя",
     "Добавить админа",
+    "Включить день",
+    "Выключить день",
+    "Лимит часов",
+    "Лимит в неделю",
+    "Лимит в день",
+    "Часы кабинета",
+    "Занять время",
+    "Удалить бронь",
 }
 
 
@@ -1188,15 +1187,16 @@ async def inline_personal_event_delete_confirm(callback: CallbackQuery, state: F
 @router.callback_query(F.data == "admin:action_history")
 async def inline_action_history(callback: CallbackQuery) -> None:
     rows = await api.action_history(callback.from_user.id)
+    keyboard = admin_actions_keyboard(await get_webapp_base_url())
     if not rows:
-        await edit_screen(callback, "История действий пока пустая.", admin_actions_keyboard())
+        await edit_screen(callback, "История действий пока пустая.", keyboard)
         await answer_callback(callback)
         return
     lines = ["Последние действия:"]
     for item in rows[:30]:
         created_at = item["created_at"].replace("T", " ")[:16]
         lines.append(f"{created_at} | {item['actor_name']} | {item['description'] or item['action']}")
-    await edit_screen(callback, "\n".join(lines), admin_actions_keyboard())
+    await edit_screen(callback, "\n".join(lines), keyboard)
     await answer_callback(callback)
 
 
@@ -1216,17 +1216,13 @@ async def inline_admin_section(callback: CallbackQuery) -> None:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
     if section == "actions":
-        await edit_screen(callback, "История действий", admin_actions_keyboard())
+        await edit_screen(callback, "История действий", admin_actions_keyboard(await get_webapp_base_url()))
     elif section == "schedule":
-        await edit_screen(callback, "Репетиции и часы кабинета", admin_schedule_keyboard())
+        await edit_screen(callback, "Репетиции", admin_schedule_keyboard(await get_webapp_base_url()))
     elif section == "bands":
         bands = await api.list_all_bands(callback.from_user.id)
         text = "Коллективы" if bands else "Коллективов пока нет."
         await edit_screen(callback, text, admin_bands_keyboard(bands))
-    elif section == "settings":
-        personal = await api.get_personal_bookings_enabled(callback.from_user.id)
-        status = "включены" if personal.get("personal_bookings_enabled") else "выключены"
-        await edit_screen(callback, f"Настройки бронирования\n\nЛичные репетиции: {status}", admin_settings_keyboard())
     elif section == "events":
         events = await api.list_events()
         text = "Концерты" if events else "Концертов пока нет."
@@ -1366,165 +1362,6 @@ async def inline_admin_event_applications(callback: CallbackQuery) -> None:
             name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or f"@{user.get('telegram_username') or '-'}"
             lines.append(f"- {name} | {user.get('study_group') or '-'} | {member['instrument_role']}")
     await edit_screen(callback, "\n".join(lines), admin_event_applications_keyboard(event_id))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.in_({"admin:enable_day", "admin:disable_day"}))
-async def inline_admin_day_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(is_enabled=callback.data == "admin:enable_day")
-    await state.set_state(AdminFlow.day_toggle)
-    await callback.message.answer("Введите номер дня недели: 0=Пн, 1=Вт, ..., 6=Вс", reply_markup=flow_cancel_keyboard())
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:weekly_booking_limit")
-async def inline_weekly_booking_limit_start(callback: CallbackQuery, state: FSMContext) -> None:
-    current = await api.get_weekly_booking_limit(callback.from_user.id)
-    await state.set_state(AdminFlow.weekly_booking_limit)
-    await callback.message.answer(
-        f"Текущий лимит: {format_hours(current['weekly_booking_limit_minutes'])} в неделю на коллектив.\n"
-        "Введите новый лимит в часах. Например: 4 или 3.5",
-        reply_markup=flow_cancel_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:max_future_bookings")
-async def inline_max_future_bookings_start(callback: CallbackQuery, state: FSMContext) -> None:
-    current = await api.get_max_future_bookings(callback.from_user.id)
-    await state.set_state(AdminFlow.max_future_bookings)
-    value = current["max_future_bookings_per_band"]
-    await callback.message.answer(
-        f"Макс. будущих броней на номер: {'выключено' if value == 0 else value}.\n"
-        "Введите новое целое число. Введите 0, чтобы выключить ограничение.",
-        reply_markup=flow_cancel_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:daily_booking_limit")
-async def inline_daily_booking_limit_start(callback: CallbackQuery, state: FSMContext) -> None:
-    current = await api.get_daily_booking_limit(callback.from_user.id)
-    await state.set_state(AdminFlow.daily_booking_limit)
-    current_text = "выключен" if current["daily_booking_limit_minutes"] == 0 else format_hours(current["daily_booking_limit_minutes"])
-    await callback.message.answer(
-        f"Текущий дневной лимит: {current_text} на коллектив.\n"
-        "Введите новый лимит в часах. Например: 2 или 1.5.\n"
-        "Введите 0, чтобы выключить дневной лимит.",
-        reply_markup=flow_cancel_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:personal_bookings_toggle")
-async def inline_personal_bookings_toggle(callback: CallbackQuery) -> None:
-    current = await api.get_personal_bookings_enabled(callback.from_user.id)
-    updated = await api.update_personal_bookings_enabled(callback.from_user.id, not current.get("personal_bookings_enabled"))
-    status = "включены" if updated.get("personal_bookings_enabled") else "выключены"
-    await edit_screen(callback, f"Настройки бронирования\n\nЛичные репетиции: {status}", admin_settings_keyboard())
-    await answer_callback(callback, "Готово")
-
-
-@router.callback_query(F.data == "admin:booking_window")
-async def inline_booking_window_start(callback: CallbackQuery, state: FSMContext) -> None:
-    current = await api.get_booking_window(callback.from_user.id)
-    await state.set_state(AdminFlow.booking_window)
-    await callback.message.answer(
-        f"Текущие часы кабинета: {current['start_time']}-{current['end_time']}.\n"
-        "Введите новое окно в формате 08:00-21:00",
-        reply_markup=flow_cancel_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_bookings_delete:"))
-async def inline_admin_bookings_delete_list(callback: CallbackQuery, state: FSMContext) -> None:
-    page = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    rows = await api.schedule()
-    await state.update_data(admin_delete_bookings=rows)
-    if not rows:
-        await edit_screen(callback, "На ближайшие 7 дней броней нет.", admin_schedule_keyboard())
-        await answer_callback(callback)
-        return
-    await edit_screen(
-        callback,
-        "Выберите бронь, которую нужно удалить:",
-        admin_booking_delete_list_keyboard(rows, page),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_bookings_manage:"))
-async def inline_admin_bookings_manage_list(callback: CallbackQuery, state: FSMContext) -> None:
-    page = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    rows = await api.schedule()
-    await state.update_data(admin_manage_bookings=rows)
-    if not rows:
-        await edit_screen(callback, "На ближайшие 7 дней броней нет.", admin_schedule_keyboard())
-        await answer_callback(callback)
-        return
-    await edit_screen(
-        callback,
-        "Выберите бронь, которую нужно отменить:",
-        admin_booking_delete_list_keyboard(rows, page, action_prefix="admin_booking_manage", page_prefix="admin_bookings_manage"),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_booking_manage:"))
-async def inline_admin_booking_manage_card(callback: CallbackQuery, state: FSMContext) -> None:
-    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    data = await state.get_data()
-    rows = data.get("admin_manage_bookings") or await api.schedule()
-    await state.update_data(admin_manage_bookings=rows)
-    booking = next((item for item in rows if item["id"] == booking_id), None)
-    if booking is None:
-        await answer_callback(callback, "Бронь не найдена. Обновите список.", show_alert=True)
-        return
-    await edit_screen(callback, format_booking_card(booking), admin_booking_detail_keyboard(booking_id))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_booking_delete:"))
-async def inline_admin_booking_delete_card(callback: CallbackQuery, state: FSMContext) -> None:
-    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    data = await state.get_data()
-    rows = data.get("admin_delete_bookings") or await api.schedule()
-    booking = next((item for item in rows if item["id"] == booking_id), None)
-    if booking is None:
-        await answer_callback(callback, "Бронь не найдена. Обновите список.", show_alert=True)
-        return
-    await edit_screen(callback, format_booking_card(booking), admin_booking_delete_confirm_keyboard(booking_id))
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data.startswith("admin_booking_delete_confirm:"))
-async def inline_admin_booking_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-    booking_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    try:
-        deleted = await api.delete_booking(callback.from_user.id, booking_id)
-    except RuntimeError as exc:
-        await edit_screen(callback, f"Не получилось удалить бронь: {exc}", admin_schedule_keyboard())
-        await answer_callback(callback)
-        return
-    await state.update_data(admin_delete_bookings=await api.schedule())
-    await refresh_all_schedule_menus(callback.message.bot)
-    await edit_screen(
-        callback,
-        f"Бронь удалена: {deleted['booking_date']} {deleted['start_time'][:5]}-{deleted['end_time'][:5]} | {deleted['band_name']}",
-        admin_schedule_keyboard(),
-    )
-    await answer_callback(callback)
-
-
-@router.callback_query(F.data == "admin:staff_booking")
-async def inline_staff_booking_start(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.staff_booking_date)
-    await callback.message.answer(
-        "Введите дату, когда нужно занять кабинет, в формате YYYY-MM-DD.\n"
-        "Например: 2026-06-25",
-        reply_markup=flow_cancel_keyboard(),
-    )
     await answer_callback(callback)
 
 
@@ -2034,246 +1871,6 @@ async def action_history(message: Message) -> None:
         created_at = item["created_at"].replace("T", " ")[:16]
         lines.append(f"{created_at} | {item['actor_name']} | {item['description'] or item['action']}")
     await message.answer("\n".join(lines))
-
-
-@router.message(F.text.in_({"Включить день", "Выключить день"}))
-async def admin_day_start(message: Message, state: FSMContext) -> None:
-    await state.update_data(is_enabled=message.text == "Включить день")
-    await state.set_state(AdminFlow.day_toggle)
-    await message.answer("Введите номер дня недели: 0=Пн, 1=Вт, ..., 6=Вс", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(F.text.in_({"Лимит часов", "Лимит в неделю"}))
-async def weekly_booking_limit_start(message: Message, state: FSMContext) -> None:
-    current = await api.get_weekly_booking_limit(message.from_user.id)
-    await state.set_state(AdminFlow.weekly_booking_limit)
-    await message.answer(
-        f"Текущий лимит: {format_hours(current['weekly_booking_limit_minutes'])} в неделю на коллектив.\n"
-        "Введите новый лимит в часах. Например: 4 или 3.5",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(F.text == "Лимит в день")
-async def daily_booking_limit_start(message: Message, state: FSMContext) -> None:
-    current = await api.get_daily_booking_limit(message.from_user.id)
-    await state.set_state(AdminFlow.daily_booking_limit)
-    current_text = "выключен" if current["daily_booking_limit_minutes"] == 0 else format_hours(current["daily_booking_limit_minutes"])
-    await message.answer(
-        f"Текущий дневной лимит: {current_text} на коллектив.\n"
-        "Введите новый лимит в часах. Например: 2 или 1.5.\n"
-        "Введите 0, чтобы выключить дневной лимит.",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(F.text == "Часы кабинета")
-async def booking_window_start(message: Message, state: FSMContext) -> None:
-    current = await api.get_booking_window(message.from_user.id)
-    await state.set_state(AdminFlow.booking_window)
-    await message.answer(
-        f"Текущие часы кабинета: {current['start_time']}-{current['end_time']}.\n"
-        "Введите новое окно в формате 08:00-21:00",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(F.text == "Занять время")
-async def staff_booking_start(message: Message, state: FSMContext) -> None:
-    await state.set_state(AdminFlow.staff_booking_date)
-    await message.answer(
-        "Введите дату, когда нужно занять кабинет, в формате YYYY-MM-DD.\n"
-        "Например: 2026-06-25",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(F.text == "Удалить бронь")
-async def delete_booking_start(message: Message, state: FSMContext) -> None:
-    rows = await api.schedule()
-    await state.update_data(admin_delete_bookings=rows)
-    if not rows:
-        await message.answer("На ближайшие 7 дней броней нет.", reply_markup=admin_schedule_keyboard())
-        return
-    await message.answer("Выберите бронь, которую нужно удалить:", reply_markup=admin_booking_delete_list_keyboard(rows))
-
-
-@router.message(AdminFlow.booking_window)
-async def booking_window_save(message: Message, state: FSMContext) -> None:
-    parsed = parse_booking_window(message.text)
-    if parsed is None:
-        await message.answer("Введите окно в формате 08:00-21:00", reply_markup=flow_cancel_keyboard())
-        return
-    start, end = parsed
-    if start.time() >= end.time():
-        await message.answer("Начало должно быть раньше конца. Например: 08:00-21:00", reply_markup=flow_cancel_keyboard())
-        return
-    updated = await api.update_booking_window(message.from_user.id, start.time(), end.time())
-    await state.clear()
-    await message.answer(
-        f"Часы кабинета обновлены: {updated['start_time']}-{updated['end_time']}.",
-        reply_markup=admin_schedule_keyboard(),
-    )
-
-
-@router.message(AdminFlow.staff_booking_date)
-async def staff_booking_date_save(message: Message, state: FSMContext) -> None:
-    try:
-        booking_date = date.fromisoformat(message.text.strip())
-    except ValueError:
-        await message.answer("Введите дату в формате YYYY-MM-DD. Например: 2026-06-25", reply_markup=flow_cancel_keyboard())
-        return
-    now = now_local()
-    if booking_date < now.date() or booking_date > (now + timedelta(days=7)).date():
-        await message.answer("Можно занять кабинет только в пределах ближайших 7 дней.", reply_markup=flow_cancel_keyboard())
-        return
-    await state.update_data(staff_booking_date=booking_date.isoformat())
-    await state.set_state(AdminFlow.staff_booking_time)
-    await message.answer(
-        "Введите время в формате 14:00-18:00.\n"
-        "Начало и конец должны быть по полчаса: 08:00, 08:30, 09:00 и т.д.",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(AdminFlow.staff_booking_time)
-async def staff_booking_time_save(message: Message, state: FSMContext) -> None:
-    parsed = parse_booking_window(message.text)
-    if parsed is None:
-        await message.answer("Введите время в формате 14:00-18:00", reply_markup=flow_cancel_keyboard())
-        return
-    start, end = parsed
-    if start.time() >= end.time():
-        await message.answer("Начало должно быть раньше конца. Например: 14:00-18:00", reply_markup=flow_cancel_keyboard())
-        return
-    if start.minute not in {0, 30} or end.minute not in {0, 30}:
-        await message.answer("Время должно идти по полчаса: 14:00, 14:30, 15:00.", reply_markup=flow_cancel_keyboard())
-        return
-    await state.update_data(staff_booking_start=start.time().isoformat(), staff_booking_end=end.time().isoformat())
-    await state.set_state(AdminFlow.staff_booking_title)
-    await message.answer("Введите название или причину. Например: мастер-класс, soundcheck, собрание.", reply_markup=flow_cancel_keyboard())
-
-
-@router.message(AdminFlow.staff_booking_title)
-async def staff_booking_title_save(message: Message, state: FSMContext) -> None:
-    title = message.text.strip()
-    if not title:
-        await message.answer("Название не должно быть пустым.", reply_markup=flow_cancel_keyboard())
-        return
-    if len(title) > 150:
-        await message.answer("Название должно быть не длиннее 150 символов.", reply_markup=flow_cancel_keyboard())
-        return
-    data = await state.get_data()
-    try:
-        booking = await api.create_staff_booking(
-            message.from_user.id,
-            date.fromisoformat(data["staff_booking_date"]),
-            datetime.strptime(data["staff_booking_start"], "%H:%M:%S").time(),
-            datetime.strptime(data["staff_booking_end"], "%H:%M:%S").time(),
-            title,
-        )
-    except RuntimeError as exc:
-        await state.clear()
-        await message.answer(f"Не получилось занять кабинет: {exc}", reply_markup=admin_schedule_keyboard())
-        return
-    await state.clear()
-    await refresh_all_schedule_menus(message.bot)
-    await message.answer(
-        f"Кабинет занят: {booking['booking_date']} {booking['start_time'][:5]}-{booking['end_time'][:5]} | {title}",
-        reply_markup=admin_schedule_keyboard(),
-    )
-
-
-@router.message(AdminFlow.daily_booking_limit)
-async def daily_booking_limit_save(message: Message, state: FSMContext) -> None:
-    try:
-        hours = float(message.text.strip().replace(",", "."))
-    except ValueError:
-        await message.answer("Введите число часов. Например: 2 или 1.5. Для выключения: 0", reply_markup=flow_cancel_keyboard())
-        return
-    if hours < 0 or hours > 24:
-        await message.answer("Лимит должен быть от 0 до 24 часов.", reply_markup=flow_cancel_keyboard())
-        return
-    updated = await api.update_daily_booking_limit(message.from_user.id, hours)
-    await state.clear()
-    if updated["daily_booking_limit_minutes"] == 0:
-        text = "Дневной лимит выключен."
-    else:
-        text = f"Дневной лимит обновлен: {format_hours(updated['daily_booking_limit_minutes'])} в день на коллектив."
-    await message.answer(text, reply_markup=admin_settings_keyboard())
-
-
-@router.message(AdminFlow.max_future_bookings)
-async def max_future_bookings_save(message: Message, state: FSMContext) -> None:
-    try:
-        count = int(message.text.strip())
-    except ValueError:
-        await message.answer("Введите целое число. Например: 3. Для выключения: 0", reply_markup=flow_cancel_keyboard())
-        return
-    if count < 0 or count > 100:
-        await message.answer("Число должно быть от 0 до 100.", reply_markup=flow_cancel_keyboard())
-        return
-    updated = await api.update_max_future_bookings(message.from_user.id, count)
-    await state.clear()
-    value = updated["max_future_bookings_per_band"]
-    text = "Ограничение выключено." if value == 0 else f"Макс. будущих броней на номер: {value}."
-    await message.answer(text, reply_markup=admin_settings_keyboard())
-
-
-@router.message(AdminFlow.weekly_booking_limit)
-async def weekly_booking_limit_save(message: Message, state: FSMContext) -> None:
-    try:
-        hours = float(message.text.strip().replace(",", "."))
-    except ValueError:
-        await message.answer("Введите число часов. Например: 4 или 3.5", reply_markup=flow_cancel_keyboard())
-        return
-    if hours <= 0 or hours > 24:
-        await message.answer("Лимит должен быть больше 0 и не больше 24 часов.", reply_markup=flow_cancel_keyboard())
-        return
-    updated = await api.update_weekly_booking_limit(message.from_user.id, hours)
-    await state.clear()
-    await message.answer(
-        f"Лимит обновлен: {format_hours(updated['weekly_booking_limit_minutes'])} в неделю на коллектив.",
-        reply_markup=admin_settings_keyboard(),
-    )
-
-
-@router.message(AdminFlow.day_toggle)
-async def admin_day_save(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    try:
-        day = int(message.text.strip())
-    except ValueError:
-        await message.answer("Введите число от 0 до 6.")
-        return
-    if day < 0 or day > 6:
-        await message.answer("Введите число от 0 до 6.")
-        return
-    if data["is_enabled"]:
-        await api.update_day(message.from_user.id, day, True)
-        await state.clear()
-        await refresh_all_schedule_menus(message.bot)
-        await message.answer("День включен.", reply_markup=admin_schedule_keyboard())
-        return
-    await state.update_data(day_of_week=day)
-    await state.set_state(AdminFlow.day_occupied_by)
-    await message.answer(
-        "Кто занял этот день? Например: Debate Club, Dance Club или внешний ивент.",
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(AdminFlow.day_occupied_by)
-async def admin_day_occupied_by_save(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    occupied_by = message.text.strip()
-    if not occupied_by:
-        await message.answer("Напишите, кто занял день.")
-        return
-    await api.update_day(message.from_user.id, data["day_of_week"], False, occupied_by)
-    await state.clear()
-    await refresh_all_schedule_menus(message.bot)
-    await message.answer("День выключен и подпись добавлена.", reply_markup=admin_schedule_keyboard())
 
 
 @router.message(F.text == "Создать концерт")

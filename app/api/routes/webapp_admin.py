@@ -178,6 +178,7 @@ async def set_dsvr(
     payload: WebAppRoleChange, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     target = await user_service.set_dsvr_role(session, admin.telegram_id, payload.target, payload.enabled)
+    await outbox.commit_and_publish(session)
     return await person(session, target)
 
 

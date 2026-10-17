@@ -1,4 +1,3 @@
-from datetime import date, time
 from typing import Any
 
 import httpx
@@ -69,19 +68,6 @@ class BackendClient:
     async def group_reviewer_ids(self, group_id: int) -> list[int]:
         return await self.request("GET", f"/groups/{group_id}/reviewers")
 
-    async def list_group_admins(self, telegram_id: int, group_id: int) -> list[dict[str, Any]]:
-        return await self.request("GET", f"/groups/{group_id}/admins", params={"telegram_id": telegram_id})
-
-    async def add_group_admin(self, telegram_id: int, group_id: int, target: str) -> dict[str, Any]:
-        return await self.request(
-            "POST", f"/groups/{group_id}/admins", json={"admin_telegram_id": telegram_id, "target": target}
-        )
-
-    async def remove_group_admin(self, telegram_id: int, group_id: int, target: str) -> dict[str, Any]:
-        return await self.request(
-            "DELETE", f"/groups/{group_id}/admins", params={"telegram_id": telegram_id, "target": target}
-        )
-
     async def update_band_responsible(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
         return await self.request(
             "PATCH",
@@ -108,37 +94,6 @@ class BackendClient:
     async def remove_band_member(self, requester_telegram_id: int, band_id: int, member_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/bands/{band_id}/members/{member_id}", params={"requester_telegram_id": requester_telegram_id})
 
-    async def schedule_history(
-        self, telegram_id: int, band_id: int | None = None, group_id: int | None = None, limit: int = 15
-    ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"telegram_id": telegram_id, "limit": limit}
-        if band_id is not None:
-            params["band_id"] = band_id
-        if group_id is not None:
-            params["group_id"] = group_id
-        return await self.request("GET", "/history", params=params)
-
-    async def priority_preview(self, telegram_id: int, booking_date: str, start_time: str, end_time: str) -> list[dict[str, Any]]:
-        return await self.request(
-            "GET",
-            "/bookings/priority-preview",
-            params={"telegram_id": telegram_id, "booking_date": booking_date, "start_time": start_time, "end_time": end_time},
-        )
-
-    async def create_priority_booking(
-        self, telegram_id: int, booking_date: str, start_time: str, end_time: str, title: str
-    ) -> dict[str, Any]:
-        return await self.request(
-            "POST",
-            "/bookings/priority",
-            json={"telegram_id": telegram_id, "booking_date": booking_date, "start_time": start_time, "end_time": end_time, "title": title},
-        )
-
-    async def set_dsvr(self, admin_telegram_id: int, target: str, enabled: bool) -> dict[str, Any]:
-        return await self.request(
-            "POST", "/users/dsvr", json={"admin_telegram_id": admin_telegram_id, "target": target, "enabled": enabled}
-        )
-
     async def planning_week(self) -> dict[str, Any]:
         return await self.request("GET", "/planning/week")
 
@@ -160,36 +115,6 @@ class BackendClient:
     async def my_bookings(self, telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/mine", params={"telegram_id": telegram_id})
 
-    async def create_staff_booking(
-        self,
-        telegram_id: int,
-        target_date: date,
-        start: time,
-        end: time,
-        title: str,
-    ) -> dict[str, Any]:
-        return await self.request(
-            "POST",
-            "/bookings/staff",
-            json={
-                "telegram_id": telegram_id,
-                "booking_date": target_date.isoformat(),
-                "start_time": start.isoformat(),
-                "end_time": end.isoformat(),
-                "title": title,
-            },
-        )
-
-    async def get_personal_bookings_enabled(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", "/admin/settings/personal-bookings", params={"telegram_id": telegram_id})
-
-    async def update_personal_bookings_enabled(self, telegram_id: int, is_enabled: bool) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/settings/personal-bookings",
-            json={"telegram_id": telegram_id, "is_enabled": is_enabled},
-        )
-
     async def repeat_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
         return await self.request("POST", f"/bookings/{booking_id}/repeat", json={"telegram_id": telegram_id})
 
@@ -198,9 +123,6 @@ class BackendClient:
 
     async def answer_move_request(self, telegram_id: int, request_id: int, action: str) -> dict[str, Any]:
         return await self.request("POST", f"/move-requests/{request_id}/{action}", json={"telegram_id": telegram_id})
-
-    async def delete_booking(self, telegram_id: int, booking_id: int) -> dict[str, Any]:
-        return await self.request("DELETE", f"/bookings/{booking_id}", params={"telegram_id": telegram_id})
 
     async def list_events(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/events")
@@ -250,55 +172,8 @@ class BackendClient:
     async def delete_personal_event_history(self, telegram_id: int, item_id: int) -> dict[str, Any]:
         return await self.request("DELETE", f"/events/history/personal/{item_id}", params={"telegram_id": telegram_id})
 
-    async def update_day(self, telegram_id: int, day_of_week: int, is_enabled: bool, occupied_by: str | None = None) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/days",
-            json={"telegram_id": telegram_id, "day_of_week": day_of_week, "is_enabled": is_enabled, "occupied_by": occupied_by},
-        )
-
     async def schedule_day_closures(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/day-closures")
-
-    async def get_weekly_booking_limit(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", "/admin/settings/weekly-booking-limit", params={"telegram_id": telegram_id})
-
-    async def update_weekly_booking_limit(self, telegram_id: int, hours: float) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/settings/weekly-booking-limit",
-            json={"telegram_id": telegram_id, "hours": hours},
-        )
-
-    async def get_daily_booking_limit(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", "/admin/settings/daily-booking-limit", params={"telegram_id": telegram_id})
-
-    async def update_daily_booking_limit(self, telegram_id: int, hours: float) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/settings/daily-booking-limit",
-            json={"telegram_id": telegram_id, "hours": hours},
-        )
-
-    async def get_max_future_bookings(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", "/admin/settings/max-future-bookings", params={"telegram_id": telegram_id})
-
-    async def update_max_future_bookings(self, telegram_id: int, count: int) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/settings/max-future-bookings",
-            json={"telegram_id": telegram_id, "count": count},
-        )
-
-    async def get_booking_window(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", "/admin/settings/booking-window", params={"telegram_id": telegram_id})
-
-    async def update_booking_window(self, telegram_id: int, start: time, end: time) -> dict[str, Any]:
-        return await self.request(
-            "PUT",
-            "/admin/settings/booking-window",
-            json={"telegram_id": telegram_id, "start_time": start.isoformat(), "end_time": end.isoformat()},
-        )
 
     async def booking_history(self, telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/admin/bookings/history", params={"telegram_id": telegram_id})

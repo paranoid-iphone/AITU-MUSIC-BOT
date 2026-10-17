@@ -8,10 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from redis.asyncio import Redis
 
 from app.bot.handlers import refresh_all_schedule_menus, router
-from app.bot.handlers_dsvr import router as dsvr_router
-from app.bot.handlers_history import router as history_router
 from app.bot.handlers_planning import router as planning_router
-from app.bot.handlers_groups import router as groups_router
 from app.bot.handlers_move import router as move_router
 from app.bot.handlers_repeat import router as repeat_router
 from app.bot.handlers_waitlist import router as waitlist_router
@@ -96,9 +93,6 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
     # Feature routers go first: the main router has catch-all fallback handlers.
-    dispatcher.include_router(groups_router)
-    dispatcher.include_router(history_router)
-    dispatcher.include_router(dsvr_router)
     dispatcher.include_router(planning_router)
     dispatcher.include_router(repeat_router)
     dispatcher.include_router(move_router)

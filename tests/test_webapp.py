@@ -391,8 +391,8 @@ def test_removed_bot_flows_leave_no_buttons_behind():
         keyboards.bands_menu_keyboard("https://club.example"),
         keyboards.main_menu_inline(True),
         keyboards.admin_schedule_keyboard(),
+        keyboards.admin_schedule_keyboard("https://club.example"),
         keyboards.admin_band_detail_keyboard(1),
-        keyboards.admin_booking_detail_keyboard(1),
     ):
         assert not removed & _callbacks(markup)
         assert not any(c.startswith(("admin_band_edit:", "admin_booking_edit:")) for c in _callbacks(markup))
@@ -414,6 +414,11 @@ def test_the_removed_flow_states_are_gone():
 
     assert not hasattr(states, "BookingFlow") and not hasattr(states, "BandFlow")
     assert not hasattr(states.AdminFlow, "band_edit_value") and not hasattr(states.AdminFlow, "booking_edit_value")
+    assert not hasattr(states, "DsvrFlow")
+    for gone in ("day_toggle", "day_occupied_by", "weekly_booking_limit", "daily_booking_limit", "max_future_bookings",
+                 "booking_window", "staff_booking_date", "staff_booking_time", "staff_booking_title", "group_admin_add"):
+        assert not hasattr(states.AdminFlow, gone), gone
+    assert hasattr(states.AdminFlow, "event_title") and hasattr(states.AdminFlow, "event_edit_value")  # concerts stay in the bot
 
 
 # ---------- step 7a: my bookings from the Mini App ----------
@@ -575,6 +580,9 @@ def test_app_js_only_uses_defined_admin_strings():
 ADMIN_BASE = "https://club.example/"
 ADMIN_REQUESTS_URL = "https://club.example/webapp/schedule?screen=admin&tab=requests"
 ADMIN_ROLES_URL = "https://club.example/webapp/schedule?screen=admin&tab=roles"
+ADMIN_SETTINGS_URL = "https://club.example/webapp/schedule?screen=admin&tab=settings"
+ADMIN_HISTORY_URL = "https://club.example/webapp/schedule?screen=admin&tab=history"
+SCHEDULE_URL = "https://club.example/webapp/schedule"
 
 
 def test_mini_app_url_can_target_an_admin_tab():
@@ -589,9 +597,25 @@ def test_admin_menus_open_the_mini_app():
 
     admin_urls = _web_app_urls(keyboards.admin_inline_keyboard(ADMIN_BASE))
     assert ADMIN_REQUESTS_URL in admin_urls and ADMIN_ROLES_URL in admin_urls
+    assert ADMIN_SETTINGS_URL in admin_urls
     group_admin_urls = _web_app_urls(keyboards.staff_inline_keyboard(True, False, ADMIN_BASE))
     assert ADMIN_REQUESTS_URL in group_admin_urls and ADMIN_ROLES_URL not in group_admin_urls
-    assert [url for url in _web_app_urls(keyboards.staff_inline_keyboard(False, True, ADMIN_BASE)) if "screen=admin" in url] == []
+    assert ADMIN_HISTORY_URL in group_admin_urls and SCHEDULE_URL not in group_admin_urls
+    dsvr_urls = _web_app_urls(keyboards.staff_inline_keyboard(False, True, ADMIN_BASE))
+    assert SCHEDULE_URL in dsvr_urls and ADMIN_HISTORY_URL in dsvr_urls  # take the room on the grid, read the history
+    assert [url for url in dsvr_urls if "screen=admin" in url and "tab=history" not in url] == []
+
+
+def test_admin_screens_open_the_mini_app_for_what_moved_out_of_the_bot():
+    from app.bot import keyboards
+
+    assert {SCHEDULE_URL, ADMIN_SETTINGS_URL} <= set(_web_app_urls(keyboards.admin_schedule_keyboard(ADMIN_BASE)))
+    assert ADMIN_HISTORY_URL in _web_app_urls(keyboards.admin_actions_keyboard(ADMIN_BASE))
+    # without a public URL no dead web_app buttons are drawn, and the journal stays reachable
+    assert _web_app_urls(keyboards.admin_actions_keyboard()) == []
+    assert "admin:action_history" in _callbacks(keyboards.admin_actions_keyboard())
+    assert _web_app_urls(keyboards.admin_schedule_keyboard()) == []
+    assert _web_app_urls(keyboards.staff_inline_keyboard(True, True)) == []
 
 
 def test_admin_menus_drop_the_moderation_callbacks():
@@ -607,7 +631,7 @@ def test_admin_menus_drop_the_moderation_callbacks():
         assert "admin_section:users" not in callbacks and "admin_section:admins" not in callbacks
         assert "menu:back" in callbacks
     assert "admin_section:schedule" in _callbacks(keyboards.admin_inline_keyboard())
-    assert "groups:list" in _callbacks(keyboards.admin_inline_keyboard())
+    assert "groups:list" not in _callbacks(keyboards.admin_inline_keyboard())  # groups moved to the Mini App roles tab
     assert _web_app_urls(keyboards.admin_inline_keyboard()) == []  # no public URL: no dead web_app buttons
 
 
@@ -629,10 +653,59 @@ def test_stale_moderation_buttons_are_routed_to_the_legacy_handler():
         "admin:delete_user",
         "admin:add_admin",
         "admin:remove_admin",
+        # step 11.6: settings, taking the room, cancelling, groups, DSVR and the schedule history
+        "admin_section:settings",
+        "admin:enable_day",
+        "admin:disable_day",
+        "admin:weekly_booking_limit",
+        "admin:daily_booking_limit",
+        "admin:max_future_bookings",
+        "admin:personal_bookings_toggle",
+        "admin:booking_window",
+        "admin:staff_booking",
+        "admin_bookings_manage:0",
+        "admin_bookings_delete:2",
+        "admin_booking_manage:7",
+        "admin_booking_delete:7",
+        "admin_booking_delete_confirm:7",
+        "groups:list",
+        "groups:open:1",
+        "groups:add:1",
+        "groups:remove:1:5",
+        "dsvr:start",
+        "dsvr:date:2026-10-20",
+        "dsvr:confirm",
+        "dsvr:grant",
+        "sched_history:all",
+        "band_history:3:a",
     ):
         assert data.startswith(tuple(prefixes)), data
-    for data in ("admin_section:schedule", "admin:back", "admin:action_history", "groups:list", "registration:approve:5"):
+    for data in (
+        "admin_section:schedule", "admin_section:actions", "admin_section:bands", "admin_section:events", "admin_section:guide",
+        "admin:back", "admin:action_history", "admin:create_event", "registration:approve:5", "plan:admin",
+        "admin_band:1:0", "admin_bands:0", "admin_event:3",
+    ):
         assert not data.startswith(tuple(prefixes)), data
+
+
+def test_removed_admin_reply_buttons_are_routed_to_the_mini_app():
+    from app.bot.handlers import REMOVED_ADMIN_TEXTS
+
+    for text in ("Включить день", "Выключить день", "Лимит в неделю", "Лимит в день", "Часы кабинета", "Занять время", "Удалить бронь"):
+        assert text in REMOVED_ADMIN_TEXTS, text
+    assert "История действий" not in REMOVED_ADMIN_TEXTS and "Создать концерт" not in REMOVED_ADMIN_TEXTS
+
+
+def test_the_removed_feature_routers_are_gone():
+    import importlib.util
+
+    for name in ("handlers_dsvr", "handlers_groups", "handlers_history"):
+        assert importlib.util.find_spec(f"app.bot.{name}") is None, name
+    from app.bot import api_client, main
+
+    assert not hasattr(main, "dsvr_router") and not hasattr(main, "groups_router") and not hasattr(main, "history_router")
+    for method in ("priority_preview", "create_priority_booking", "set_dsvr", "schedule_history", "update_day", "create_staff_booking"):
+        assert not hasattr(api_client.BackendClient, method), method
 
 
 # ---------- step 11.1: change any booking from its card on the grid ----------
