@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import Group, GroupAdmin, User, UserRole, UserStatus
+from app.services import outbox
 from app.services.errors import ConflictError, NotFoundError
 from app.services.users import get_user_by_identifier, get_user_by_telegram_id, require_admin
 
@@ -56,6 +57,10 @@ async def add_group_admin(session: AsyncSession, telegram_id: int, group_id: int
         group_id,
         f"Назначил админа группы {group.title}: @{target.telegram_username or target.telegram_id}",
     )
+    if target.notifications_enabled:
+        outbox.queue_notification(
+            session, target.telegram_id, "Вас назначили админом группы. Откройте /start, чтобы увидеть админ-меню."
+        )
     await session.commit()
     return target
 

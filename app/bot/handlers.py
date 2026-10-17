@@ -1651,13 +1651,6 @@ async def inline_registration_approve(callback: CallbackQuery) -> None:
     )
     if not await update_registration_notice_messages(callback.message.bot, user["telegram_id"], text):
         await edit_screen(callback, text)
-    try:
-        await callback.message.bot.send_message(
-            user["telegram_id"],
-            "Ваша регистрация одобрена. Теперь доступны все функции AITU Music Club Bot.",
-        )
-    except Exception:
-        pass
     await answer_callback(callback, "Одобрено")
 
 
@@ -1681,15 +1674,6 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
     )
     if not await update_registration_notice_messages(callback.message.bot, user["telegram_id"], text):
         await edit_screen(callback, text)
-    try:
-        await callback.message.bot.send_message(
-            user["telegram_id"],
-            "Ваша регистрация отклонена, но это не бан.\n"
-            f"Повторно подать заявку можно после: {retry_after or 'позже'}.\n"
-            "Когда срок пройдет, отправьте /start."
-        )
-    except Exception:
-        pass
     await answer_callback(callback, "Отклонено")
 
 
@@ -2169,10 +2153,6 @@ async def approve_user_save(message: Message, state: FSMContext) -> None:
     user = await api.moderate_user("approve", message.from_user.id, target)
     await state.clear()
     await message.answer("Пользователь одобрен.", reply_markup=admin_users_keyboard())
-    try:
-        await message.bot.send_message(user["telegram_id"], "Ваша регистрация одобрена. Теперь доступны все функции AITU Music Club Bot.")
-    except Exception:
-        pass
 
 
 @router.message(AdminFlow.add_admin)
@@ -2191,10 +2171,6 @@ async def add_admin_save(message: Message, state: FSMContext) -> None:
     name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip()
     username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
     await message.answer(f"Админ добавлен: {name or username}", reply_markup=admin_admins_keyboard())
-    try:
-        await message.bot.send_message(user["telegram_id"], "Вам выдали права админа в AITU Music Club Bot.")
-    except Exception:
-        pass
 
 
 @router.message(AdminFlow.remove_admin)
@@ -2214,10 +2190,6 @@ async def remove_admin_save(message: Message, state: FSMContext) -> None:
     username = f"@{user['telegram_username']}" if user.get("telegram_username") else str(user["telegram_id"])
     admins = await api.list_admins(message.from_user.id)
     await message.answer(f"Админка снята: {name or username}\n\n{format_admins_list(admins)}", reply_markup=admin_admins_keyboard())
-    try:
-        await message.bot.send_message(user["telegram_id"], "С вас сняли права админа в AITU Music Club Bot.")
-    except Exception:
-        pass
 
 
 @router.message(F.text == "Отклонить пользователя")

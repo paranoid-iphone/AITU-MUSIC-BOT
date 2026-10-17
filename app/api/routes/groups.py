@@ -5,7 +5,7 @@ from app.core.security import verify_internal_token
 from app.db.session import get_session
 from app.schemas.bands import GroupRead
 from app.schemas.users import AdminRoleUpdate, UserRead
-from app.services import groups
+from app.services import groups, outbox
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
@@ -22,7 +22,9 @@ async def list_group_admins(group_id: int, telegram_id: int, session: AsyncSessi
 
 @router.post("/{group_id}/admins", response_model=UserRead)
 async def add_group_admin(group_id: int, payload: AdminRoleUpdate, session: AsyncSession = Depends(get_session)):
-    return await groups.add_group_admin(session, payload.admin_telegram_id, group_id, payload.target)
+    user = await groups.add_group_admin(session, payload.admin_telegram_id, group_id, payload.target)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.delete("/{group_id}/admins", response_model=UserRead)

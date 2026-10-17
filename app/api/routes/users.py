@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import verify_internal_token
 from app.db.session import get_session
 from app.schemas.users import AdminRoleUpdate, DsvrRoleUpdate, UserModerationUpdate, UserProfileUpdate, UserRead, UserSettingsUpdate, UserTelegramUpsert
-from app.services import users
+from app.services import outbox, users
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
@@ -31,17 +31,23 @@ async def list_admins(admin_telegram_id: int, session: AsyncSession = Depends(ge
 
 @router.post("/approve", response_model=UserRead)
 async def approve_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.approve_user(session, payload.admin_telegram_id, payload.target)
+    user = await users.approve_user(session, payload.admin_telegram_id, payload.target)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.post("/promote-admin", response_model=UserRead)
 async def promote_admin(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.promote_to_admin(session, payload.admin_telegram_id, payload.target)
+    user = await users.promote_to_admin(session, payload.admin_telegram_id, payload.target)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.post("/demote-admin", response_model=UserRead)
 async def demote_admin(payload: AdminRoleUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.demote_admin(session, payload.admin_telegram_id, payload.target)
+    user = await users.demote_admin(session, payload.admin_telegram_id, payload.target)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.post("/dsvr", response_model=UserRead)
@@ -51,7 +57,9 @@ async def set_dsvr(payload: DsvrRoleUpdate, session: AsyncSession = Depends(get_
 
 @router.post("/reject", response_model=UserRead)
 async def reject_user(payload: UserModerationUpdate, session: AsyncSession = Depends(get_session)):
-    return await users.reject_user(session, payload.admin_telegram_id, payload.target, payload.reason)
+    user = await users.reject_user(session, payload.admin_telegram_id, payload.target, payload.reason)
+    await outbox.commit_and_publish(session)
+    return user
 
 
 @router.post("/ban", response_model=UserRead)

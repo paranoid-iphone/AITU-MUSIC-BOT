@@ -78,10 +78,6 @@ async def groups_add_finish(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await _show_group(message, message.from_user.id, group_id, prefix=f"Админ группы назначен: @{user['telegram_username'] or user['telegram_id']}\n\n")
-    try:
-        await message.bot.send_message(user["telegram_id"], "Вас назначили админом группы. Откройте /start, чтобы увидеть админ-меню.")
-    except Exception:
-        pass
 
 
 @router.callback_query(F.data.startswith("groups:remove:"))

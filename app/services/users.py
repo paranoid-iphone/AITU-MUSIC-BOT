@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import User, UserRole, UserStatus
+from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.permissions import administered_group_ids, can_view_user, is_global_admin, require_group_admin
 
@@ -150,6 +151,11 @@ async def _require_moderation_rights(session: AsyncSession, admin: User, target:
     await require_group_admin(session, admin, target.group_id)
 
 
+def _notify(session: AsyncSession, target: User, text: str) -> None:
+    if target.notifications_enabled:
+        outbox.queue_notification(session, target.telegram_id, text)
+
+
 def require_approved(user: User) -> None:
     if user.role == UserRole.ADMIN.value:
         return
@@ -157,7 +163,8 @@ def require_approved(user: User) -> None:
         raise ForbiddenError("User is not approved")
 
 
-async def list_users_by_status(session: AsyncSession, admin_telegram_id: int, status: str | None = None) -> list[User]:
+async def _scoped_users(session: AsyncSession, admin_telegram_id: int) -> Select:
+    """Users the admin may moderate: everyone for a main admin, members of their own groups for a group admin."""
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:
         raise NotFoundError("Admin not found")
@@ -167,10 +174,39 @@ async def list_users_by_status(session: AsyncSession, admin_telegram_id: int, st
         if not group_ids or admin.status != UserStatus.APPROVED.value:
             raise ForbiddenError("Admin access required")
         stmt = stmt.where(User.group_id.in_(group_ids))
+    return stmt
+
+
+async def list_users_by_status(session: AsyncSession, admin_telegram_id: int, status: str | None = None) -> list[User]:
+    stmt = await _scoped_users(session, admin_telegram_id)
     if status is not None:
         stmt = stmt.where(User.status == status)
     result = await session.execute(stmt)
     return list(result.scalars())
+
+
+async def search_users(
+    session: AsyncSession, admin_telegram_id: int, status: str | None, query: str | None
+) -> tuple[list[User], dict[str, int]]:
+    """Scoped users filtered by status and a literal, case-insensitive text match; counts ignore both filters."""
+    result = await session.execute(await _scoped_users(session, admin_telegram_id))
+    scoped = list(result.scalars())
+    counts = {item.value: 0 for item in UserStatus}
+    for user in scoped:
+        counts[user.status] = counts.get(user.status, 0) + 1
+    users = [user for user in scoped if status is None or user.status == status]
+    needle = (query or "").strip().lstrip("@").lower()
+    if needle:
+        users = [
+            user
+            for user in users
+            if any(
+                needle in str(value).lower()
+                for value in (user.first_name, user.last_name, user.telegram_username, user.telegram_id)
+                if value is not None
+            )
+        ]
+    return users, counts
 
 
 async def approve_user(session: AsyncSession, admin_telegram_id: int, target_identifier: str) -> User:
@@ -183,6 +219,7 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     await _require_moderation_rights(session, admin, target)
     if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not is_global_admin(admin):
         raise ForbiddenError("Only a main admin can restore a banned or deleted user")
+    already_approved = target.status == UserStatus.APPROVED.value
     target.status = UserStatus.APPROVED.value
     target.moderation_reason = None
     target.registration_retry_after = None
@@ -196,6 +233,8 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
         target.telegram_id,
         f"Одобрил регистрацию: @{target.telegram_username or target.telegram_id}",
     )
+    if not already_approved:
+        _notify(session, target, "Ваша регистрация одобрена. Теперь доступны все функции AITU Music Club Bot.")
     await session.commit()
     await session.refresh(target)
     return target
@@ -226,6 +265,7 @@ async def promote_to_admin(session: AsyncSession, admin_telegram_id: int, target
         target.telegram_id,
         f"Added admin: @{target.telegram_username or target.telegram_id}",
     )
+    _notify(session, target, "Вам выдали права админа в AITU Music Club Bot.")
     await session.commit()
     await session.refresh(target)
     return target
@@ -254,6 +294,7 @@ async def demote_admin(session: AsyncSession, admin_telegram_id: int, target_ide
         target.telegram_id,
         f"Removed admin: @{target.telegram_username or target.telegram_id}",
     )
+    _notify(session, target, "С вас сняли права админа в AITU Music Club Bot.")
     await session.commit()
     await session.refresh(target)
     return target
@@ -320,6 +361,14 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
         "user",
         target.telegram_id,
         f"Отклонил заявку: @{target.telegram_username or target.telegram_id}. Причина: {reason or '-'}",
+    )
+    retry_after = target.registration_retry_after.strftime("%Y-%m-%d %H:%M")
+    _notify(
+        session,
+        target,
+        "Ваша регистрация отклонена, но это не бан.\n"
+        f"Повторно подать заявку можно после: {retry_after}.\n"
+        "Когда срок пройдет, отправьте /start.",
     )
     await session.commit()
     await session.refresh(target)
