@@ -43,7 +43,7 @@ services:
     volumes:
       - ./ngrok.yml:/etc/ngrok.yml:ro
     ports:
-      - "4040:4040"
+      - "127.0.0.1:4040:4040"
     depends_on:
       - backend
 

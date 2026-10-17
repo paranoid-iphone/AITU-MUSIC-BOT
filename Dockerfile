@@ -13,3 +13,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+RUN useradd --system --no-create-home app && chown -R app /app
+USER app

@@ -115,9 +115,17 @@ def require_admin(user: User) -> None:
 
 def _guard_moderation_target(admin: User, target: User) -> None:
     if target.telegram_id == admin.telegram_id:
-        raise ForbiddenError("You cannot ban or delete yourself")
+        raise ForbiddenError("You cannot ban, reject or delete yourself")
     if target.telegram_id in settings.initial_admin_ids:
-        raise ForbiddenError("Initial admin cannot be banned or deleted")
+        raise ForbiddenError("Initial admin cannot be banned, rejected or deleted")
+
+
+async def _require_moderation_rights(session: AsyncSession, admin: User, target: User) -> None:
+    """Group admins moderate regular members of their own group; staff (admin/DSVR) only main admins."""
+    if target.role in (UserRole.ADMIN.value, UserRole.DSVR.value):
+        require_admin(admin)
+        return
+    await require_group_admin(session, admin, target.group_id)
 
 
 def require_approved(user: User) -> None:
@@ -150,7 +158,9 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    await require_group_admin(session, admin, target.group_id)
+    await _require_moderation_rights(session, admin, target)
+    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not is_global_admin(admin):
+        raise ForbiddenError("Only a main admin can restore a banned or deleted user")
     target.status = UserStatus.APPROVED.value
     target.moderation_reason = None
     target.registration_retry_after = None
@@ -276,7 +286,8 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    await require_group_admin(session, admin, target.group_id)
+    await _require_moderation_rights(session, admin, target)
+    _guard_moderation_target(admin, target)
     target.status = UserStatus.REJECTED.value
     target.moderation_reason = reason
     target.registration_retry_after = datetime.utcnow() + timedelta(hours=settings.registration_retry_hours)
@@ -300,7 +311,7 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    await require_group_admin(session, admin, target.group_id)
+    await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
     target.status = UserStatus.BANNED.value
     target.role = UserRole.USER.value
@@ -326,7 +337,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     target = await get_user_by_identifier(session, target_identifier)
     if admin is None or target is None:
         raise NotFoundError("User not found")
-    await require_group_admin(session, admin, target.group_id)
+    await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value

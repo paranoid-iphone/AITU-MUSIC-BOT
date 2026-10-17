@@ -31,11 +31,24 @@ class Settings(BaseSettings):
         return {int(item) for item in values if item.isdigit()}
 
 
+MIN_INTERNAL_TOKEN_LENGTH = 32
+
+
+def validate_internal_token(loaded: Settings) -> None:
+    token = loaded.internal_api_token
+    if not token.strip():
+        raise RuntimeError("INTERNAL_API_TOKEN must not be empty")
+    if loaded.environment != "local" and (token == "change-me" or len(token) < MIN_INTERNAL_TOKEN_LENGTH):
+        raise RuntimeError(
+            f"INTERNAL_API_TOKEN must be a non-default secret of at least {MIN_INTERNAL_TOKEN_LENGTH} characters "
+            "when ENVIRONMENT is not 'local' (generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
+        )
+
+
 @lru_cache
 def get_settings() -> Settings:
     loaded = Settings()
-    if loaded.environment != "local" and loaded.internal_api_token == "change-me":
-        raise RuntimeError("INTERNAL_API_TOKEN must be changed from the default when ENVIRONMENT is not 'local'")
+    validate_internal_token(loaded)
     return loaded
 
 

@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+secrets/
+.git/
+.gitignore
+.claude/
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+tests/
+CLAUDE.md

@@ -123,6 +123,75 @@ async def test_admin_cannot_ban_self(session, make_user):
         await users.ban_user(session, admin.telegram_id, str(admin.telegram_id), "oops")
 
 
+async def _make_group_admin(session, make_user, main_admin, slug: str):
+    group_admin = await make_user(group_slug=slug)
+    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, slug), str(group_admin.telegram_id))
+    return group_admin
+
+
+@pytest.mark.parametrize("target_role", ["admin", "dsvr"])
+@pytest.mark.parametrize("action", ["approve", "reject", "ban", "delete"])
+async def test_group_admin_cannot_moderate_staff(session, make_user, target_role, action):
+    main_admin = await make_user(role="admin")
+    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+    target = await make_user(role=target_role, group_slug="music")
+
+    calls = {
+        "approve": lambda: users.approve_user(session, group_admin.telegram_id, str(target.telegram_id)),
+        "reject": lambda: users.reject_user(session, group_admin.telegram_id, str(target.telegram_id), "x"),
+        "ban": lambda: users.ban_user(session, group_admin.telegram_id, str(target.telegram_id), "x"),
+        "delete": lambda: users.soft_delete_user(session, group_admin.telegram_id, str(target.telegram_id), "x"),
+    }
+    with pytest.raises(ForbiddenError):
+        await calls[action]()
+    await session.refresh(target)
+    assert target.role == target_role
+    assert target.status == "approved"
+
+
+async def test_group_admin_still_moderates_regular_members_of_own_group(session, make_user):
+    main_admin = await make_user(role="admin")
+    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+    member = await make_user(group_slug="music")
+
+    banned = await users.ban_user(session, group_admin.telegram_id, str(member.telegram_id), "spam")
+    assert banned.status == "banned"
+
+
+async def test_group_admin_cannot_restore_banned_user(session, make_user):
+    main_admin = await make_user(role="admin")
+    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+    member = await make_user(group_slug="music")
+    await users.ban_user(session, main_admin.telegram_id, str(member.telegram_id), "rules")
+
+    with pytest.raises(ForbiddenError):
+        await users.approve_user(session, group_admin.telegram_id, str(member.telegram_id))
+    restored = await users.approve_user(session, main_admin.telegram_id, str(member.telegram_id))
+    assert restored.status == "approved"
+
+
+async def test_main_admin_can_moderate_dsvr(session, make_user):
+    main_admin = await make_user(role="admin")
+    dsvr = await make_user(role="dsvr", group_slug=None)
+
+    banned = await users.ban_user(session, main_admin.telegram_id, str(dsvr.telegram_id), "x")
+    assert banned.status == "banned"
+    assert banned.role == "user"
+
+
+async def test_admin_cannot_reject_self_or_initial_admin(session, make_user, monkeypatch):
+    from app.core.config import settings
+
+    admin = await make_user(role="admin")
+    other = await make_user(role="admin")
+    monkeypatch.setattr(type(settings), "initial_admin_ids", property(lambda self: {other.telegram_id}))
+
+    with pytest.raises(ForbiddenError):
+        await users.reject_user(session, admin.telegram_id, str(admin.telegram_id), "x")
+    with pytest.raises(ForbiddenError):
+        await users.reject_user(session, admin.telegram_id, str(other.telegram_id), "x")
+
+
 async def test_schedule_rows_carry_group_and_responsible(session, make_user, make_band):
     from datetime import timedelta
 

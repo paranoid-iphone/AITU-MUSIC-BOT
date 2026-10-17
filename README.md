@@ -71,7 +71,9 @@ docker compose up --build
 
 API docs: <http://localhost:8001/docs>. All routes except `/health` and `/webapp/*` need the header
 `X-Internal-Token`. Through the ngrok tunnel only `/webapp/*` and `/health` are reachable.
-With `ENVIRONMENT` other than `local` the backend refuses to start with the default `INTERNAL_API_TOKEN`.
+The backend refuses to start with an empty `INTERNAL_API_TOKEN`; with `ENVIRONMENT` other than `local` the token must also
+be non-default and at least 32 characters (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+The ngrok inspector (port 4040) is published on `127.0.0.1` only.
 
 Users listed in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and cannot be demoted or banned.
 
