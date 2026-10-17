@@ -23,7 +23,6 @@
   "webapp.time": "Time",
   "webapp.free": "free",
   "webapp.day_busy": "day closed",
-  "webapp.day_busy_default": "taken by another club",
   "webapp.song_missing": "no song specified",
   "webapp.responsible_short": "resp.",
   "webapp.purpose.concert": "for a concert",

@@ -46,7 +46,7 @@ async def update_available_day(
     require_admin(user)
     result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == day_of_week))
     day = result.scalar_one_or_none()
-    note = None if is_enabled else (occupied_by or "занято другим клубом").strip()[:150]
+    note = None if is_enabled else ((occupied_by or "").strip()[:150] or None)
     if day is None:
         day = AvailableDay(day_of_week=day_of_week, is_enabled=is_enabled, occupied_by=note)
         session.add(day)

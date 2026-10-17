@@ -776,7 +776,7 @@ async def list_day_closures(session: AsyncSession) -> list[dict]:
             {
                 "date": day,
                 "day_of_week": closed_day.day_of_week,
-                "occupied_by": closed_day.occupied_by or "занято другим клубом",
+                "occupied_by": closed_day.occupied_by or None,
             }
         )
     return rows

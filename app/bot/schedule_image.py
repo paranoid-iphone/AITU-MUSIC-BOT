@@ -152,7 +152,7 @@ def _draw_closed_day(draw: ImageDraw.ImageDraw, day_idx: int, col_w: int, grid_t
     for y in range(y1 - col_w, y2, 20):
         draw.line((x1, y + col_w, x2, y), fill=CLOSED_LINE, width=1)
     y = y1 + 16
-    draw.text((x1 + 18, y), "день занят", fill=CLOSED_TEXT, font=FONT_CARD_BAND)
+    draw.text((x1 + 18, y), "день закрыт", fill=CLOSED_TEXT, font=FONT_CARD_BAND)
     y += 22
     for line in _fit_lines(occupied_by, 18, 3):
         draw.text((x1 + 18, y), line, fill=CLOSED_TEXT, font=FONT_SMALL)
@@ -210,11 +210,10 @@ def render_schedule_image(bookings: list[dict], day_closures: list[dict] | None 
         if day == now.date():
             _draw_today_past(draw, day_idx, col_w, grid_top, grid_h, now)
 
-    closed_by_date = {item.get("date"): item.get("occupied_by") or "занято другим клубом" for item in (day_closures or [])}
+    closed_by_date = {item.get("date"): item.get("occupied_by") or "" for item in (day_closures or [])}
     for day_idx, day in enumerate(days):
-        occupied_by = closed_by_date.get(day.isoformat())
-        if occupied_by:
-            _draw_closed_day(draw, day_idx, col_w, grid_top, grid_h, occupied_by)
+        if day.isoformat() in closed_by_date:
+            _draw_closed_day(draw, day_idx, col_w, grid_top, grid_h, closed_by_date[day.isoformat()])
 
     bookings_by_day: dict[str, list[dict]] = {day.isoformat(): [] for day in days}
     for booking in bookings:

@@ -152,6 +152,7 @@ function syncBackButton() {
 }
 
 function renderChrome(route) {
+  document.body.dataset.route = route; // lets the desktop CSS give the schedule a wider column than the other screens
   document.getElementById("title").textContent = t("webapp.title", "AITU Music Club");
   const nav = document.getElementById("nav");
   nav.replaceChildren(
@@ -205,10 +206,13 @@ function cellsAreFree(date, from, to) {
 function pickCell(date, minute) {
   const step = state.data.slot_minutes;
   const selection = state.selection;
+  const tappedSelected = Boolean(selection) && selection.date === date && minute >= selection.from && minute < selection.to;
   if (!selection || selection.date !== date) {
     state.selection = { date, from: minute, to: minute + step };
-  } else if (selection.to - selection.from === step && selection.from === minute) {
-    state.selection = null; // tapping the only selected cell again clears it
+  } else if (tappedSelected) {
+    // tapping a selected cell switches it off; the range must stay in one piece, so a middle cell cuts it short
+    if (minute === selection.from) state.selection = selection.to - step > minute ? { ...selection, from: minute + step } : null;
+    else state.selection = { ...selection, to: minute };
   } else {
     const from = Math.min(selection.from, minute);
     const to = Math.max(selection.to, minute + step);
@@ -233,8 +237,7 @@ function renderSelectionBar() {
   const selection = state.selection;
   document.body.classList.toggle("has-selbar", Boolean(selection));
   if (!selection) {
-    bar.className = "selbar";
-    bar.replaceChildren();
+    bar.className = "selbar"; // keep the old content so the bar can slide out with it
     return;
   }
   bar.className = "selbar show";
@@ -268,7 +271,7 @@ async function renderSchedule(screen, token) {
       covered.add(`${item.booking_date}|${minutesToTime(minute)}`);
     }
   }
-  const closedByDate = new Map(data.day_closures.map((item) => [item.date, item.occupied_by || t("webapp.day_busy_default")]));
+  const closedByDate = new Map(data.day_closures.map((item) => [item.date, item.occupied_by || ""]));
 
   const head = el("tr", {}, [
     el("th", { text: t("webapp.time") }),
@@ -292,11 +295,13 @@ async function renderSchedule(screen, token) {
       const item = byStart.get(key);
       if (item) {
         cell.rowSpan = Math.max(1, Math.ceil((timeToMinutes(item.end_time) - timeToMinutes(item.start_time)) / data.slot_minutes));
-        cell.append(bookingBlock(item));
+        const block = bookingBlock(item);
+        if (cell.rowSpan === 1) block.classList.add("short");
+        cell.append(block);
       } else if (closedByDate.has(day.date)) {
         cell.append(el("div", { className: "closed" }, [
           el("div", { className: "closed-title", text: t("webapp.day_busy") }),
-          el("div", { className: "closed-note", text: closedByDate.get(day.date) }),
+          closedByDate.get(day.date) ? el("div", { className: "closed-note", text: closedByDate.get(day.date) }) : null,
         ]));
       } else {
         const isFree = state.free.has(day.date) && state.free.get(day.date).has(time);
