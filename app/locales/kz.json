@@ -280,5 +280,15 @@
   "webapp.admin.settings.edit": "Өзгерту",
   "webapp.admin.settings.save": "Сақтау",
   "webapp.admin.settings.saved": "Сақталды",
-  "webapp.admin.settings.error": "Сақтау мүмкін болмады"
+  "webapp.admin.settings.error": "Сақтау мүмкін болмады",
+  "webapp.admin.tab.history": "Тарих",
+  "webapp.admin.history.empty": "Әзірге өзгерістер жоқ",
+  "webapp.admin.history.all_groups": "Барлық топтар",
+  "webapp.admin.history.more": "Тағы көрсету",
+  "webapp.admin.history.reason": "Себебі",
+  "webapp.admin.history.action.created": "бронь жасады",
+  "webapp.admin.history.action.updated": "броньды өзгертті",
+  "webapp.admin.history.action.cancelled": "броньды жойды",
+  "webapp.admin.history.action.preempted": "броньды ығыстырды (ДСВР)",
+  "webapp.admin.history.action.auto_assigned": "авто-бөлу"
 }

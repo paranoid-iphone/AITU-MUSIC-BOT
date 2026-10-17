@@ -115,3 +115,14 @@ async def test_history_visibility(session, make_user, make_band):
         await schedule_history.list_changes(session, stranger.telegram_id, band_id=music_band.id)
     with pytest.raises(ForbiddenError):
         await schedule_history.list_changes(session, music_owner.telegram_id)
+
+
+async def test_list_changes_pages_by_before_id(session, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    session.add_all([models.ScheduleChange(band_name=f"Band{i}", action="created", after={}) for i in range(5)])
+    await session.commit()
+
+    first = await schedule_history.list_changes(session, admin.telegram_id, limit=2)
+    rest = await schedule_history.list_changes(session, admin.telegram_id, limit=10, before_id=first[-1]["id"])
+    assert [row["band_name"] for row in first] == ["Band4", "Band3"]
+    assert [row["band_name"] for row in rest] == ["Band2", "Band1", "Band0"]

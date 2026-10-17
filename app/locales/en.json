@@ -280,5 +280,15 @@
   "webapp.admin.settings.edit": "Change",
   "webapp.admin.settings.save": "Save",
   "webapp.admin.settings.saved": "Saved",
-  "webapp.admin.settings.error": "Could not save"
+  "webapp.admin.settings.error": "Could not save",
+  "webapp.admin.tab.history": "History",
+  "webapp.admin.history.empty": "No changes yet",
+  "webapp.admin.history.all_groups": "All groups",
+  "webapp.admin.history.more": "Show more",
+  "webapp.admin.history.reason": "Reason",
+  "webapp.admin.history.action.created": "created a booking",
+  "webapp.admin.history.action.updated": "changed a booking",
+  "webapp.admin.history.action.cancelled": "cancelled a booking",
+  "webapp.admin.history.action.preempted": "preempted a booking (DSVR)",
+  "webapp.admin.history.action.auto_assigned": "automatic allocation"
 }

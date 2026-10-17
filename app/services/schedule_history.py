@@ -111,16 +111,20 @@ async def list_changes(
     band_id: int | None = None,
     group_id: int | None = None,
     limit: int = 20,
+    before_id: int | None = None,
 ) -> list[dict]:
+    """Newest first; pass the last id you got as `before_id` to fetch the next page."""
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
     stmt = (
         select(ScheduleChange)
         .options(selectinload(ScheduleChange.actor))
-        .order_by(ScheduleChange.created_at.desc(), ScheduleChange.id.desc())
+        .order_by(ScheduleChange.id.desc())
         .limit(max(1, min(limit, 100)))
     )
+    if before_id is not None:
+        stmt = stmt.where(ScheduleChange.id < before_id)
     if band_id is not None:
         stmt = stmt.where(ScheduleChange.band_id == band_id)
     if group_id is not None:

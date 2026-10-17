@@ -1,4 +1,7 @@
 """Mini App admin API: requests, users and roles, plus the user notifications those actions queue."""
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 import pytest
 from sqlalchemy import delete, func, select
 
@@ -376,3 +379,85 @@ async def test_personal_rehearsals_can_be_switched_off_for_everyone(client, make
     assert off.json() == {"personal_enabled": False}
     assert (await client.get(SETTINGS, headers=tg(admin.telegram_id))).json()["personal_enabled"] is False
     assert (await client.get("/webapp/api/my-bands", headers=tg(member.telegram_id))).json()["personal_enabled"] is False
+
+
+async def add_changes(session, group_slug: str | None, count: int, name: str, start_id_hour: int = 0) -> list[models.ScheduleChange]:
+    gid = await group_id(session, group_slug) if group_slug else None
+    rows = [
+        models.ScheduleChange(
+            band_name=name,
+            group_id=gid,
+            action="created",
+            after={"date": "2026-01-05", "start": "18:00", "end": "19:00", "purpose": "band", "song_title": None, "status": "booked"},
+            created_at=datetime(2026, 1, 1, 20, 0) + timedelta(minutes=start_id_hour + index),
+        )
+        for index in range(count)
+    ]
+    session.add_all(rows)
+    await session.commit()
+    return rows
+
+
+async def test_history_is_open_to_admins_dsvr_and_group_admins_only(client, session, make_user):
+    main_admin, group_admin, _, _ = await staff(make_user, session)
+    dsvr = await make_user(role="dsvr")
+    plain = await make_user()
+    for user in (main_admin, group_admin, dsvr):
+        assert (await client.get(f"{API}/history", headers=tg(user.telegram_id))).status_code == 200
+    assert (await client.get(f"{API}/history", headers=tg(plain.telegram_id))).status_code == 403
+    assert (await client.get(f"{API}/history")).status_code == 401
+    # DSVR get the history only; the rest of the admin screen stays closed to them.
+    assert (await client.get(f"{API}/users", headers=tg(dsvr.telegram_id))).status_code == 403
+
+
+async def test_history_is_scoped_by_role_and_lists_visible_groups(client, session, make_user):
+    main_admin, group_admin, _, _ = await staff(make_user, session)
+    dsvr = await make_user(role="dsvr")
+    await add_changes(session, "music", 1, "Music")
+    await add_changes(session, "dance", 1, "Dance")
+
+    def names(body):
+        return {item["band_name"] for item in body["items"]}
+
+    scoped = (await client.get(f"{API}/history", headers=tg(group_admin.telegram_id))).json()
+    assert names(scoped) == {"Music"}
+    assert [group["slug"] for group in scoped["groups"]] == ["music"]
+    for viewer in (main_admin, dsvr):
+        everything = (await client.get(f"{API}/history", headers=tg(viewer.telegram_id))).json()
+        assert names(everything) == {"Music", "Dance"}
+        assert {"music", "dance"} <= {group["slug"] for group in everything["groups"]}
+
+    dance = await group_id(session, "dance")
+    filtered = (await client.get(f"{API}/history?group_id={dance}", headers=tg(main_admin.telegram_id))).json()
+    assert names(filtered) == {"Dance"}
+    # A group admin asking for a group they do not run gets nothing rather than someone else's rows.
+    foreign = (await client.get(f"{API}/history?group_id={dance}", headers=tg(group_admin.telegram_id))).json()
+    assert foreign["items"] == []
+
+
+async def test_history_pages_through_a_cursor_without_overlap(client, session, make_user):
+    main_admin, _, _, _ = await staff(make_user, session)
+    created = await add_changes(session, "music", 5, "Music")
+    headers = tg(main_admin.telegram_id)
+
+    first = (await client.get(f"{API}/history?limit=2", headers=headers)).json()
+    assert [item["id"] for item in first["items"]] == [created[4].id, created[3].id]
+    assert first["next_before_id"] == created[3].id
+    second = (await client.get(f"{API}/history?limit=2&before_id={first['next_before_id']}", headers=headers)).json()
+    assert [item["id"] for item in second["items"]] == [created[2].id, created[1].id]
+    last = (await client.get(f"{API}/history?limit=2&before_id={second['next_before_id']}", headers=headers)).json()
+    assert [item["id"] for item in last["items"]] == [created[0].id]
+    assert last["next_before_id"] is None
+
+    exact = (await client.get(f"{API}/history?limit=5", headers=headers)).json()
+    assert len(exact["items"]) == 5 and exact["next_before_id"] is None
+    assert (await client.get(f"{API}/history?limit=51", headers=headers)).status_code == 422
+
+
+async def test_history_times_are_shown_in_club_time(client, session, make_user):
+    main_admin, _, _, _ = await staff(make_user, session)
+    await add_changes(session, "music", 1, "Music")  # stored as 2026-01-01 20:00 UTC
+    item = (await client.get(f"{API}/history", headers=tg(main_admin.telegram_id))).json()["items"][0]
+    expected = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc).astimezone(ZoneInfo(settings.timezone))
+    assert item["created_local"] == expected.strftime("%Y-%m-%dT%H:%M")
+    assert item["created_at"].startswith("2026-01-01T20:00")

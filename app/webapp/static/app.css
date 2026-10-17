@@ -277,19 +277,21 @@ body.has-selbar main { padding-bottom: 76px; }
   cursor: pointer;
 }
 .member:first-of-type { border-top: 0; }
+.member.static { cursor: default; }
 .member-name { font-size: 15px; }
 .member .meta { margin: 2px 0 0; }
 .member .badges { margin: 0; justify-content: flex-end; }
 
 /* admin */
-.segments { display: flex; gap: 6px; margin: 0 0 12px; padding: 4px; border-radius: 12px; background: var(--surface); }
+.segments { display: flex; gap: 6px; margin: 0 0 12px; padding: 4px; border-radius: 12px; background: var(--surface); overflow-x: auto; }
 .segment {
-  flex: 1 1 0;
+  flex: 1 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 8px 6px;
+  padding: 8px 12px;
+  white-space: nowrap;
   border: 0;
   border-radius: 9px;
   color: var(--text);

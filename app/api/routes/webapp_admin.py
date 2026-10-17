@@ -3,11 +3,15 @@
 Permission rules live in `services/users.py` and `services/groups.py`; these routes only check who may open the
 screen at all and translate the services' results into JSON.
 """
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.webapp_auth import current_webapp_user, fresh_webapp_user
+from app.core.config import settings
 from app.db.models import Group, User, UserRole, UserStatus
 from app.db.session import get_session
 from app.schemas.webapp_admin import (
@@ -23,7 +27,8 @@ from app.services import groups as group_service
 from app.services import outbox
 from app.services import users as user_service
 from app.services.errors import ForbiddenError
-from app.services.permissions import administered_group_ids, is_global_admin
+from app.services import schedule_history
+from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
 
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
 
@@ -39,6 +44,13 @@ async def admin_reader(user: User = Depends(current_webapp_user), session: Async
 
 
 async def admin_writer(user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)) -> User:
+    return await _require_staff(session, user)
+
+
+async def history_reader(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> User:
+    """The history is also open to DSVR, who have no other admin screen; `list_changes` scopes the rows."""
+    if is_dsvr(user):
+        return user
     return await _require_staff(session, user)
 
 
@@ -228,3 +240,34 @@ async def set_personal(
 ) -> dict:
     result = await admin_service.update_personal_bookings_enabled(session, admin.telegram_id, payload.enabled)
     return {"personal_enabled": result["personal_bookings_enabled"]}
+
+
+def _club_local(iso_utc: str) -> str:
+    """`ScheduleChange.created_at` is naive UTC; the Mini App shows club time."""
+    local = datetime.fromisoformat(iso_utc).replace(tzinfo=timezone.utc).astimezone(ZoneInfo(settings.timezone))
+    return local.strftime("%Y-%m-%dT%H:%M")
+
+
+@router.get("/history")
+async def history(
+    group_id: int | None = None,
+    before_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+    viewer: User = Depends(history_reader),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Schedule changes the viewer may see, newest first; `next_before_id` is the cursor for the next page."""
+    rows = await schedule_history.list_changes(
+        session, viewer.telegram_id, group_id=group_id, limit=limit + 1, before_id=before_id
+    )
+    page = rows[:limit]
+    if is_global_admin(viewer) or is_dsvr(viewer):
+        groups = (await session.execute(select(Group).order_by(Group.title))).scalars().all()
+    else:
+        ids = await administered_group_ids(session, viewer)
+        groups = (await session.execute(select(Group).where(Group.id.in_(ids)).order_by(Group.title))).scalars().all()
+    return {
+        "items": [{**row, "created_local": _club_local(row["created_at"])} for row in page],
+        "next_before_id": page[-1]["id"] if len(rows) > limit else None,
+        "groups": [_group_payload(group) for group in groups],
+    }

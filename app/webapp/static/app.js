@@ -24,6 +24,7 @@ const state = {
   adminQuery: "",
   adminStatus: "",
   adminSearchToken: 0,
+  historyGroup: "", // club group id filtering the history tab, "" = every group
 };
 
 if (tg) {
@@ -1305,14 +1306,27 @@ async function renderBands(screen, token) {
 
 /* ---------- admin ---------- */
 
-const ADMIN_TABS = ["requests", "users", "roles", "settings"];
+const ADMIN_TABS = ["requests", "users", "roles", "settings", "history"];
 const MAIN_ADMIN_TABS = ["roles", "settings"];
+const HISTORY_PAGE_SIZE = 20;
 const USER_STATUSES = ["pending", "approved", "rejected", "banned", "deleted"];
 const REASON_ACTIONS = ["reject", "ban", "delete"];
 const SEARCH_DEBOUNCE_MS = 300;
 
+// DSVR get the admin screen for the history alone; moderation and settings need an admin or a group admin.
 function canAdmin() {
-  return Boolean(canBook() && (state.me.is_admin || state.me.administered_groups.length));
+  return Boolean(canBook() && (state.me.is_admin || state.me.is_dsvr || state.me.administered_groups.length));
+}
+
+function canModerate() {
+  return Boolean(state.me.is_admin || state.me.administered_groups.length);
+}
+
+function adminTabs() {
+  return ADMIN_TABS.filter((tab) => {
+    if (tab === "history") return true;
+    return MAIN_ADMIN_TABS.includes(tab) ? state.me.is_admin : canModerate();
+  });
 }
 
 function personName(person) {
@@ -1639,32 +1653,115 @@ function settingsCards(settings) {
   ];
 }
 
+async function pendingRequests() {
+  return canModerate() ? (await api("/admin/users?status=pending")).counts.pending : 0;
+}
+
+function adminHead(tabs, pending) {
+  return tabs.length > 1 ? [adminSegments(tabs, pending)] : [];
+}
+
 async function renderAdmin(screen, token) {
   document.getElementById("meta").textContent = "";
   if (!canAdmin()) {
     screen.replaceChildren(notice(t("webapp.admin.not_allowed"), true));
     return;
   }
-  const tabs = state.me.is_admin ? ADMIN_TABS : ADMIN_TABS.filter((tab) => !MAIN_ADMIN_TABS.includes(tab));
+  const tabs = adminTabs();
   if (!tabs.includes(state.adminTab)) state.adminTab = tabs[0];
-  if (state.adminTab === "settings") {
-    const [settings, pending] = await Promise.all([api("/admin/settings"), api("/admin/users?status=pending")]);
+  if (state.adminTab === "history") {
+    const [page, pending] = await Promise.all([api(historyPath()), pendingRequests()]);
     if (token !== state.renderToken) return;
-    screen.replaceChildren(adminSegments(tabs, pending.counts.pending), ...settingsCards(settings));
+    screen.replaceChildren(...adminHead(tabs, pending), ...historyView(page));
+  } else if (state.adminTab === "settings") {
+    const [settings, pending] = await Promise.all([api("/admin/settings"), pendingRequests()]);
+    if (token !== state.renderToken) return;
+    screen.replaceChildren(...adminHead(tabs, pending), ...settingsCards(settings));
   } else if (state.adminTab === "roles") {
-    const [staff, pending] = await Promise.all([api("/admin/staff"), api("/admin/users?status=pending")]);
+    const [staff, pending] = await Promise.all([api("/admin/staff"), pendingRequests()]);
     if (token !== state.renderToken) return;
-    screen.replaceChildren(adminSegments(tabs, pending.counts.pending), ...roleSections(staff));
+    screen.replaceChildren(...adminHead(tabs, pending), ...roleSections(staff));
   } else if (state.adminTab === "requests") {
     const data = await api("/admin/users?status=pending");
     if (token !== state.renderToken) return;
-    screen.replaceChildren(adminSegments(tabs, data.counts.pending), peopleList(data.users, t("webapp.admin.empty.requests")));
+    screen.replaceChildren(...adminHead(tabs, data.counts.pending), peopleList(data.users, t("webapp.admin.empty.requests")));
   } else {
     const data = await api(usersPath());
     if (token !== state.renderToken) return;
     const list = el("div", {}, [peopleList(data.users, t("webapp.admin.empty.users"))]);
-    screen.replaceChildren(adminSegments(tabs, data.counts.pending), usersControls(list), list);
+    screen.replaceChildren(...adminHead(tabs, data.counts.pending), usersControls(list), list);
   }
+}
+
+/* ---------- admin: history ---------- */
+
+function historyPath(beforeId) {
+  const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
+  if (state.historyGroup) params.set("group_id", state.historyGroup);
+  if (beforeId) params.set("before_id", String(beforeId));
+  return `/admin/history?${params}`;
+}
+
+function historySlot(snapshot) {
+  if (!snapshot) return "—";
+  const title = snapshot.song_title ? ` · ${snapshot.song_title}` : "";
+  return `${shortDate(snapshot.date)} ${snapshot.start}–${snapshot.end}${title}`;
+}
+
+function historyRow(item) {
+  const slot = item.action === "updated"
+    ? `${historySlot(item.before)} → ${historySlot(item.after)}`
+    : historySlot(["cancelled", "preempted"].includes(item.action) ? item.before || item.after : item.after);
+  const stamp = `${shortDate(item.created_local.slice(0, 10))} ${item.created_local.slice(11, 16)}`;
+  const lines = [`${stamp} · ${item.band_name || "—"}`, slot];
+  if (item.reason) lines.push(`${t("webapp.admin.history.reason")}: ${item.reason}`);
+  return el("div", { className: "member static" }, [
+    el("div", {}, [
+      el("div", { className: "member-name", text: `${item.actor_name} ${t(`webapp.admin.history.action.${item.action}`, item.action)}` }),
+      ...lines.map((text) => el("div", { className: "meta", text })),
+    ]),
+  ]);
+}
+
+// `first` is the already fetched first page; the filter and "show more" fetch the rest.
+function historyView(first) {
+  const body = el("div", {});
+  let items = first.items;
+  let cursor = first.next_before_id;
+  let latest = 0;
+  const more = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.history.more") });
+  const paint = () => body.replaceChildren(...[
+    items.length ? el("div", { className: "card" }, items.map(historyRow)) : notice(t("webapp.admin.history.empty")),
+    cursor ? el("div", { className: "actions" }, [more]) : null,
+  ].filter(Boolean));
+  const load = async (beforeId) => {
+    const mine = ++latest;
+    try {
+      const data = await api(historyPath(beforeId));
+      if (mine !== latest) return;
+      items = beforeId ? items.concat(data.items) : data.items;
+      cursor = data.next_before_id;
+      paint();
+    } catch (_) {
+      if (mine !== latest) return;
+      if (beforeId) toast(t("webapp.error.load"), true);
+      else body.replaceChildren(notice(t("webapp.error.load"), true));
+    }
+  };
+  more.addEventListener("click", () => load(cursor));
+  paint();
+  if (first.groups.length < 2) return [body];
+  if (state.historyGroup && !first.groups.some((group) => String(group.id) === state.historyGroup)) {
+    state.historyGroup = "";
+    load(null);
+  }
+  const filter = el("select", {}, [
+    el("option", { value: "", text: t("webapp.admin.history.all_groups") }),
+    ...first.groups.map((group) => el("option", { value: String(group.id), text: group.title })),
+  ]);
+  filter.value = state.historyGroup;
+  filter.addEventListener("change", () => { state.historyGroup = filter.value; load(null); });
+  return [el("div", { className: "form admin-filters" }, [filter]), body];
 }
 
 /* ---------- profile ---------- */
