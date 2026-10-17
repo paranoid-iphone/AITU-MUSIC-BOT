@@ -129,7 +129,7 @@ class GspreadBackend:
     def replace_schedule(self, rows: list[list]) -> None:
         try:
             worksheet = self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER))
-            worksheet.update(values=rows, range_name="A1")
+            worksheet.update(values=rows, range_name="A1", value_input_option="RAW")
             worksheet.batch_clear([f"A{len(rows) + 1}:Z5000"])  # drop leftovers of a longer previous version
         except Exception:
             self._spreadsheet = None  # reconnect next time
@@ -139,7 +139,7 @@ class GspreadBackend:
         try:
             worksheet = self._worksheet(HISTORY_SHEET, len(HISTORY_HEADER))
             if not worksheet.get_values("A1:A1"):
-                worksheet.update(values=[HISTORY_HEADER], range_name="A1")
+                worksheet.update(values=[HISTORY_HEADER], range_name="A1", value_input_option="RAW")
             worksheet.append_rows(rows, value_input_option="RAW")
         except Exception:
             self._spreadsheet = None

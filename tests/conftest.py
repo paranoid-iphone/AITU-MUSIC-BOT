@@ -108,10 +108,10 @@ def planning_on(session, monkeypatch):  # depends on `session` so it is applied 
 @pytest.fixture
 def freeze_now(monkeypatch):
     """Pin the club clock: freeze_now(datetime(2026, 10, 18, 12, 0))."""
-    from app.services import planning
+    from app.services import bands, events, planning
 
     def _freeze(moment):
-        for module in (booking_service, planning):
+        for module in (booking_service, planning, bands, events):
             monkeypatch.setattr(module, "now_local", lambda moment=moment: moment)
 
     return _freeze

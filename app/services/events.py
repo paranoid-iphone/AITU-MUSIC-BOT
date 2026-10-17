@@ -5,7 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import BandMember, Event, EventApplication, EventApplicationMember, PersonalEventHistory
+from app.core.timezone import now_local
+from app.db.models import BandMember, Event, EventApplication, EventApplicationMember, EventStatus, PersonalEventHistory
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
@@ -66,6 +67,17 @@ async def list_events(session: AsyncSession) -> list[Event]:
     return list(result.scalars())
 
 
+async def _require_open_event(session: AsyncSession, event_id: int) -> Event:
+    event = (await session.execute(select(Event).where(Event.id == event_id))).scalar_one_or_none()
+    if event is None:
+        raise NotFoundError("Event not found")
+    if event.status != EventStatus.OPEN.value:
+        raise ConflictError("Applications for this event are closed")
+    if event.submission_deadline is not None and now_local().date() > event.submission_deadline:
+        raise ConflictError("The submission deadline for this event has passed")
+    return event
+
+
 async def submit_application(
     session: AsyncSession,
     event_id: int,
@@ -85,6 +97,7 @@ async def submit_application(
     )
     if owner_result.scalar_one_or_none() is None:
         raise ForbiddenError("Only band owner can submit lists")
+    await _require_open_event(session, event_id)
     members_result = await session.execute(
         select(BandMember).where(BandMember.band_id == band_id, BandMember.id.in_(member_ids)).options(selectinload(BandMember.user))
     )
@@ -265,6 +278,7 @@ async def update_application(
     if application is None:
         raise NotFoundError("Application not found")
     user = await _require_application_manager(session, telegram_id, application)
+    await _require_open_event(session, application.event_id)
     if song_title is not None:
         application.song_title = song_title
     if member_ids is not None:
@@ -504,6 +518,7 @@ async def export_event_applications(session: AsyncSession, telegram_id: int, eve
     sheet = workbook.active
     sheet.title = "Participants"
     sheet.append(["Concert", "Band", "Song", "Last name", "First name", "Study group", "Role", "Telegram"])
+    first_data_row = sheet.max_row + 1
     for application in applications:
         for member in application.members:
             user = member.user
@@ -519,6 +534,11 @@ async def export_event_applications(session: AsyncSession, telegram_id: int, eve
                     f"@{user.telegram_username}" if user.telegram_username else "",
                 ]
             )
+    # User-entered text must never be evaluated as a formula by Excel / LibreOffice.
+    for row in sheet.iter_rows(min_row=first_data_row):
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()

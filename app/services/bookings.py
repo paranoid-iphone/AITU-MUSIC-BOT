@@ -85,6 +85,11 @@ async def _can_manage_booking(session: AsyncSession, user, booking: Booking) -> 
     return await can_manage_schedule(session, user, booking)
 
 
+def _ensure_booking_not_past(booking: Booking) -> None:
+    if datetime.combine(booking.booking_date, booking.end_time) <= now_local():
+        raise ConflictError("Past bookings cannot be changed")
+
+
 _BOOKING_LOCK_KEY = 7351001
 
 
@@ -130,10 +135,7 @@ async def get_weekly_booking_limit_minutes(session: AsyncSession) -> int:
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "weekly_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
     if setting is None:
-        setting = ClubSetting(key="weekly_booking_limit_minutes", value="240")
-        session.add(setting)
-        await session.commit()
-        return 240
+        return 240  # read-only: a commit here would release the booking advisory lock mid-operation
     try:
         return int(setting.value)
     except ValueError:
@@ -144,9 +146,6 @@ async def get_daily_booking_limit_minutes(session: AsyncSession) -> int:
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "daily_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
     if setting is None:
-        setting = ClubSetting(key="daily_booking_limit_minutes", value="0")
-        session.add(setting)
-        await session.commit()
         return 0
     try:
         return int(setting.value)
@@ -521,6 +520,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
+    await _lock_bookings(session)
     result = await session.execute(
         select(Booking)
         .where(Booking.id == booking_id)
@@ -533,6 +533,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
         raise ForbiddenError("You cannot manage this booking")
     if booking.status != BookingStatus.CONFIRMED.value:
         raise ConflictError("Booking is already cancelled")
+    _ensure_booking_not_past(booking)
     band_name = _booking_owner_label(booking)
     created_by = (
         f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
@@ -580,6 +581,7 @@ async def update_booking(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
+    await _lock_bookings(session)
     result = await session.execute(
         select(Booking)
         .where(Booking.id == booking_id)
@@ -593,6 +595,7 @@ async def update_booking(
         raise ForbiddenError("You cannot manage this booking")
     if booking.status != BookingStatus.CONFIRMED.value:
         raise ConflictError("Cancelled booking cannot be changed")
+    _ensure_booking_not_past(booking)
     before = snapshot(booking)
     if purpose is not None:
         if booking.band_id is not None and purpose in {"staff", "personal"}:
@@ -603,7 +606,6 @@ async def update_booking(
     new_start = start_time or booking.start_time
     new_end = end_time or booking.end_time
     if booking_date is not None or start_time is not None or end_time is not None:
-        await _lock_bookings(session)
         await _ensure_booking_time_available(
             session, new_date, new_start, new_end, booking.id, privileged=is_global_admin(user) or is_dsvr(user)
         )

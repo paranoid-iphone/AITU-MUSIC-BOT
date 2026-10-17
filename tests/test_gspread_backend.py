@@ -84,7 +84,7 @@ def test_schedule_sheet_is_created_written_and_trailing_rows_cleared(backend):
     names = [name for name, _, _ in backend.calls]
     assert names == ["open_by_key", "add_worksheet", "update", "batch_clear"]
     update = next(call for call in backend.calls if call[0] == "update")
-    assert update[2] == {"values": rows, "range_name": "A1"}
+    assert update[2] == {"values": rows, "range_name": "A1", "value_input_option": "RAW"}
     clear = next(call for call in backend.calls if call[0] == "batch_clear")
     assert clear[1] == (["A3:Z5000"],)
 

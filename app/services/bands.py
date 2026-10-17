@@ -1,9 +1,22 @@
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Band, BandMember, Booking, EventApplication, EventApplicationMember, UserStatus
+from app.core.timezone import now_local
+from app.db.models import (
+    AvailabilityRequest,
+    Band,
+    BandMember,
+    Booking,
+    BookingStatus,
+    EventApplication,
+    EventApplicationMember,
+    UserStatus,
+)
 from app.services.errors import ForbiddenError, NotFoundError
+from app.services.outbox import commit_and_publish
 from app.services.permissions import (
     administered_group_ids,
     can_manage_band,
@@ -11,6 +24,7 @@ from app.services.permissions import (
     can_view_invite_code,
     is_global_admin,
 )
+from app.services.schedule_history import record_change, snapshot
 from app.services.users import get_user_by_telegram_id, require_approved
 
 
@@ -255,13 +269,28 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
 async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id: int) -> dict:
     from app.services.audit import log_action
 
+    from app.services.bookings import _lock_bookings
+
     requester = await _require_band_manager(session, band_id, requester_telegram_id)
+    await _lock_bookings(session)
     band = await get_band_detail(session, band_id)
     deleted = {"id": band.id, "name": band.name}
 
+    now = now_local()
     bookings_result = await session.execute(select(Booking).where(Booking.band_id == band_id))
     for booking in bookings_result.scalars():
+        if booking.status == BookingStatus.CONFIRMED.value and datetime.combine(booking.booking_date, booking.end_time) > now:
+            before = snapshot(booking)
+            booking.status = BookingStatus.CANCELLED.value
+            booking.cancelled_by_id = requester.id
+            booking.cancel_reason = "Коллектив удалён"
+            await record_change(session, booking, "cancelled", requester, before=before, reason=booking.cancel_reason)
+        # Past and cancelled bookings stay as history; ScheduleChange keeps the band name.
         booking.band_id = None
+
+    requests_result = await session.execute(select(AvailabilityRequest).where(AvailabilityRequest.band_id == band_id))
+    for availability_request in requests_result.scalars():
+        await session.delete(availability_request)
 
     applications_result = await session.execute(select(EventApplication).where(EventApplication.band_id == band_id))
     for application in applications_result.scalars():
@@ -281,5 +310,5 @@ async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id
         f"Удалил коллектив: {band.name}",
     )
     await session.delete(band)
-    await session.commit()
+    await commit_and_publish(session)
     return deleted

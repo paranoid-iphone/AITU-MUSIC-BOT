@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -33,9 +33,12 @@ async def get_user_for_requester(session: AsyncSession, telegram_id: int, reques
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
-    normalized = username.strip().lstrip("@")
-    result = await session.execute(select(User).where(User.telegram_username == normalized))
-    return result.scalar_one_or_none()
+    normalized = username.strip().lstrip("@").lower()
+    result = await session.execute(select(User).where(func.lower(User.telegram_username) == normalized).limit(2))
+    matches = list(result.scalars())
+    if len(matches) > 1:
+        raise ConflictError("Several users share this username: use the numeric Telegram ID")
+    return matches[0] if matches else None
 
 
 async def get_user_by_identifier(session: AsyncSession, identifier: str) -> User | None:
@@ -52,6 +55,13 @@ async def upsert_telegram_user(
     telegram_full_name: str | None,
 ) -> User:
     user = await get_user_by_telegram_id(session, telegram_id)
+    if telegram_username:
+        # Telegram usernames are unique: whoever holds this one in our DB under another id is stale.
+        await session.execute(
+            update(User)
+            .where(func.lower(User.telegram_username) == telegram_username.lower(), User.telegram_id != telegram_id)
+            .values(telegram_username=None)
+        )
     is_initial_admin = telegram_id in settings.initial_admin_ids
     role = UserRole.ADMIN.value if is_initial_admin else UserRole.USER.value
     status = UserStatus.APPROVED.value if is_initial_admin else UserStatus.PENDING.value
