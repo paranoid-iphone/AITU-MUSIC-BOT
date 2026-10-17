@@ -4,7 +4,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const initData = (tg && tg.initData) || "";
 const REFRESH_MS = 30000;
 const TOAST_MS = 3000;
-const ROUTES = ["schedule", "me"];
+const ROUTES = ["schedule", "mine", "me"];
 const TELEGRAM_LANGUAGES = { ru: "ru", en: "en", kk: "kz", kz: "kz" };
 const BOOKABLE_PURPOSES = ["self", "concert"];
 const PERSONAL = "personal";
@@ -464,6 +464,188 @@ async function openBookingForm() {
   refreshLimits();
 }
 
+/* ---------- my bookings ---------- */
+
+function bookingWhen(item) {
+  return `${weekdayLabel(item.booking_date)} ${shortDate(item.booking_date)} · ${item.start_time.slice(0, 5)}–${item.end_time.slice(0, 5)}`;
+}
+
+function sessionAwareMessage(failure, fallbackKey) {
+  if (failure.status === 401) return t("webapp.error.session");
+  return `${t(fallbackKey)}${failure.detail ? `: ${failure.detail}` : ""}`;
+}
+
+async function renderMine(screen, token) {
+  document.getElementById("meta").textContent = "";
+  if (!canBook()) {
+    screen.replaceChildren(notice(t("webapp.select.hint_readonly")));
+    return;
+  }
+  const { bookings } = await api("/my-bookings");
+  if (token !== state.renderToken) return;
+  if (!bookings.length) {
+    screen.replaceChildren(notice(t("webapp.mine.empty")));
+    return;
+  }
+  const cards = bookings.map((item) => {
+    const actions = [];
+    if (item.can_manage) {
+      const edit = el("button", { className: "btn", type: "button", text: t("webapp.mine.edit") });
+      edit.addEventListener("click", () => openEditForm(item));
+      const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.mine.cancel") });
+      cancel.addEventListener("click", () => openCancelConfirm(item));
+      actions.push(edit, cancel);
+    }
+    return el("div", { className: "card" }, [
+      el("h2", { text: item.song_title || t("webapp.song_missing") }),
+      detailRow(t("webapp.card.when"), bookingWhen(item)),
+      detailRow(t("webapp.card.band"), item.band_name),
+      detailRow(t("webapp.card.purpose"), t(`webapp.purpose.${item.purpose}`, item.purpose)),
+      actions.length ? el("div", { className: "actions" }, actions) : el("div", { className: "meta", text: t("webapp.mine.read_only") }),
+    ]);
+  });
+  screen.replaceChildren(...cards);
+}
+
+async function openEditForm(item) {
+  let schedule;
+  try {
+    schedule = await api("/schedule");
+  } catch (_) {
+    toast(t("webapp.error.load"), true);
+    return;
+  }
+  const step = schedule.slot_minutes;
+  const ownFrom = timeToMinutes(item.start_time);
+  const ownTo = timeToMinutes(item.end_time);
+  const dates = Object.keys(schedule.free_slots).sort();
+  if (!dates.includes(item.booking_date)) dates.unshift(item.booking_date);
+
+  // The booking's own cells count as free: it may slide over the time it already holds.
+  function freeMinutes(date) {
+    const cells = new Set((schedule.free_slots[date] || []).map(timeToMinutes));
+    if (date === item.booking_date) for (let minute = ownFrom; minute < ownTo; minute += step) cells.add(minute);
+    return cells;
+  }
+  function endChoices(cells, from) {
+    const ends = [];
+    for (let minute = from; cells.has(minute); minute += step) ends.push(minute + step);
+    return ends;
+  }
+
+  const day = el("select", { id: "edit-day" }, dates.map((date) => el("option", { value: date, text: `${weekdayLabel(date)} ${shortDate(date)}` })));
+  const start = el("select", { id: "edit-start" });
+  const end = el("select", { id: "edit-end" });
+  const song = el("input", { id: "edit-song", type: "text", maxlength: "150", autocomplete: "off" });
+  song.value = item.song_title || "";
+  const purpose = el("select", { id: "edit-purpose" }, BOOKABLE_PURPOSES.map((name) => el("option", { value: name, text: t(`webapp.purpose.${name}`) })));
+  purpose.value = BOOKABLE_PURPOSES.includes(item.purpose) ? item.purpose : BOOKABLE_PURPOSES[0];
+  const purposeField = el("label", {}, [t("webapp.form.purpose"), purpose]);
+  purposeField.hidden = item.band_id === null || item.band_id === undefined;
+  const error = el("div", { className: "form-error" });
+  const save = el("button", { className: "btn", type: "submit", text: t("webapp.edit.save") });
+  const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.form.cancel") });
+  cancel.addEventListener("click", closeSheet);
+
+  let length = ownTo - ownFrom; // the length the user wants; kept while the start and the day change
+  function fillTimes(preferredStart) {
+    const cells = freeMinutes(day.value);
+    const starts = [...cells].sort((a, b) => a - b);
+    start.replaceChildren(...starts.map((minute) => el("option", { value: String(minute), text: minutesToTime(minute) })));
+    save.disabled = !starts.length;
+    if (!starts.length) {
+      end.replaceChildren();
+      error.textContent = t("webapp.edit.no_free");
+      return;
+    }
+    error.textContent = "";
+    start.value = String(starts.includes(preferredStart) ? preferredStart : starts[0]);
+    fillEnds();
+  }
+  function fillEnds() {
+    const from = Number(start.value);
+    const ends = endChoices(freeMinutes(day.value), from);
+    end.replaceChildren(...ends.map((minute) => el("option", { value: String(minute), text: minutesToTime(minute) })));
+    const wanted = from + length;
+    end.value = String(ends.includes(wanted) ? wanted : ends[0]);
+  }
+  day.addEventListener("change", () => fillTimes(Number(start.value)));
+  start.addEventListener("change", fillEnds);
+  end.addEventListener("change", () => { length = Number(end.value) - Number(start.value); });
+  day.value = item.booking_date;
+  fillTimes(ownFrom);
+
+  const form = el("form", { className: "form" }, [
+    el("h2", { text: t("webapp.edit.title") }),
+    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    el("label", {}, [t("webapp.edit.date"), day]),
+    el("label", {}, [t("webapp.edit.start"), start]),
+    el("label", {}, [t("webapp.edit.end"), end]),
+    purposeField,
+    el("label", {}, [t("webapp.form.song"), song]),
+    error,
+    el("div", { className: "actions" }, [save, cancel]),
+  ]);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = {};
+    const newStart = minutesToTime(Number(start.value));
+    const newEnd = minutesToTime(Number(end.value));
+    if (day.value !== item.booking_date) body.booking_date = day.value;
+    if (newStart !== item.start_time.slice(0, 5)) body.start_time = newStart;
+    if (newEnd !== item.end_time.slice(0, 5)) body.end_time = newEnd;
+    // moving only one edge still sends both, so the server validates the whole new range
+    if (body.start_time || body.end_time) { body.start_time = newStart; body.end_time = newEnd; }
+    if (!purposeField.hidden && purpose.value !== item.purpose) body.purpose = purpose.value;
+    if (song.value.trim() !== (item.song_title || "")) body.song_title = song.value.trim();
+    if (!Object.keys(body).length) { closeSheet(); return; }
+    save.disabled = true;
+    error.textContent = "";
+    try {
+      await api(`/bookings/${item.id}`, { method: "PATCH", body });
+    } catch (failure) {
+      save.disabled = false;
+      error.textContent = sessionAwareMessage(failure, "webapp.edit.error");
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t("webapp.edit.saved"));
+    render();
+  });
+  openSheet([form]);
+}
+
+function openCancelConfirm(item) {
+  const error = el("div", { className: "form-error" });
+  const confirm = el("button", { className: "btn", type: "button", text: t("webapp.cancel.confirm") });
+  const keep = el("button", { className: "btn secondary", type: "button", text: t("webapp.cancel.keep") });
+  keep.addEventListener("click", closeSheet);
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    error.textContent = "";
+    try {
+      await api(`/bookings/${item.id}`, { method: "DELETE" });
+    } catch (failure) {
+      confirm.disabled = false;
+      error.textContent = sessionAwareMessage(failure, "webapp.cancel.error");
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t("webapp.cancel.done"));
+    render();
+  });
+  openSheet([
+    el("h2", { text: t("webapp.cancel.title") }),
+    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    error,
+    el("div", { className: "actions" }, [confirm, keep]),
+  ]);
+}
+
 /* ---------- profile ---------- */
 
 function notice(text, isError = false) {
@@ -523,6 +705,7 @@ async function render() {
   }
   try {
     if (route === "me") renderProfile(screen);
+    else if (route === "mine") await renderMine(screen, token);
     else await renderSchedule(screen, token);
   } catch (error) {
     if (token === state.renderToken) {

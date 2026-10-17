@@ -353,3 +353,128 @@ def test_rehearsals_menu_leads_with_the_mini_app_booking_button():
     assert rows[0][0].web_app.url == "https://club.example/webapp/schedule"
     assert any(button.callback_data == "menu:booking" for row in rows for button in row)  # the old flow stays
     assert all(button.web_app is None for row in keyboards.rehearsals_menu_keyboard().inline_keyboard for button in row)
+
+
+# ---------- step 7a: my bookings from the Mini App ----------
+
+
+async def book(session, user, band, day="2026-10-15", start=time(10), end=time(11)):
+    from datetime import date
+
+    return await bookings.create_booking(session, user.telegram_id, band.id, date.fromisoformat(day), start, end, "self", "Song")
+
+
+async def test_my_bookings_lists_upcoming_ones_and_who_may_change_them(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    from app.services import bands as band_service
+
+    member = await make_user()
+    code = (await band_service.get_band_detail(session, band.id)).invite_code
+    await band_service.join_band(session, member.telegram_id, code, "bass")
+    await book(session, leader, band)
+    rows = (await client.get("/webapp/api/my-bookings", headers=tg(leader.telegram_id))).json()["bookings"]
+    assert [(row["band_name"], row["booking_date"], row["can_manage"]) for row in rows] == [("Rockers", "2026-10-15", True)]
+    assert rows[0]["band_id"] == band.id
+    seen_by_member = (await client.get("/webapp/api/my-bookings", headers=tg(member.telegram_id))).json()["bookings"]
+    assert [row["can_manage"] for row in seen_by_member] == [False]  # a plain member sees it but cannot change it
+
+
+async def test_my_bookings_need_an_approved_member(client, make_user):
+    pending = await make_user(status="pending")
+    assert (await client.get("/webapp/api/my-bookings")).status_code == 401
+    assert (await client.get("/webapp/api/my-bookings", headers=tg(pending.telegram_id))).status_code == 403
+
+
+async def test_leader_moves_a_booking_and_the_schedule_follows(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    booking = await book(session, leader, band)
+    body = {"booking_date": "2026-10-16", "start_time": "12:00", "end_time": "13:30", "song_title": "New song"}
+    response = await client.patch(f"/webapp/api/bookings/{booking.id}", json=body, headers=tg(leader.telegram_id))
+    assert response.status_code == 200, response.text
+    assert (response.json()["booking_date"], response.json()["start_time"], response.json()["end_time"]) == ("2026-10-16", "12:00:00", "13:30:00")
+    free = (await client.get("/webapp/api/schedule")).json()["free_slots"]
+    assert "10:00" in free["2026-10-15"] and "12:00" not in free["2026-10-16"]
+    from app.services import schedule_history
+
+    assert "updated" in [change["action"] for change in await schedule_history.list_changes(session, leader.telegram_id, band_id=band.id)]
+
+
+async def test_moving_into_a_taken_slot_is_a_conflict_and_keeps_the_booking(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    rival = await make_user()
+    band = await make_band(leader, "Rockers")
+    rivals = await make_band(rival, "Rivals")
+    mine = await book(session, leader, band)
+    await book(session, rival, rivals, start=time(14), end=time(15))
+    response = await client.patch(
+        f"/webapp/api/bookings/{mine.id}", json={"start_time": "14:30", "end_time": "15:30"}, headers=tg(leader.telegram_id)
+    )
+    assert response.status_code == 409
+    rows = (await client.get("/webapp/api/my-bookings", headers=tg(leader.telegram_id))).json()["bookings"]
+    assert rows[0]["start_time"].startswith("10:00")
+
+
+async def test_a_booking_can_slide_over_its_own_cells(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    booking = await book(session, leader, band)
+    response = await client.patch(
+        f"/webapp/api/bookings/{booking.id}", json={"start_time": "10:30", "end_time": "11:30"}, headers=tg(leader.telegram_id)
+    )
+    assert response.status_code == 200
+
+
+async def test_only_those_who_manage_a_booking_may_change_or_cancel_it(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    stranger = await make_user()
+    member = await make_user()
+    band = await make_band(leader, "Rockers")
+    from app.services import bands as band_service
+
+    await band_service.join_band(session, member.telegram_id, (await band_service.get_band_detail(session, band.id)).invite_code, "bass")
+    booking = await book(session, leader, band)
+    url = f"/webapp/api/bookings/{booking.id}"
+    for outsider in (stranger, member):
+        assert (await client.patch(url, json={"song_title": "x"}, headers=tg(outsider.telegram_id))).status_code == 403
+        assert (await client.delete(url, headers=tg(outsider.telegram_id))).status_code == 403
+    assert (await client.patch(url, json={"song_title": "x"})).status_code == 401
+    assert (await client.delete(url)).status_code == 401
+    assert (await client.patch("/webapp/api/bookings/9999", json={"song_title": "x"}, headers=tg(leader.telegram_id))).status_code == 404
+
+
+async def test_mutations_need_a_fresh_signature(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    booking = await book(session, leader, band)
+    stale = {"X-Telegram-Init-Data": init_data(leader.telegram_id, age=2 * 60 * 60)}
+    assert (await client.patch(f"/webapp/api/bookings/{booking.id}", json={"song_title": "x"}, headers=stale)).status_code == 401
+    assert (await client.delete(f"/webapp/api/bookings/{booking.id}", headers=stale)).status_code == 401
+
+
+async def test_leader_cancels_a_booking_softly_and_the_cell_frees_up(client, session, make_user, make_band, freeze_now):
+    freeze_now(NOW)
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    booking = await book(session, leader, band)
+    response = await client.delete(f"/webapp/api/bookings/{booking.id}", headers=tg(leader.telegram_id))
+    assert response.status_code == 200 and response.json()["id"] == booking.id
+    assert (await client.get("/webapp/api/my-bookings", headers=tg(leader.telegram_id))).json()["bookings"] == []
+    assert "10:00" in (await client.get("/webapp/api/schedule")).json()["free_slots"]["2026-10-15"]
+    await session.refresh(booking)
+    assert booking.status == "cancelled"  # soft-cancelled, the row stays for history
+    assert (await client.delete(f"/webapp/api/bookings/{booking.id}", headers=tg(leader.telegram_id))).status_code == 409
+
+
+def test_every_language_has_the_same_mini_app_strings():
+    from app.bot.i18n import load_locale
+
+    keys = {language: {key for key in load_locale(language) if key.startswith("webapp.")} for language in ("ru", "en", "kz")}
+    assert keys["ru"] == keys["en"] == keys["kz"]

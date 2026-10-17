@@ -706,6 +706,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
         rows.append(
             {
                 "id": booking.id,
+                "band_id": booking.band_id,
                 "band_name": _booking_owner_label(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
@@ -716,6 +717,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
                 "purpose": booking.purpose,
                 "song_title": booking.song_title,
                 "status": booking.status,
+                "can_manage": await _can_manage_booking(session, user, booking),
                 **_band_info(booking),
             }
         )

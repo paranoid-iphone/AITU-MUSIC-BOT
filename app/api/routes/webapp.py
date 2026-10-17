@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.timezone import now_local
 from app.db.models import Group, User
 from app.db.session import get_session
-from app.schemas.bookings import BookingRead, WebAppBookingCreate
+from app.schemas.bookings import BookingRead, WebAppBookingCreate, WebAppBookingUpdate
 from app.services import bands as band_service
 from app.services import bookings as booking_service
 from app.services.errors import NotFoundError
@@ -127,6 +127,41 @@ async def create_booking(
         payload.purpose,
         payload.song_title,
     )
+
+
+@router.get("/my-bookings")
+async def my_bookings(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> dict:
+    """The viewer's upcoming bookings (made by them or by one of their bands), each with the right to change it."""
+    rows = await booking_service.list_my_booking_rows(session, user.telegram_id)
+    return {"bookings": [{**row, "booking_date": row["booking_date"].isoformat()} for row in rows]}
+
+
+@router.patch("/bookings/{booking_id}", response_model=BookingRead)
+async def update_booking(
+    booking_id: int,
+    payload: WebAppBookingUpdate,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await booking_service.update_booking(
+        session,
+        user.telegram_id,
+        booking_id,
+        payload.booking_date,
+        payload.start_time,
+        payload.end_time,
+        payload.purpose,
+        payload.song_title,
+    )
+
+
+@router.delete("/bookings/{booking_id}")
+async def cancel_booking(
+    booking_id: int,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    return await booking_service.delete_booking(session, user.telegram_id, booking_id)
 
 
 @router.get("/me")
