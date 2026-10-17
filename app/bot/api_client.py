@@ -36,8 +36,10 @@ class BackendClient:
             },
         )
 
-    async def get_user(self, telegram_id: int) -> dict[str, Any]:
-        return await self.request("GET", f"/users/{telegram_id}")
+    async def get_user(self, telegram_id: int, requester_telegram_id: int | None = None) -> dict[str, Any]:
+        """`requester_telegram_id` is whoever asks; it defaults to the user themselves."""
+        params = {"requester_telegram_id": requester_telegram_id if requester_telegram_id is not None else telegram_id}
+        return await self.request("GET", f"/users/{telegram_id}", params=params)
 
     async def update_profile(self, telegram_id: int, data: dict[str, Any]) -> dict[str, Any]:
         return await self.request("PATCH", f"/users/{telegram_id}/profile", json=data)
@@ -117,8 +119,8 @@ class BackendClient:
     async def list_all_bands(self, admin_telegram_id: int) -> list[dict[str, Any]]:
         return await self.request("GET", "/bands/admin", params={"admin_telegram_id": admin_telegram_id})
 
-    async def get_band(self, band_id: int) -> dict[str, Any]:
-        return await self.request("GET", f"/bands/{band_id}")
+    async def get_band(self, band_id: int, requester_telegram_id: int) -> dict[str, Any]:
+        return await self.request("GET", f"/bands/{band_id}", params={"requester_telegram_id": requester_telegram_id})
 
     async def update_band(self, requester_telegram_id: int, band_id: int, name: str) -> dict[str, Any]:
         return await self.request("PATCH", f"/bands/{band_id}", json={"requester_telegram_id": requester_telegram_id, "name": name})

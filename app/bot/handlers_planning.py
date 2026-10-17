@@ -103,7 +103,7 @@ async def plan_new(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(PlanFlow.band, F.data.startswith("plan:band:"))
 async def plan_pick_band(callback: CallbackQuery, state: FSMContext) -> None:
     band_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     await state.update_data(plan_band_id=band_id, plan_band_name=band["name"], plan_windows=[])
     await state.set_state(PlanFlow.duration)
     rows = [[_button(_duration_label(m), f"plan:dur:{m}") for m in DURATIONS[i : i + 3]] for i in range(0, len(DURATIONS), 3)]

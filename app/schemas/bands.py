@@ -58,7 +58,7 @@ class BandMemberRead(BaseModel):
 class BandRead(BaseModel):
     id: int
     name: str
-    invite_code: str
+    invite_code: str | None = None
     creator_id: int
     group_id: int | None = None
     responsible_user_id: int | None = None

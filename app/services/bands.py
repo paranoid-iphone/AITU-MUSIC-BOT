@@ -4,7 +4,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import Band, BandMember, Booking, EventApplication, EventApplicationMember, UserStatus
 from app.services.errors import ForbiddenError, NotFoundError
-from app.services.permissions import administered_group_ids, can_manage_band, is_global_admin
+from app.services.permissions import (
+    administered_group_ids,
+    can_manage_band,
+    can_view_band,
+    can_view_invite_code,
+    is_global_admin,
+)
 from app.services.users import get_user_by_telegram_id, require_approved
 
 
@@ -78,6 +84,24 @@ async def get_band_detail(session: AsyncSession, band_id: int) -> Band:
     if band is None:
         raise NotFoundError("Band not found")
     return band
+
+
+async def get_band_for_requester(session: AsyncSession, band_id: int, requester_telegram_id: int) -> Band:
+    requester = await get_user_by_telegram_id(session, requester_telegram_id)
+    if requester is None:
+        raise NotFoundError("User not found")
+    band = await get_band_detail(session, band_id)
+    if not await can_view_band(session, requester, band):
+        raise ForbiddenError("You do not have access to this band")
+    return band
+
+
+async def invite_code_visible_ids(session: AsyncSession, requester_telegram_id: int, bands: list[Band]) -> set[int]:
+    """Ids of the bands whose join code the requester may see; the API blanks the code for the rest."""
+    requester = await get_user_by_telegram_id(session, requester_telegram_id)
+    if requester is None:
+        return set()
+    return {band.id for band in bands if await can_view_invite_code(session, requester, band)}
 
 
 async def join_band(session: AsyncSession, telegram_id: int, invite_code: str, instrument_role: str) -> Band:

@@ -170,10 +170,10 @@ async def build_band_invite_link(bot, invite_code: str) -> str:
 async def format_bands_list(bot, bands: list[dict]) -> str:
     lines = []
     for band in bands:
-        invite_link = await build_band_invite_link(bot, band["invite_code"])
         lines.append(f"{band['id']}. {band['name']}")
-        lines.append(f"Код: {band['invite_code']}")
-        lines.append(f"Ссылка: {invite_link}")
+        if band.get("invite_code"):  # the backend hides the code from plain members
+            lines.append(f"Код: {band['invite_code']}")
+            lines.append(f"Ссылка: {await build_band_invite_link(bot, band['invite_code'])}")
         for member in band["members"]:
             u = member["user"]
             lines.append(f"  - {u['last_name'] or ''} {u['first_name'] or ''} | {u['study_group'] or '-'} | {member['instrument_role']}")
@@ -313,10 +313,10 @@ def format_band_card(band: dict) -> str:
         f"Название: {band['name']}",
         f"Направление: {(band.get('group') or {}).get('title') or '-'}",
         f"Ответственный: {format_person(band.get('responsible'))}",
-        f"Код: {band['invite_code']}",
-        "",
-        "Участники:",
     ]
+    if band.get("invite_code"):  # the backend hides the code from plain members
+        lines.append(f"Код: {band['invite_code']}")
+    lines += ["", "Участники:"]
     for member in band.get("members", []):
         user = member["user"]
         name = f"{user.get('last_name') or ''} {user.get('first_name') or ''}".strip() or user.get("telegram_username") or str(user["telegram_id"])
@@ -992,7 +992,7 @@ async def inline_user_band_detail(callback: CallbackQuery) -> None:
     if not await has_full_access_for_callback(callback):
         return
     _, band_id_raw, page_raw = callback.data.split(":")
-    band = await api.get_band(int(band_id_raw))
+    band = await api.get_band(int(band_id_raw), callback.from_user.id)
     is_owner = user_is_band_owner(band, callback.from_user.id)
     await edit_screen(callback, format_band_card(band), user_band_detail_keyboard(band["id"], is_owner, int(page_raw)))
     await answer_callback(callback)
@@ -1014,7 +1014,7 @@ async def inline_user_band_edit(callback: CallbackQuery, state: FSMContext) -> N
 async def inline_user_band_manage(callback: CallbackQuery) -> None:
     _, band_id_raw, page_raw = callback.data.split(":")
     band_id = int(band_id_raw)
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     if not user_is_band_owner(band, callback.from_user.id):
         await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
         return
@@ -1029,7 +1029,7 @@ async def inline_user_band_manage(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("user_band_members:"))
 async def inline_user_band_members(callback: CallbackQuery) -> None:
     _, band_id_raw, action, page_raw = callback.data.split(":")
-    band = await api.get_band(int(band_id_raw))
+    band = await api.get_band(int(band_id_raw), callback.from_user.id)
     if not user_is_band_owner(band, callback.from_user.id):
         await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
         return
@@ -1048,7 +1048,7 @@ async def inline_user_band_member_action(callback: CallbackQuery, state: FSMCont
     _, band_id_raw, member_id_raw, action = callback.data.split(":")
     band_id = int(band_id_raw)
     member_id = int(member_id_raw)
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     if not user_is_band_owner(band, callback.from_user.id):
         await answer_callback(callback, "Редактировать коллектив может только лидер.", show_alert=True)
         return
@@ -1082,7 +1082,7 @@ async def inline_user_band_member_remove_confirm(callback: CallbackQuery) -> Non
         await edit_screen(callback, f"Не получилось удалить участника: {exc}", user_band_detail_keyboard(band_id, True))
         await answer_callback(callback)
         return
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band), user_band_detail_keyboard(band_id, True))
     await answer_callback(callback, "Готово")
 
@@ -1090,7 +1090,7 @@ async def inline_user_band_member_remove_confirm(callback: CallbackQuery) -> Non
 @router.callback_query(F.data.startswith("user_band_delete:"))
 async def inline_user_band_delete(callback: CallbackQuery) -> None:
     band_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     if not user_is_band_owner(band, callback.from_user.id):
         await answer_callback(callback, "Удалить коллектив может только лидер.", show_alert=True)
         return
@@ -1939,7 +1939,7 @@ async def inline_admin_users_list(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("admin_user:"))
 async def inline_admin_user_detail(callback: CallbackQuery) -> None:
     _, telegram_id, origin_status, page_raw = callback.data.split(":")
-    user = await api.get_user(int(telegram_id))
+    user = await api.get_user(int(telegram_id), callback.from_user.id)
     await edit_screen(callback, format_user_card(user), admin_user_detail_keyboard(user, origin_status, int(page_raw)))
     await answer_callback(callback)
 
@@ -1965,7 +1965,7 @@ async def inline_admin_bands_list(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("admin_band:"))
 async def inline_admin_band_detail(callback: CallbackQuery) -> None:
     _, band_id_raw, page_raw = callback.data.split(":")
-    band = await api.get_band(int(band_id_raw))
+    band = await api.get_band(int(band_id_raw), callback.from_user.id)
     await edit_screen(callback, format_band_card(band), admin_band_detail_keyboard(band["id"], int(page_raw)))
     await answer_callback(callback)
 
@@ -1985,7 +1985,7 @@ async def inline_admin_band_edit(callback: CallbackQuery, state: FSMContext) -> 
 @router.callback_query(F.data.startswith("admin_band_members:"))
 async def inline_admin_band_members(callback: CallbackQuery) -> None:
     _, band_id_raw, action, page_raw = callback.data.split(":")
-    band = await api.get_band(int(band_id_raw))
+    band = await api.get_band(int(band_id_raw), callback.from_user.id)
     titles = {
         "owner": "Выберите нового лидера коллектива:",
         "role": "Выберите участника, которому нужно изменить роль:",
@@ -2031,7 +2031,7 @@ async def inline_admin_band_member_remove_confirm(callback: CallbackQuery) -> No
         await edit_screen(callback, f"Не получилось удалить участника: {exc}", admin_band_detail_keyboard(band_id))
         await answer_callback(callback)
         return
-    band = await api.get_band(band_id)
+    band = await api.get_band(band_id, callback.from_user.id)
     await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
     await answer_callback(callback, "Готово")
 
@@ -2796,7 +2796,7 @@ async def user_band_edit_save(message: Message, state: FSMContext) -> None:
         elif field == "member_role":
             member_id = int(data["user_band_member_id"])
             await api.update_band_member_role(message.from_user.id, band_id, member_id, raw)
-            band = await api.get_band(band_id)
+            band = await api.get_band(band_id, message.from_user.id)
         else:
             await state.clear()
             await message.answer("Это поле нельзя редактировать.", reply_markup=bands_menu_keyboard())
@@ -3242,7 +3242,7 @@ async def admin_band_edit_save(message: Message, state: FSMContext) -> None:
         elif field == "member_role":
             member_id = int(data["admin_band_member_id"])
             await api.update_band_member_role(message.from_user.id, band_id, member_id, raw)
-            band = await api.get_band(band_id)
+            band = await api.get_band(band_id, message.from_user.id)
         else:
             await state.clear()
             await message.answer("Это поле нельзя редактировать.", reply_markup=admin_inline_keyboard())

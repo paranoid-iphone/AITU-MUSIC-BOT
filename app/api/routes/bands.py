@@ -14,9 +14,20 @@ async def create_band(payload: BandCreate, session: AsyncSession = Depends(get_s
     return await bands.create_band(session, payload.creator_telegram_id, payload.name, payload.creator_role)
 
 
+async def _with_visible_invite_code(session: AsyncSession, viewer_telegram_id: int, items: list) -> list[BandDetail]:
+    visible = await bands.invite_code_visible_ids(session, viewer_telegram_id, items)
+    result = []
+    for band in items:
+        detail = BandDetail.model_validate(band)
+        if band.id not in visible:
+            detail.invite_code = None
+        result.append(detail)
+    return result
+
+
 @router.get("", response_model=list[BandDetail])
 async def list_my_bands(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await bands.list_user_bands(session, telegram_id)
+    return await _with_visible_invite_code(session, telegram_id, await bands.list_user_bands(session, telegram_id))
 
 
 @router.get("/admin", response_model=list[BandDetail])
@@ -26,12 +37,14 @@ async def list_all_bands(admin_telegram_id: int, session: AsyncSession = Depends
 
 @router.post("/join", response_model=BandDetail)
 async def join_band(payload: BandJoin, session: AsyncSession = Depends(get_session)):
-    return await bands.join_band(session, payload.telegram_id, payload.invite_code, payload.instrument_role)
+    band = await bands.join_band(session, payload.telegram_id, payload.invite_code, payload.instrument_role)
+    return (await _with_visible_invite_code(session, payload.telegram_id, [band]))[0]
 
 
 @router.get("/{band_id}", response_model=BandDetail)
-async def get_band(band_id: int, session: AsyncSession = Depends(get_session)):
-    return await bands.get_band_detail(session, band_id)
+async def get_band(band_id: int, requester_telegram_id: int, session: AsyncSession = Depends(get_session)):
+    band = await bands.get_band_for_requester(session, band_id, requester_telegram_id)
+    return (await _with_visible_invite_code(session, requester_telegram_id, [band]))[0]
 
 
 @router.patch("/{band_id}", response_model=BandDetail)

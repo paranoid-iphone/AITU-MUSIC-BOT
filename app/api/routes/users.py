@@ -65,13 +65,8 @@ async def delete_user(payload: UserModerationUpdate, session: AsyncSession = Dep
 
 
 @router.get("/{telegram_id}", response_model=UserRead)
-async def get_user(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    user = await users.get_user_by_telegram_id(session, telegram_id)
-    if user is None:
-        from app.services.errors import NotFoundError
-
-        raise NotFoundError("User not found")
-    return await users.annotate_group_admin(session, user)
+async def get_user(telegram_id: int, requester_telegram_id: int, session: AsyncSession = Depends(get_session)):
+    return await users.get_user_for_requester(session, telegram_id, requester_telegram_id)
 
 
 @router.patch("/{telegram_id}/profile", response_model=UserRead)

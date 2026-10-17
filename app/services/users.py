@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.models import User, UserRole, UserStatus
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
-from app.services.permissions import administered_group_ids, is_global_admin, require_group_admin
+from app.services.permissions import administered_group_ids, can_view_user, is_global_admin, require_group_admin
 
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
@@ -18,6 +18,18 @@ async def annotate_group_admin(session: AsyncSession, user: User) -> User:
     """Attach a transient `is_group_admin` flag so API responses can drive the bot menus."""
     user.is_group_admin = bool(await administered_group_ids(session, user)) and user.status == UserStatus.APPROVED.value
     return user
+
+
+async def get_user_for_requester(session: AsyncSession, telegram_id: int, requester_telegram_id: int) -> User:
+    requester = await get_user_by_telegram_id(session, requester_telegram_id)
+    if requester is None:
+        raise NotFoundError("User not found")
+    target = requester if telegram_id == requester_telegram_id else await get_user_by_telegram_id(session, telegram_id)
+    if target is None:
+        raise NotFoundError("User not found")
+    if not await can_view_user(session, requester, target):
+        raise ForbiddenError("You do not have access to this user")
+    return await annotate_group_admin(session, target)
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
