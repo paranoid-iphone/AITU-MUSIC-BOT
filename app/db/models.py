@@ -185,6 +185,36 @@ class Booking(Base):
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
 
 
+class MoveRequestStatus(str, Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+class MoveRequest(Base):
+    """Someone asks the owners of `booking_id` to move it to a free slot of the same length."""
+
+    __tablename__ = "move_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), index=True)
+    requester_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    proposed_date: Mapped[date] = mapped_column(Date)
+    proposed_start: Mapped[time] = mapped_column(Time)
+    proposed_end: Mapped[time] = mapped_column(Time)
+    message: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=MoveRequestStatus.PENDING.value, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    booking: Mapped[Booking] = relationship()
+    requester: Mapped[User] = relationship(foreign_keys=[requester_id])
+
+
 class WeekStatus(str, Enum):
     COLLECTING = "collecting"
     PUBLISHED = "published"

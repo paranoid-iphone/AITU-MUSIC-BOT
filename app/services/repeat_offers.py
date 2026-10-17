@@ -26,13 +26,6 @@ def _start_dt(booking: Booking) -> datetime:
     return datetime.combine(booking.booking_date, booking.start_time)
 
 
-def _recipient(booking: Booking):
-    """The band's responsible person; the creator for personal bookings and bands without one."""
-    if booking.band is not None and booking.band.responsible is not None:
-        return booking.band.responsible
-    return booking.created_by
-
-
 async def _can_repeat(session: AsyncSession, booking: Booking, now: datetime) -> bool:
     target_date = booking.booking_date + REPEAT_INTERVAL
     duration = booking_service._duration_minutes(booking.start_time, booking.end_time)
@@ -66,7 +59,7 @@ async def offer_repeats(session: AsyncSession) -> int:
     for booking in result.scalars().unique():
         if not since < _start_dt(booking) <= now:
             continue
-        recipient = _recipient(booking)
+        recipient = booking_service.booking_contact(booking)
         if recipient is None or not recipient.notifications_enabled:
             continue
         if not await _can_repeat(session, booking, now):

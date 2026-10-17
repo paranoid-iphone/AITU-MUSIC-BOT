@@ -7,12 +7,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import admin, bands, bookings, events, groups, history, planning, users, webapp, webapp_admin
+from app.api.routes import admin, bands, bookings, events, groups, history, move_requests, planning, users, webapp, webapp_admin
 from app.core.config import settings
 from app.db.session import create_db_and_tables
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
+from app.services import move_requests as move_request_service
 from app.services import repeat_offers, sheets_sync
 from app.services.errors import AppError
 from app.services.weeks import allocation_time, next_week_start
@@ -48,6 +49,17 @@ async def run_repeat_offers() -> None:
             logger.exception("Repeat offers failed")
 
 
+async def run_expire_move_requests() -> None:
+    """Close "please move" requests that timed out or whose booking is gone."""
+    async with AsyncSessionLocal() as session:
+        try:
+            expired = await move_request_service.expire_stale(session)
+            if expired:
+                logger.info("Expired %s move request(s)", expired)
+        except Exception:
+            logger.exception("Expiring move requests failed")
+
+
 async def catch_up_missed_allocations() -> None:
     async with AsyncSessionLocal() as session:
         try:
@@ -64,6 +76,7 @@ async def on_startup() -> None:
     async with AsyncSessionLocal() as session:
         await seed_default_schedule(session)
     scheduler.add_job(run_repeat_offers, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="repeat_offers")
+    scheduler.add_job(run_expire_move_requests, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="expire_move_requests")
     if settings.weekly_planning_enabled:
         run_at = allocation_time()
         scheduler.add_job(run_sunday_allocation, "cron", day_of_week="sun", hour=run_at.hour, minute=run_at.minute, id="weekly_allocation")
@@ -134,5 +147,6 @@ app.include_router(history.router, prefix="/history", tags=["history"])
 app.include_router(planning.router, prefix="/planning", tags=["planning"])
 app.include_router(bands.router, prefix="/bands", tags=["bands"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
+app.include_router(move_requests.router, prefix="/move-requests", tags=["move-requests"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])

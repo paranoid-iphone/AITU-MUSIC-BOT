@@ -219,6 +219,7 @@ body.has-selbar main { padding-bottom: 76px; }
   background: var(--bg);
 }
 .sheet .summary { margin-bottom: 12px; color: var(--hint); font-size: 14px; }
+.card .summary { margin: 0 0 8px; font-size: 14px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .form label { display: block; margin-top: 12px; color: var(--hint); font-size: 13px; }
 .form select, .form input {

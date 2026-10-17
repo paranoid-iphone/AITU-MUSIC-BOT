@@ -73,6 +73,13 @@ def _band_info(booking: Booking) -> dict:
     }
 
 
+def booking_contact(booking: Booking):
+    """Who is told about a booking: the band's responsible person; the creator for personal bookings and bands without one."""
+    if booking.band is not None and booking.band.responsible is not None:
+        return booking.band.responsible
+    return booking.created_by
+
+
 def _booking_load_options():
     return (
         selectinload(Booking.band).selectinload(Band.responsible),
@@ -602,7 +609,11 @@ async def update_booking(
     end_time: time | None = None,
     purpose: str | None = None,
     song_title: str | None = None,
+    authorized: bool = False,
+    commit: bool = True,
 ) -> Booking:
+    """Edit a booking. `authorized` skips the rights check for callers that did their own (an accepted move
+    request); `commit=False` leaves the transaction open so the caller can commit it together with its own rows."""
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -618,7 +629,7 @@ async def update_booking(
     if booking is None:
         raise NotFoundError("Booking not found")
     require_approved(user)
-    if not await _can_manage_booking(session, user, booking):
+    if not authorized and not await _can_manage_booking(session, user, booking):
         raise ForbiddenError("You cannot manage this booking")
     if booking.status != BookingStatus.CONFIRMED.value:
         raise ConflictError("Cancelled booking cannot be changed")
@@ -663,8 +674,11 @@ async def update_booking(
         f"Изменил бронь #{booking.id}: {booking.booking_date.isoformat()} {booking.start_time.strftime('%H:%M')}-{booking.end_time.strftime('%H:%M')}",
     )
     await record_change(session, booking, "updated", user, before=before)
-    await commit_and_publish(session)
-    await session.refresh(booking)
+    if commit:
+        await commit_and_publish(session)
+        await session.refresh(booking)
+    else:
+        await session.flush()
     return booking
 
 

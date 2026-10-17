@@ -25,8 +25,10 @@ from app.schemas.bands import (
     WebAppMemberRole,
 )
 from app.schemas.bookings import BookingRead, WebAppBookingCreate, WebAppBookingUpdate
+from app.schemas.move_requests import MoveRequestRead, WebAppMoveRequestCreate
 from app.services import bands as band_service
 from app.services import bookings as booking_service
+from app.services import move_requests as move_request_service
 from app.services.errors import NotFoundError
 from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin
 
@@ -57,6 +59,9 @@ async def schedule(
     closures = await booking_service.list_day_closures(session)
     window_start, window_end = await booking_service.get_booking_window_minutes(session)
     contacts_visible = viewer is not None  # contact details are for approved members opening the app from Telegram
+    own_ids = (
+        {row["id"] for row in await booking_service.list_my_booking_rows(session, viewer.telegram_id)} if contacts_visible else set()
+    )
     if not contacts_visible:
         rows = [{**item, "responsible_name": None, "responsible_username": None} for item in rows]
     bookings = [
@@ -68,6 +73,7 @@ async def schedule(
             "booking_date": item["booking_date"].isoformat(),
             "start_time": item["start_time"].isoformat(),
             "end_time": item["end_time"].isoformat(),
+            **({"is_mine": item["id"] in own_ids} if contacts_visible else {}),
         }
         for item in rows
     ]
@@ -170,6 +176,58 @@ async def cancel_booking(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await booking_service.delete_booking(session, user.telegram_id, booking_id)
+
+
+def _move_row(row: dict) -> dict:
+    return {
+        **row,
+        "booking_date": row["booking_date"].isoformat(),
+        "start_time": row["start_time"].isoformat(),
+        "end_time": row["end_time"].isoformat(),
+        "proposed_date": row["proposed_date"].isoformat(),
+        "proposed_start": row["proposed_start"].isoformat(),
+        "proposed_end": row["proposed_end"].isoformat(),
+        "expires_at": row["expires_at"].isoformat(timespec="minutes"),
+    }
+
+
+@router.get("/move-requests")
+async def move_requests(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> dict:
+    """Open "please move" requests: those the viewer can answer and those they sent."""
+    found = await move_request_service.list_for_user(session, user.telegram_id)
+    return {key: [_move_row(row) for row in rows] for key, rows in found.items()}
+
+
+@router.post("/move-requests", response_model=MoveRequestRead)
+async def create_move_request(
+    payload: WebAppMoveRequestCreate,
+    user: User = Depends(fresh_webapp_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await move_request_service.create_request(
+        session, user.telegram_id, payload.booking_id, payload.proposed_date, payload.start_time, payload.end_time, payload.message
+    )
+
+
+@router.post("/move-requests/{request_id}/accept", response_model=MoveRequestRead)
+async def accept_move_request(
+    request_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+):
+    return await move_request_service.accept(session, user.telegram_id, request_id)
+
+
+@router.post("/move-requests/{request_id}/decline", response_model=MoveRequestRead)
+async def decline_move_request(
+    request_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+):
+    return await move_request_service.decline(session, user.telegram_id, request_id)
+
+
+@router.post("/move-requests/{request_id}/cancel", response_model=MoveRequestRead)
+async def cancel_move_request(
+    request_id: int, user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)
+):
+    return await move_request_service.cancel(session, user.telegram_id, request_id)
 
 
 def _person_name(user: User) -> str:

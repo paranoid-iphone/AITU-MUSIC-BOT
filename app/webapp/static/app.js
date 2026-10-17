@@ -392,6 +392,11 @@ function openBookingCard(item) {
     write.addEventListener("click", () => openTelegramUser(item.responsible_username));
     actions.push(write);
   }
+  if (canAskToMove(item)) {
+    const ask = el("button", { className: "btn", type: "button", text: t("webapp.move.ask") });
+    ask.addEventListener("click", () => openMoveForm(item));
+    actions.push(ask);
+  }
   const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.card.close") });
   close.addEventListener("click", closeSheet);
   actions.push(close);
@@ -405,6 +410,82 @@ function openBookingCard(item) {
     detailRow(t("webapp.card.purpose"), t(`webapp.purpose.${item.purpose}`, item.purpose)),
     el("div", { className: "actions" }, actions),
   ]);
+}
+
+/* ---------- ask to move ---------- */
+
+// Staff, admin and DSVR bookings are changed directly, and so are the viewer's own bookings.
+function canAskToMove(item) {
+  return canBook() && item.is_mine === false && item.purpose !== "staff" && !state.me.is_admin && !state.me.is_dsvr;
+}
+
+function movePlaces(item) {
+  const length = timeToMinutes(item.end_time) - timeToMinutes(item.start_time);
+  const places = new Map();
+  for (const [date, cells] of state.free) {
+    const starts = [...cells].map(timeToMinutes).sort((a, b) => a - b)
+      .filter((minute) => cellsAreFree(date, minute, minute + length))
+      .filter((minute) => !(date === item.booking_date && minute === timeToMinutes(item.start_time)));
+    if (starts.length) places.set(date, starts);
+  }
+  return { places, length };
+}
+
+function openMoveForm(item) {
+  const { places, length } = movePlaces(item);
+  const day = el("select", { id: "move-day" }, [...places.keys()].map((date) => el("option", { value: date, text: `${weekdayLabel(date)} ${shortDate(date)}` })));
+  const start = el("select", { id: "move-start" });
+  const note = textField(t("webapp.move.message"), "move-message", "", 200);
+  const error = el("div", { className: "form-error" });
+  const send = el("button", { className: "btn", type: "submit", text: t("webapp.move.send") });
+  const cancel = el("button", { className: "btn secondary", type: "button", text: t("webapp.form.cancel") });
+  cancel.addEventListener("click", closeSheet);
+  function fillStarts() {
+    const minutes = places.get(day.value) || [];
+    start.replaceChildren(...minutes.map((minute) => el("option", { value: String(minute), text: `${minutesToTime(minute)}–${minutesToTime(minute + length)}` })));
+  }
+  day.addEventListener("change", fillStarts);
+  fillStarts();
+  send.disabled = !places.size;
+  if (!places.size) error.textContent = t("webapp.move.no_free");
+
+  const form = el("form", { className: "form" }, [
+    el("h2", { text: t("webapp.move.title") }),
+    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    el("div", { className: "meta", text: t("webapp.move.hint") }),
+    el("label", {}, [t("webapp.move.date"), day]),
+    el("label", {}, [t("webapp.move.start"), start]),
+    note.field,
+    error,
+    el("div", { className: "actions" }, [send, cancel]),
+  ]);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    send.disabled = true;
+    error.textContent = "";
+    const from = Number(start.value);
+    try {
+      await api("/move-requests", {
+        method: "POST",
+        body: {
+          booking_id: item.id,
+          proposed_date: day.value,
+          start_time: minutesToTime(from),
+          end_time: minutesToTime(from + length),
+          message: note.input.value.trim() || null,
+        },
+      });
+    } catch (failure) {
+      send.disabled = false;
+      error.textContent = sessionAwareMessage(failure, "webapp.move.error");
+      haptic("error");
+      return;
+    }
+    closeSheet();
+    haptic("success");
+    toast(t("webapp.move.sent"));
+  });
+  openSheet([form]);
 }
 
 /* ---------- booking form ---------- */
@@ -512,15 +593,72 @@ function sessionAwareMessage(failure, fallbackKey) {
   return `${t(fallbackKey)}${failure.detail ? `: ${failure.detail}` : ""}`;
 }
 
+function moveWhen(date, start, end) {
+  return `${weekdayLabel(date)} ${shortDate(date)} · ${start.slice(0, 5)}–${end.slice(0, 5)}`;
+}
+
+async function answerMoveRequest(request, action, doneKey) {
+  try {
+    await api(`/move-requests/${request.id}/${action}`, { method: "POST" });
+  } catch (failure) {
+    toast(sessionAwareMessage(failure, "webapp.move.answer_error"), true);
+    haptic("error");
+    render();
+    return;
+  }
+  haptic("success");
+  toast(t(doneKey));
+  render();
+}
+
+function moveRequestCard(request, incoming) {
+  const person = request.requester_name + (request.requester_username ? ` @${request.requester_username}` : "");
+  const summary = fill("webapp.move.row", {
+    name: incoming ? person : request.band_name,
+    from: moveWhen(request.booking_date, request.start_time, request.end_time),
+    to: moveWhen(request.proposed_date, request.proposed_start, request.proposed_end),
+  });
+  const buttons = [];
+  const press = (label, className, action, doneKey) => {
+    const button = el("button", { className, type: "button", text: t(label) });
+    button.addEventListener("click", () => { buttons.forEach((item) => { item.disabled = true; }); answerMoveRequest(request, action, doneKey); });
+    buttons.push(button);
+  };
+  if (incoming) {
+    press("webapp.move.accept", "btn", "accept", "webapp.move.accepted");
+    press("webapp.move.decline", "btn secondary", "decline", "webapp.move.declined");
+  } else {
+    press("webapp.move.withdraw", "btn secondary", "cancel", "webapp.move.withdrawn");
+  }
+  const until = `${shortDate(request.expires_at.slice(0, 10))} ${request.expires_at.slice(11, 16)}`;
+  return el("div", { className: "card" }, [
+    el("h2", { text: request.song_title || request.band_name }),
+    el("div", { className: "summary", text: summary }),
+    request.message ? el("div", { className: "meta", text: request.message }) : null,
+    el("div", { className: "meta", text: fill("webapp.move.until", { time: until }) }),
+    el("div", { className: "actions" }, buttons),
+  ]);
+}
+
+function moveRequestSections(requests) {
+  const sections = [];
+  for (const [rows, titleKey, incoming] of [[requests.incoming, "webapp.move.incoming", true], [requests.outgoing, "webapp.move.outgoing", false]]) {
+    if (!rows.length) continue;
+    sections.push(el("div", { className: "section-title", text: t(titleKey) }), ...rows.map((request) => moveRequestCard(request, incoming)));
+  }
+  return sections;
+}
+
 async function renderMine(screen, token) {
   document.getElementById("meta").textContent = "";
   if (!canBook()) {
     screen.replaceChildren(notice(t("webapp.select.hint_readonly")));
     return;
   }
-  const { bookings } = await api("/my-bookings");
+  const [{ bookings }, requests] = await Promise.all([api("/my-bookings"), api("/move-requests")]);
   if (token !== state.renderToken) return;
-  if (!bookings.length) {
+  const requestCards = moveRequestSections(requests);
+  if (!bookings.length && !requestCards.length) {
     screen.replaceChildren(notice(t("webapp.mine.empty")));
     return;
   }
@@ -541,7 +679,8 @@ async function renderMine(screen, token) {
       actions.length ? el("div", { className: "actions" }, actions) : el("div", { className: "meta", text: t("webapp.mine.read_only") }),
     ]);
   });
-  screen.replaceChildren(...cards);
+  const divider = requestCards.length && cards.length ? [el("div", { className: "section-title", text: t("webapp.mine.bookings") })] : [];
+  screen.replaceChildren(...requestCards, ...divider, ...cards);
 }
 
 async function openEditForm(item) {

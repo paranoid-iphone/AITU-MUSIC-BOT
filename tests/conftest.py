@@ -109,10 +109,10 @@ def planning_on(session, monkeypatch):  # depends on `session` so it is applied 
 def freeze_now(monkeypatch):
     """Pin the club clock: freeze_now(datetime(2026, 10, 18, 12, 0))."""
     from app.api.routes import webapp
-    from app.services import bands, events, planning, repeat_offers
+    from app.services import bands, events, move_requests, planning, repeat_offers
 
     def _freeze(moment):
-        for module in (booking_service, planning, bands, events, webapp, repeat_offers):
+        for module in (booking_service, planning, bands, events, webapp, repeat_offers, move_requests):
             monkeypatch.setattr(module, "now_local", lambda moment=moment: moment)
 
     return _freeze

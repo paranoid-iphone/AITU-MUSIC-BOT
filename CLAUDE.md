@@ -59,6 +59,15 @@ that started in the last 2 h with a free slot +7 days it sets `bookings.repeat_o
 (text + button). The bot sends it with a `repeat:<booking_id>` button; `handlers_repeat.py` calls `POST /bookings/{id}/repeat`
 (`repeat_offers.repeat_booking` → `create_booking`, the date is derived server-side).
 
+"Ask to move": a member who needs a slot held by someone else's booking proposes a free slot of the same length
+(`services/move_requests.py`, table `move_requests`, created by `create_all`). The band's responsible person gets a
+`move_request` outbox event (buttons `move:accept|decline:<id>`, handled by `handlers_move.py` → internal
+`/move-requests/{id}/accept|decline`); the Mini App has the card button and a "requests" section on "Мои брони"
+(`/webapp/api/move-requests*`). Whoever may manage the booking, or is the band's responsible person, can answer. Accepting
+moves the booking through `update_booking(authorized=True, commit=False)` so history/Sheets/notifications behave as for
+any edit, and the request status commits in the same transaction; nothing is booked for the requester. Requests expire
+after 24 h or at the booking's start (APScheduler job `expire_move_requests`, plus a lazy check on every answer).
+
 The opt-in weekly mode: `services/planning.py` stores weekly requests (up to 5 priority windows) and runs the allocation; `services/allocator.py`
 is the **pure** algorithm (no DB) — keep it that way and unit-test it directly. `services/weeks.py` holds week/deadline
 math; days of a week that is still "collecting" are closed for manual booking (`is_date_open_for_booking`).

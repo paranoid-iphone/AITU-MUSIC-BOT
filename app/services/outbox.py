@@ -35,6 +35,21 @@ def queue_repeat_offer(session: AsyncSession, telegram_id: int, booking_id: int,
     )
 
 
+def queue_move_request(
+    session: AsyncSession, telegram_id: int, request_id: int, text: str, accept: str, decline: str
+) -> None:
+    session.info.setdefault("outbox", []).append(
+        {
+            "type": "move_request",
+            "telegram_id": telegram_id,
+            "request_id": request_id,
+            "text": text,
+            "accept": accept,
+            "decline": decline,
+        }
+    )
+
+
 def queue_schedule_changed(session: AsyncSession) -> None:
     events = session.info.setdefault("outbox", [])
     if not any(item["type"] == "schedule_changed" for item in events):
