@@ -185,5 +185,8 @@ class BackendClient:
     async def schedule_day_closures(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/day-closures")
 
+    async def registration_notify_mode(self) -> str:
+        return (await self.request("GET", "/admin/settings/registration-notify"))["mode"]
+
     async def action_history(self, telegram_id: int, limit: int = 30) -> list[dict[str, Any]]:
         return await self.request("GET", "/admin/actions/history", params={"telegram_id": telegram_id, "limit": limit})

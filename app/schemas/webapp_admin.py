@@ -1,4 +1,5 @@
 from datetime import time
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -31,3 +32,7 @@ class WebAppLimitsUpdate(BaseModel):
 
 class WebAppPersonalUpdate(BaseModel):
     enabled: bool
+
+
+class WebAppRegistrationNotifyUpdate(BaseModel):
+    mode: Literal["chat", "mini_app", "off"]

@@ -295,6 +295,43 @@ async def update_personal_bookings_enabled(session: AsyncSession, telegram_id: i
     return {"personal_bookings_enabled": is_enabled}
 
 
+REGISTRATION_NOTIFY_MODES = ("chat", "mini_app", "off")
+
+
+async def get_registration_notify_mode(session: AsyncSession) -> str:
+    """How admins hear about a new registration request: buttons in the chat, a link to the Mini App, or not at all."""
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "registration_notify_mode"))
+    setting = result.scalar_one_or_none()
+    return setting.value if setting is not None and setting.value in REGISTRATION_NOTIFY_MODES else "chat"
+
+
+async def update_registration_notify_mode(session: AsyncSession, telegram_id: int, mode: str) -> str:
+    from app.services.audit import log_action
+
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    require_admin(user)
+    if mode not in REGISTRATION_NOTIFY_MODES:
+        raise ConflictError("Unknown notification mode")
+    result = await session.execute(select(ClubSetting).where(ClubSetting.key == "registration_notify_mode"))
+    setting = result.scalar_one_or_none()
+    if setting is None:
+        session.add(ClubSetting(key="registration_notify_mode", value=mode))
+    else:
+        setting.value = mode
+    await log_action(
+        session,
+        user.id,
+        "settings.registration_notify.update",
+        "club_setting",
+        "registration_notify_mode",
+        f"Уведомления о заявках: {mode}",
+    )
+    await session.commit()
+    return mode
+
+
 async def get_settings(session: AsyncSession, telegram_id: int) -> dict:
     """Everything the Mini App settings tab shows, in one read."""
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -322,4 +359,5 @@ async def get_settings(session: AsyncSession, telegram_id: int) -> dict:
         "daily_hours": daily["daily_booking_limit_hours"],
         "max_future_bookings": future["max_future_bookings_per_band"],
         "personal_enabled": personal["personal_bookings_enabled"],
+        "registration_notify": await get_registration_notify_mode(session),
     }

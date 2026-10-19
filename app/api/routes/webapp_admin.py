@@ -19,6 +19,7 @@ from app.schemas.webapp_admin import (
     WebAppLimitsUpdate,
     WebAppModerate,
     WebAppPersonalUpdate,
+    WebAppRegistrationNotifyUpdate,
     WebAppRoleChange,
     WebAppWindowUpdate,
 )
@@ -238,6 +239,15 @@ async def set_personal(
 ) -> dict:
     result = await admin_service.update_personal_bookings_enabled(session, admin.telegram_id, payload.enabled)
     return {"personal_enabled": result["personal_bookings_enabled"]}
+
+
+@router.put("/settings/registration-notify")
+async def set_registration_notify(
+    payload: WebAppRegistrationNotifyUpdate,
+    admin: User = Depends(main_admin_writer),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    return {"registration_notify": await admin_service.update_registration_notify_mode(session, admin.telegram_id, payload.mode)}
 
 
 def _club_local(iso_utc: str) -> str:

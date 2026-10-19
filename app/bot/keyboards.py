@@ -394,6 +394,15 @@ def admin_event_applications_keyboard(event_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def registration_open_keyboard(base_url: str | None) -> InlineKeyboardMarkup | None:
+    """The notice for the "mini_app" mode: no approve/reject here, just the way to the requests tab."""
+    if not base_url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[mini_app_button("Открыть заявки", base_url, "admin", tab="requests")]]
+    )
+
+
 def registration_review_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

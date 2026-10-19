@@ -1622,6 +1622,17 @@ function openPersonalConfirm(enabled) {
   });
 }
 
+const REGISTRATION_MODES = ["chat", "mini_app", "off"];
+
+function openRegistrationForm(current) {
+  const mode = el("select", { id: "settings-registration-mode" }, REGISTRATION_MODES.map((value) =>
+    el("option", { value, text: t(`webapp.admin.settings.registration_${value}`) })
+  ));
+  mode.value = current;
+  const field = { input: mode, field: el("label", {}, [t("webapp.admin.settings.registration_mode"), mode]) };
+  openSettingsForm(t("webapp.admin.settings.registration"), [field], ([value]) => putSettings("registration-notify", { mode: value }));
+}
+
 function settingsCards(settings) {
   const dayRows = settings.days.map((day) =>
     settingsRow(
@@ -1648,6 +1659,14 @@ function settingsCards(settings) {
         t(settings.personal_enabled ? "webapp.admin.settings.on" : "webapp.admin.settings.off"),
         "",
         () => openPersonalConfirm(settings.personal_enabled)
+      ),
+    ]),
+    el("div", { className: "card" }, [
+      el("h2", { text: t("webapp.admin.settings.registration") }),
+      settingsRow(
+        t(`webapp.admin.settings.registration_${settings.registration_notify}`),
+        "",
+        () => openRegistrationForm(settings.registration_notify)
       ),
     ]),
   ];

@@ -44,6 +44,7 @@ from app.bot.keyboards import (
     profile_personal_event_delete_confirm_keyboard,
     profile_personal_event_detail_keyboard,
     rehearsals_menu_keyboard,
+    registration_open_keyboard,
     registration_review_keyboard,
     user_events_keyboard,
 )
@@ -547,8 +548,20 @@ async def update_registration_notice_messages(bot, telegram_id: int, text: str) 
     return updated
 
 
+async def get_registration_notify_mode() -> str:
+    """The club setting from "Админ -> Настройки"; the chat buttons are the safe fallback if the backend is down."""
+    try:
+        return await api.registration_notify_mode()
+    except Exception as exc:
+        logger.warning("Could not load the registration notification mode: %s", exc)
+        return "chat"
+
+
 async def notify_admins_about_registration(message: Message, user: dict, force: bool = False) -> bool:
     telegram_id = user["telegram_id"]
+    mode = await get_registration_notify_mode()
+    if mode == "off":
+        return False
     if not force and (telegram_id in registration_notice_sent or await get_registration_notice_messages(telegram_id)):
         return False
     if force:
@@ -556,6 +569,12 @@ async def notify_admins_about_registration(message: Message, user: dict, force: 
     sent = 0
     admin_ids = await get_registration_admin_ids(user.get("group_id"))
     group_title = await get_group_title(user.get("group_id"))
+    if mode == "mini_app":
+        question = "Заявки одобряются в мини-приложении."
+        reply_markup = registration_open_keyboard(await get_webapp_base_url())
+    else:
+        question = "Одобрить регистрацию?"
+        reply_markup = registration_review_keyboard(user["telegram_id"])
     for admin_id in admin_ids:
         try:
             sent_message = await message.bot.send_message(
@@ -565,8 +584,8 @@ async def notify_admins_about_registration(message: Message, user: dict, force: 
                 f"Направление: {group_title or '-'}\n"
                 f"Telegram: @{user['telegram_username'] or '-'}\n"
                 f"Telegram ID: {user['telegram_id']}\n"
-                "Одобрить регистрацию?",
-                reply_markup=registration_review_keyboard(user["telegram_id"]),
+                f"{question}",
+                reply_markup=reply_markup,
             )
             await remember_registration_notice_message(telegram_id, sent_message.chat.id, sent_message.message_id)
             sent += 1
