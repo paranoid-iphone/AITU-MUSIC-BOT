@@ -40,7 +40,12 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def mini_app_url(
-    base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None, view: str | None = None
+    base_url: str,
+    screen: str = "schedule",
+    join_code: str | None = None,
+    tab: str | None = None,
+    view: str | None = None,
+    mode: str | None = None,
 ) -> str:
     """The Mini App entry. web_app buttons cannot carry a start_param, so the target screen goes in the query."""
     url = f"{base_url.rstrip('/')}/webapp/schedule"
@@ -53,13 +58,21 @@ def mini_app_url(
         params["tab"] = tab
     if view:
         params["view"] = view
+    if mode:
+        params["mode"] = mode
     return f"{url}?{urlencode(params)}" if params else url
 
 
 def mini_app_button(
-    text: str, base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None, view: str | None = None
+    text: str,
+    base_url: str,
+    screen: str = "schedule",
+    join_code: str | None = None,
+    tab: str | None = None,
+    view: str | None = None,
+    mode: str | None = None,
 ) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code, tab, view)))
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code, tab, view, mode)))
 
 
 def mini_app_keyboard(text: str, base_url: str | None, screen: str = "schedule", join_code: str | None = None) -> InlineKeyboardMarkup:
@@ -191,7 +204,7 @@ def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool, webapp_base_url: 
         rows.append(row)
     if webapp_base_url:
         if is_dsvr:
-            rows.append([mini_app_button("Занять время (приоритет ДСВР)", webapp_base_url, "schedule")])
+            rows.append([mini_app_button("Занять время (приоритет ДСВР)", webapp_base_url, "schedule", mode="takeover")])
         rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

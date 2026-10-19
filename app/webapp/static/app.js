@@ -3,6 +3,7 @@
 const tg = window.Telegram && window.Telegram.WebApp;
 const initData = (tg && tg.initData) || "";
 const REFRESH_MS = 30000;
+const LOADING_DELAY_MS = 300; // the top bar appears only when a request takes longer than this
 const TOAST_MS = 3000;
 const ROUTES = ["schedule", "mine", "bands", "admin", "me"];
 const TELEGRAM_LANGUAGES = { ru: "ru", en: "en", kk: "kz", kz: "kz" };
@@ -12,6 +13,8 @@ const JOIN_PARAM = /^join_([A-Za-z0-9]{1,30})$/;
 
 const state = {
   me: null,
+  sessionExpired: false, // /me answered 401: the signed session is gone, not the server
+  shownRoute: null, // the route whose content is on screen (a placeholder is drawn when it changes)
   strings: {},
   renderToken: 0,
   refreshTimer: null,
@@ -95,7 +98,50 @@ function failureDetail(failure) {
   return failure.detail;
 }
 
-async function api(path, options = {}) {
+// 401 means the signed session is gone (a restart of the Mini App fixes it); anything else is a plain load failure.
+function loadFailureText(failure) {
+  return failure && failure.status === 401 ? t("webapp.error.session") : t("webapp.error.load");
+}
+
+// A thin bar on top shows that something is loading, but only after a short delay so quick calls do not flicker.
+const loading = { count: 0, timer: null };
+
+function loadingStart() {
+  loading.count += 1;
+  if (loading.count === 1) loading.timer = setTimeout(() => document.body.classList.add("loading"), LOADING_DELAY_MS);
+}
+
+function loadingEnd() {
+  loading.count = Math.max(0, loading.count - 1);
+  if (loading.count === 0) {
+    clearTimeout(loading.timer);
+    document.body.classList.remove("loading");
+  }
+}
+
+// Writes that are already on their way are not sent twice: a second tap gets the answer of the first one.
+const writesInFlight = new Map();
+
+function api(path, options = {}) {
+  const method = options.method || "GET";
+  if (method === "GET") return send(path, options);
+  const key = `${method} ${path} ${JSON.stringify(options.body === undefined ? null : options.body)}`;
+  if (!writesInFlight.has(key)) {
+    writesInFlight.set(key, send(path, options).finally(() => writesInFlight.delete(key)));
+  }
+  return writesInFlight.get(key);
+}
+
+async function send(path, options) {
+  loadingStart();
+  try {
+    return await request(path, options);
+  } finally {
+    loadingEnd();
+  }
+}
+
+async function request(path, options) {
   const headers = { "X-Telegram-Init-Data": initData };
   const init = { cache: "no-store", method: options.method || "GET", headers };
   if (options.body !== undefined) {
@@ -163,7 +209,8 @@ async function loadMe() {
   if (!initData) return null; // opened outside Telegram
   try {
     return await api("/me");
-  } catch (_) {
+  } catch (failure) {
+    state.sessionExpired = failure.status === 401;
     return null;
   }
 }
@@ -405,8 +452,7 @@ async function renderSchedule(screen, token) {
   const wrap = el("div", { className: "grid-wrap" }, [table]);
   const hintKey = state.takeover ? "webapp.takeover.hint" : bookable ? "webapp.select.hint" : "webapp.select.hint_readonly";
   const hint = el("div", { className: "notice hint", text: t(hintKey) });
-  const toggle = canTakeOver() ? takeoverToggle() : null;
-  screen.replaceChildren(hint, toggle, wrap);
+  screen.replaceChildren(hint, ...(canTakeOver() ? [takeoverToggle()] : []), wrap);
   if (previous) {
     wrap.scrollLeft = previous.scrollLeft;
     wrap.scrollTop = previous.scrollTop;
@@ -667,7 +713,7 @@ async function openWaitlistForm(item) {
   try {
     options = await api("/my-bands");
   } catch (error) {
-    toast(error.status === 401 ? t("webapp.error.session") : t("webapp.error.load"), true);
+    toast(loadFailureText(error), true);
     return;
   }
   const choices = options.bands.map((band) => el("option", { value: String(band.id), text: band.name }));
@@ -762,7 +808,7 @@ async function openBookingForm() {
   try {
     options = await api("/my-bands");
   } catch (error) {
-    toast(error.status === 401 ? t("webapp.error.session") : t("webapp.error.load"), true);
+    toast(loadFailureText(error), true);
     return;
   }
 
@@ -920,11 +966,19 @@ async function renderMine(screen, token) {
     screen.replaceChildren(notice(t("webapp.select.hint_readonly")));
     return;
   }
-  const [{ bookings }, requests, { entries }] = await Promise.all([api("/my-bookings"), api("/move-requests"), api("/waitlist")]);
+  const [bookingsResult, requestsResult, waitlistResult] = await Promise.allSettled([api("/my-bookings"), api("/move-requests"), api("/waitlist")]);
   if (token !== state.renderToken) return;
-  const requestCards = [...moveRequestSections(requests), ...waitlistSection(entries)];
+  if (bookingsResult.status === "rejected") throw bookingsResult.reason;
+  const { bookings } = bookingsResult.value;
+  // The bookings are the point of the page; if only the requests or the waiting list failed, say so and show the rest.
+  const partial = requestsResult.status === "rejected" || waitlistResult.status === "rejected";
+  const partialNotice = partial ? [notice(t("webapp.error.partial"), true)] : [];
+  const requestCards = [
+    ...(requestsResult.status === "fulfilled" ? moveRequestSections(requestsResult.value) : []),
+    ...(waitlistResult.status === "fulfilled" ? waitlistSection(waitlistResult.value.entries) : []),
+  ];
   if (!bookings.length && !requestCards.length) {
-    screen.replaceChildren(notice(t("webapp.mine.empty")));
+    screen.replaceChildren(...partialNotice, ...(partial ? [] : [notice(t("webapp.mine.empty"))]));
     return;
   }
   const cards = bookings.map((item) => {
@@ -945,15 +999,15 @@ async function renderMine(screen, token) {
     ]);
   });
   const divider = requestCards.length && cards.length ? [el("div", { className: "section-title", text: t("webapp.mine.bookings") })] : [];
-  screen.replaceChildren(...requestCards, ...divider, ...cards);
+  screen.replaceChildren(...partialNotice, ...requestCards, ...divider, ...cards);
 }
 
 async function openEditForm(item) {
   let schedule;
   try {
     schedule = await api("/schedule");
-  } catch (_) {
-    toast(t("webapp.error.load"), true);
+  } catch (failure) {
+    toast(loadFailureText(failure), true);
     return;
   }
   const step = schedule.slot_minutes;
@@ -1125,7 +1179,11 @@ function openBandForm({ title, fields, submitLabel, errorKey, doneKey, run }) {
   ]);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (fields.some((item) => item.required && !item.input.value.trim())) return;
+    if (fields.some((item) => item.required && !item.input.value.trim())) {
+      error.textContent = t("webapp.form.required");
+      haptic("error");
+      return;
+    }
     submit.disabled = true;
     error.textContent = "";
     try {
@@ -1215,7 +1273,7 @@ function openDeleteBand(band) {
     title: t("webapp.bands.delete_title"),
     text: fill("webapp.bands.delete_confirm", { name: band.name }),
     confirmLabel: t("webapp.bands.delete_yes"),
-    errorKey: "webapp.bands.member_error",
+    errorKey: "webapp.bands.delete_error",
     doneKey: "webapp.bands.deleted",
     run: () => api(`/bands/${band.id}`, { method: "DELETE" }),
   });
@@ -1493,8 +1551,8 @@ function usersControls(list) {
     try {
       const data = await api(usersPath());
       if (mine === state.adminSearchToken) list.replaceChildren(peopleList(data.users, t("webapp.admin.empty.users")));
-    } catch (_) {
-      if (mine === state.adminSearchToken) list.replaceChildren(notice(t("webapp.error.load"), true));
+    } catch (failure) {
+      if (mine === state.adminSearchToken) list.replaceChildren(notice(loadFailureText(failure), true));
     }
   };
   let timer = null;
@@ -1707,8 +1765,14 @@ function settingsCards(settings) {
   ];
 }
 
+// The badge on the "Requests" tab; if it cannot be loaded the tab itself still opens.
 async function pendingRequests() {
-  return canModerate() ? (await api("/admin/users?status=pending")).counts.pending : 0;
+  if (!canModerate()) return 0;
+  try {
+    return (await api("/admin/users?status=pending")).counts.pending;
+  } catch (_) {
+    return 0;
+  }
 }
 
 function adminHead(tabs, pending) {
@@ -1801,10 +1865,10 @@ function pagedFeed(first, pathFor, rowFor, emptyKey) {
       items = beforeId ? items.concat(data.items) : data.items;
       cursor = data.next_before_id;
       paint();
-    } catch (_) {
+    } catch (failure) {
       if (mine !== latest) return;
-      if (beforeId) toast(t("webapp.error.load"), true);
-      else body.replaceChildren(notice(t("webapp.error.load"), true));
+      if (beforeId) toast(loadFailureText(failure), true);
+      else body.replaceChildren(notice(loadFailureText(failure), true));
     }
   };
   more.addEventListener("click", () => load(cursor));
@@ -1983,15 +2047,20 @@ async function render() {
     state.takeover = false;
     renderSelectionBar();
   }
+  if (state.shownRoute !== route) {
+    screen.replaceChildren(notice(t("webapp.loading")));
+    state.shownRoute = route;
+  }
   try {
-    if (route === "me") renderProfile(screen);
+    if (state.sessionExpired && route !== "schedule") screen.replaceChildren(notice(t("webapp.error.session"), true));
+    else if (route === "me") renderProfile(screen);
     else if (route === "mine") await renderMine(screen, token);
     else if (route === "bands") await renderBands(screen, token);
     else if (route === "admin") await renderAdmin(screen, token);
     else await renderSchedule(screen, token);
   } catch (error) {
     if (token === state.renderToken) {
-      screen.replaceChildren(notice(t("webapp.error.load"), true));
+      screen.replaceChildren(notice(loadFailureText(error), true));
     }
   }
   if (route === "schedule" && token === state.renderToken) {
@@ -2016,6 +2085,7 @@ async function main() {
   const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || (query.has("join") ? `join_${query.get("join")}` : "")) : null;
   if (ADMIN_TABS.includes(query.get("tab"))) state.adminTab = query.get("tab");
   if (query.get("view") === "actions" && state.me && state.me.is_admin) state.historyView = "actions";
+  if (query.get("mode") === "takeover" && canTakeOver()) state.takeover = true; // the DSVR button of the bot
   if (joinMatch) location.hash = "#/bands";
   else if (ROUTES.includes(query.get("screen")) && !ROUTES.includes(location.hash.replace(/^#\/?/, "").split("/")[0])) {
     location.hash = `#/${query.get("screen")}`; // Telegram fills the hash with its own launch data, so only a route counts
@@ -2025,6 +2095,7 @@ async function main() {
     if (!document.hidden && currentRoute() === "schedule" && !state.closeSheet) render();
   });
   await render();
+  if (state.sessionExpired) toast(t("webapp.error.session"), true);
   if (joinMatch) openJoinForm(joinMatch[1]);
 }
 

@@ -359,6 +359,7 @@ def test_mini_app_url_puts_the_target_screen_and_join_code_in_the_query():
 
     assert mini_app_url("https://club.example/") == "https://club.example/webapp/schedule"
     assert mini_app_url("https://club.example", "mine") == "https://club.example/webapp/schedule?screen=mine"
+    assert mini_app_url("https://club.example", mode="takeover") == "https://club.example/webapp/schedule?mode=takeover"
     assert mini_app_url("https://club.example", "bands", "ab12") == "https://club.example/webapp/schedule?screen=bands&join=ab12"
 
 
@@ -602,7 +603,7 @@ def test_admin_menus_open_the_mini_app():
     assert ADMIN_REQUESTS_URL in group_admin_urls and ADMIN_ROLES_URL not in group_admin_urls
     assert ADMIN_HISTORY_URL in group_admin_urls and SCHEDULE_URL not in group_admin_urls
     dsvr_urls = _web_app_urls(keyboards.staff_inline_keyboard(False, True, ADMIN_BASE))
-    assert SCHEDULE_URL in dsvr_urls and ADMIN_HISTORY_URL in dsvr_urls  # take the room on the grid, read the history
+    assert f"{SCHEDULE_URL}?mode=takeover" in dsvr_urls and ADMIN_HISTORY_URL in dsvr_urls  # take the room on the grid, read the history
     assert [url for url in dsvr_urls if "screen=admin" in url and "tab=history" not in url] == []
 
 

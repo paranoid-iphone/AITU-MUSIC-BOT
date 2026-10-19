@@ -239,6 +239,23 @@ body.has-selbar main { padding-bottom: 76px; }
 .form .limits { margin-top: 12px; color: var(--hint); font-size: 13px; }
 .form .form-error:not(:empty) { margin-top: 12px; padding: 10px 12px; border-left: 4px solid #d65a4a; border-radius: 8px; background: var(--surface); font-size: 14px; }
 
+.loadbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  height: 3px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+  background-size: 40% 100%;
+  transition: opacity .15s;
+}
+body.loading .loadbar { opacity: 1; animation: loadbar 1s linear infinite; }
+@keyframes loadbar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { body.loading .loadbar { animation: none; background-size: 100% 100%; } }
+
 .toast {
   position: fixed;
   left: 50%;
