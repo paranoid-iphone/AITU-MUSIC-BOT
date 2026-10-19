@@ -31,7 +31,6 @@ ACCENT = "#3f7f5f"
 SELF = "#dbeedd"
 CONCERT = "#dbe8ff"
 STAFF = "#ffe8cc"
-EMPTY = "#f8faf6"
 CLOSED = "#f0ece4"
 CLOSED_LINE = "#dbd3c6"
 CLOSED_TEXT = "#7a695d"
@@ -58,7 +57,6 @@ FONT_DATE = _font(15)
 FONT_TIME = _font(14)
 FONT_CARD_TITLE = _font(15, True)
 FONT_CARD_BAND = _font(13, True)
-FONT_CARD_META = _font(12)
 FONT_SMALL = _font(11)
 
 

@@ -37,14 +37,12 @@ from app.bot.keyboards import (
     flow_cancel_keyboard,
     group_keyboard,
     language_keyboard,
-    main_menu,
     main_menu_inline,
     mini_app_keyboard,
     profile_inline_keyboard,
     profile_event_history_keyboard,
     profile_personal_event_delete_confirm_keyboard,
     profile_personal_event_detail_keyboard,
-    profile_keyboard,
     rehearsals_menu_keyboard,
     registration_review_keyboard,
     user_events_keyboard,
@@ -165,10 +163,6 @@ async def answer_callback(callback: CallbackQuery, text: str | None = None, show
     except TelegramBadRequest as exc:
         if "query is too old" not in str(exc) and "query ID is invalid" not in str(exc):
             raise
-
-
-def format_purpose(value: str) -> str:
-    return {"concert": "к концерту", "self": "для себя", "staff": "ивент / стафф", "personal": "личная репетиция"}.get(value, value)
 
 
 def format_event_card(event: dict) -> str:
@@ -322,20 +316,6 @@ def parse_booking_window(value: str) -> tuple[datetime, datetime] | None:
             return None
         parsed.append(value_datetime)
     return parsed[0], parsed[1]
-
-
-async def get_schedule_text() -> str:
-    rows = await api.schedule()
-    if not rows:
-        return "Расписание на ближайшие 7 дней свободно."
-    lines = ["Расписание на ближайшие 7 дней:"]
-    for item in rows:
-        song = item["song_title"] or "песня не указана"
-        lines.append(
-            f"{item['booking_date']} {item['start_time'][:5]}-{item['end_time'][:5]} | "
-            f"{item['band_name']} | {song} | {format_purpose(item['purpose'])}"
-        )
-    return "\n".join(lines)
 
 
 def schedule_fingerprint(rows: list[dict], day_closures: list[dict] | None = None) -> str:
@@ -824,7 +804,6 @@ async def inline_events(callback: CallbackQuery) -> None:
         await edit_screen(callback, "Сейчас нет открытых концертов.", concerts_menu_keyboard())
         await answer_callback(callback)
         return
-    user = await api.get_user(callback.from_user.id)
     await edit_screen(
         callback,
         "Выберите концерт, на который хотите подать номер:",
@@ -1237,7 +1216,7 @@ async def inline_admin_back(callback: CallbackQuery) -> None:
 async def inline_admin_section(callback: CallbackQuery) -> None:
     section = callback.data.split(":", maxsplit=1)[1]
     viewer = await api.get_user(callback.from_user.id)
-    if viewer["role"] != "admin" and section not in {"users", "bands"}:
+    if viewer["role"] != "admin" and section != "bands":
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
     if section == "actions":
@@ -1826,58 +1805,9 @@ async def submit_list_start(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(EventFlow.event_id)
-async def submit_list_event(message: Message, state: FSMContext) -> None:
-    if not message.text.strip().isdigit():
-        await message.answer("Введите ID числом.")
-        return
-    bands = await api.list_bands(message.from_user.id)
-    if not bands:
-        await message.answer("У вас пока нет коллективов.")
-        await state.clear()
-        return
-    await state.update_data(event_id=int(message.text.strip()), bands=bands)
-    await state.set_state(EventFlow.band_id)
-    await message.answer(
-        "Введите ID коллектива:\n" + "\n".join(f"{band['id']}. {band['name']}" for band in bands),
-        reply_markup=flow_cancel_keyboard(),
-    )
-
-
-@router.message(EventFlow.band_id)
-async def submit_list_band(message: Message, state: FSMContext) -> None:
-    if not message.text.strip().isdigit():
-        await message.answer("Введите ID числом.")
-        return
-    band_id = int(message.text.strip())
-    data = await state.get_data()
-    band = next((item for item in data["bands"] if item["id"] == band_id), None)
-    if band is None:
-        await message.answer("Выберите коллектив из списка.")
-        return
-    await state.update_data(band_id=band_id, members=band["members"])
-    await state.set_state(EventFlow.members)
-    lines = ["Введите ID участников через запятую:"]
-    for member in band["members"]:
-        user = member["user"]
-        lines.append(
-            f"{member['id']}. {user['last_name'] or ''} {user['first_name'] or ''} | {user['study_group'] or '-'} | {member['instrument_role']}"
-        )
-    await message.answer("\n".join(lines), reply_markup=flow_cancel_keyboard())
-
-
-@router.message(EventFlow.members)
-async def submit_list_members(message: Message, state: FSMContext) -> None:
-    try:
-        member_ids = [int(item.strip()) for item in message.text.split(",") if item.strip()]
-    except ValueError:
-        await message.answer("Введите ID через запятую. Пример: 1,2,3")
-        return
-    data = await state.get_data()
-    await api.submit_application(message.from_user.id, data["event_id"], data["band_id"], data.get("song_title", "песня не указана"), member_ids)
-    user = await api.get_user(message.from_user.id)
-    await state.clear()
-    await send_schedule_menu(message, user, "Список отправлен.")
+@router.message(EventFlow.band_id, EventFlow.members, EventFlow.application_members)
+async def event_flow_expects_buttons(message: Message) -> None:
+    await message.answer("Выберите вариант кнопками под сообщением.")
 
 
 @router.message(F.text == "⚙️ Админ")
@@ -2030,7 +1960,3 @@ async def fallback(message: Message, state: FSMContext) -> None:
         await message.answer("Ваш аккаунт не имеет доступа к боту. Обратитесь к админам AITU Music Club.")
         return
     await show_menu(message, user)
-
-
-
-

@@ -23,18 +23,6 @@ def group_keyboard(groups: list[dict]) -> ReplyKeyboardMarkup:
     )
 
 
-def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text="🎵 Мои коллективы"), KeyboardButton(text="➕ Создать коллектив")],
-        [KeyboardButton(text="📅 Забронировать")],
-        [KeyboardButton(text="🔑 Вступить по коду")],
-        [KeyboardButton(text="🎤 Концерты"), KeyboardButton(text="👤 Личный кабинет")],
-    ]
-    if is_admin:
-        rows.append([KeyboardButton(text="⚙️ Админ")])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
-
-
 def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -111,18 +99,6 @@ def flow_cancel_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Назад в меню", callback_data="flow:cancel")],
         ]
-    )
-
-
-def profile_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Изменить имя"), KeyboardButton(text="Изменить фамилию")],
-            [KeyboardButton(text="Изменить группу"), KeyboardButton(text="Изменить язык")],
-            [KeyboardButton(text="Уведомления вкл/выкл")],
-            [KeyboardButton(text="Назад")],
-        ],
-        resize_keyboard=True,
     )
 
 

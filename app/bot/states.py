@@ -40,7 +40,6 @@ class PlanFlow(StatesGroup):
 
 
 class EventFlow(StatesGroup):
-    event_id = State()
     band_id = State()
     song_title = State()
     members = State()
