@@ -23,9 +23,11 @@ def _checked(real_method, record):
 
 
 class StubWorksheet:
-    def __init__(self, calls, has_header=True):
+    def __init__(self, calls, has_header=True, row_count=1000):
         self.calls = calls
         self.has_header = has_header
+        self.row_count = row_count
+        self._resize = _checked(gspread.Worksheet.resize, calls)
         self._update = _checked(gspread.Worksheet.update, calls)
         self.batch_clear = _checked(gspread.Worksheet.batch_clear, calls)
         self.append_rows = _checked(gspread.Worksheet.append_rows, calls)
@@ -38,6 +40,10 @@ class StubWorksheet:
     def get_values(self, *args, **kwargs):
         self._get_values(*args, **kwargs)
         return [["Время"]] if self.has_header else []
+
+    def resize(self, *args, **kwargs):
+        self._resize(*args, **kwargs)
+        self.row_count = kwargs.get("rows", self.row_count)
 
 
 class StubSpreadsheet:
@@ -87,6 +93,18 @@ def test_schedule_sheet_is_created_written_and_trailing_rows_cleared(backend):
     assert update[2] == {"values": rows, "range_name": "A1", "value_input_option": "RAW"}
     clear = next(call for call in backend.calls if call[0] == "batch_clear")
     assert clear[1] == (["A3:Z5000"],)
+
+
+def test_schedule_sheet_grows_when_the_rows_do_not_fit(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    worksheet = backend.spreadsheet.sheets[sheets_sync.SCHEDULE_SHEET]
+    worksheet.row_count = 3
+    rows = [sheets_sync.SCHEDULE_HEADER] + [["2026-10-21", "Ср"]] * 5
+    backend.replace_schedule(rows)
+
+    resize = next(call for call in backend.calls if call[0] == "resize")
+    assert resize[2] == {"rows": 6}
+    assert worksheet.row_count == 6
 
 
 def test_history_header_is_written_once_then_rows_are_appended(backend):

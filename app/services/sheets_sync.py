@@ -2,7 +2,8 @@
 
 If the server goes down, the sheet still holds the current and next week's schedule plus the full change history.
 
-- Sheet "Расписание": rewritten whenever the schedule changes (current + next week, confirmed bookings).
+- Sheet "Расписание": rewritten whenever the schedule changes (this week up to 30 days ahead, confirmed bookings).
+  The ID columns (booking, band, author) let `app.tools.restore_from_sheets` put the bookings back.
 - Sheet "История": every schedule change is appended exactly once (marked with `sheets_synced_at`).
 
 Writes are debounced (a burst of changes becomes one write) and retried every minute if Google was unreachable.
@@ -33,13 +34,13 @@ SCHEDULE_SHEET = "Расписание"
 HISTORY_SHEET = "История"
 SCHEDULE_HEADER = [
     "Дата", "День", "Начало", "Конец", "Номер", "Направление", "Ответственный", "Telegram ответственного",
-    "Цель", "Песня / название", "Источник", "ID брони",
+    "Цель", "Песня / название", "Источник", "ID брони", "ID номера", "ID автора",
 ]
 HISTORY_HEADER = ["Время", "Кто", "Действие", "Номер", "Было", "Стало", "Причина", "ID брони", "ID записи"]
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 PURPOSES = {"concert": "к концерту", "self": "для себя", "personal": "личная", "staff": "стафф / ДСВР"}
 SOURCES = {"manual": "вручную", "auto": "авто-распределение", "dsvr": "ДСВР", "staff": "админ"}
-SCHEDULE_WEEKS = 2
+SCHEDULE_HORIZON_DAYS = 30
 HISTORY_BATCH = 500
 DEBOUNCE_SECONDS = 5
 RETRY_SECONDS = 30
@@ -76,6 +77,8 @@ def build_schedule_rows(bookings: list[Booking]) -> list[list]:
                 booking.song_title or "",
                 SOURCES.get(booking.source, booking.source),
                 booking.id,
+                booking.band_id or "",
+                booking.created_by_id,
             ]
         )
     return rows
@@ -129,6 +132,8 @@ class GspreadBackend:
     def replace_schedule(self, rows: list[list]) -> None:
         try:
             worksheet = self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER))
+            if len(rows) > worksheet.row_count:
+                worksheet.resize(rows=len(rows))
             worksheet.update(values=rows, range_name="A1", value_input_option="RAW")
             worksheet.batch_clear([f"A{len(rows) + 1}:Z5000"])  # drop leftovers of a longer previous version
         except Exception:
@@ -161,7 +166,7 @@ def _digest(rows: list[list]) -> str:
 async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
     """Push what changed. Raises if Google is unreachable; unsynced history stays unsynced and is retried."""
     first_day = week_start_of(now_local().date())
-    last_day = first_day + timedelta(days=7 * SCHEDULE_WEEKS - 1)
+    last_day = now_local().date() + timedelta(days=SCHEDULE_HORIZON_DAYS)
     result = await session.execute(
         select(Booking)
         .where(

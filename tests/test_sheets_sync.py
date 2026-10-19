@@ -62,6 +62,58 @@ async def test_schedule_rows_contain_responsible_and_labels(session, make_user, 
     assert row[10] == "вручную"
 
 
+async def test_schedule_rows_carry_ids_for_restoring(session, make_user, make_band):
+    leader, band, _ = await _book(session, make_user, make_band)
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+
+    header, row = backend.schedules[0]
+    booking = (await session.execute(select(models.Booking))).scalar_one()
+    assert header[-3:] == ["ID брони", "ID номера", "ID автора"]
+    assert row[-3:] == [booking.id, band.id, leader.id]
+
+
+async def test_personal_booking_has_no_band_id_but_keeps_the_author(session, make_user):
+    user = await make_user()
+    day = (now_local() + timedelta(days=1)).date()
+    session.add(
+        models.Booking(created_by_id=user.id, booking_date=day, start_time=time(12), end_time=time(13), purpose="personal")
+    )
+    await session.commit()
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+
+    row = backend.schedules[0][1]
+    assert row[-2:] == ["", user.id]
+
+
+async def _booking_on(session, make_user, make_band, day):
+    leader = await make_user()
+    band = await make_band(leader, "Rockers")
+    session.add(
+        models.Booking(
+            band_id=band.id, created_by_id=leader.id, booking_date=day, start_time=time(12), end_time=time(13), purpose="self"
+        )
+    )
+    await session.commit()
+
+
+async def test_schedule_sheet_reaches_thirty_days_ahead(session, make_user, make_band):
+    today = now_local().date()
+    await _booking_on(session, make_user, make_band, today + timedelta(days=sheets_sync.SCHEDULE_HORIZON_DAYS))
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    assert len(backend.schedules[-1]) == 2
+
+
+async def test_schedule_sheet_stops_after_the_horizon(session, make_user, make_band):
+    today = now_local().date()
+    await _booking_on(session, make_user, make_band, today + timedelta(days=sheets_sync.SCHEDULE_HORIZON_DAYS + 1))
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    assert backend.schedules[-1] == [sheets_sync.SCHEDULE_HEADER]
+
+
 async def test_history_is_appended_once_and_marked(session, make_user, make_band):
     await _book(session, make_user, make_band)
     backend = FakeBackend()

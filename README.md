@@ -59,7 +59,8 @@ are re-sent by a background job, the bot delivers them (at least once) and refre
 
 One-way (bot → sheet) so the schedule survives a server outage:
 
-- sheet **Расписание** – current and next week's bookings, rewritten after each change;
+- sheet **Расписание** – bookings from the start of this week up to 30 days ahead, rewritten after each change; it carries
+  the booking, band and author ids so the bookings can be restored;
 - sheet **История** – every schedule change appended once.
 
 Setup:
