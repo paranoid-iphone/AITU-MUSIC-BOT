@@ -14,6 +14,7 @@ from app.bot.handlers_move import router as move_router
 from app.bot.handlers_repeat import router as repeat_router
 from app.bot.handlers_waitlist import router as waitlist_router
 from app.bot.menu_button import setup_menu_button
+from app.bot.menu_refresh import MenuRefresher
 from app.core.config import settings
 
 
@@ -24,15 +25,20 @@ logger = logging.getLogger(__name__)
 async def outbox_worker(bot: Bot) -> None:
     """Deliver events queued by the backend: personal notifications and schedule-menu refreshes."""
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    menus_dirty = False
+    refresher = MenuRefresher(lambda: refresh_all_schedule_menus(bot))
+    try:
+        await _outbox_loop(bot, redis, refresher)
+    finally:
+        refresher.close()
+
+
+async def _outbox_loop(bot: Bot, redis: Redis, refresher: MenuRefresher) -> None:
     while True:
         try:
             item = await redis.blpop(OUTBOX_KEY, timeout=1)
             if item is None:
-                # Queue drained: refresh once per burst of changes instead of once per event.
-                if menus_dirty:
-                    menus_dirty = False
-                    await refresh_all_schedule_menus(bot)
+                # Queue drained: refresh once per burst of changes instead of once per event, in the background.
+                refresher.poll()
                 continue
             event = json.loads(item[1])
             if event.get("type") == "notify":
@@ -79,7 +85,7 @@ async def outbox_worker(bot: Bot) -> None:
                 except Exception as exc:
                     logger.info("Could not deliver waiting-list offer to %s: %s", event.get("telegram_id"), exc)
             elif event.get("type") == "schedule_changed":
-                menus_dirty = True
+                refresher.mark_dirty()
         except asyncio.CancelledError:
             raise
         except Exception:

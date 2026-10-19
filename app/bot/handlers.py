@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import hashlib
 import json
@@ -5,7 +6,7 @@ import random
 from datetime import date, datetime
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramRetryAfter
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, InputMediaPhoto, Message, ReplyKeyboardRemove
@@ -60,6 +61,8 @@ logger = logging.getLogger(__name__)
 registration_notice_sent: set[int] = set()
 SCHEDULE_MENU_MESSAGES_KEY = "bot:schedule_menu_messages"
 SCHEDULE_IMAGE_FILE_ID_PREFIX = "bot:schedule_image_file_id:"
+MENU_REFRESH_PAUSE = 0.05  # seconds between edited chats
+MENU_REFRESH_MAX_WAIT = 60  # a longer flood wait aborts the pass instead of stalling it
 REGISTRATION_NOTICE_MESSAGES_PREFIX = "bot:registration_notice_messages:"
 
 LEHA_PRAISES = [
@@ -399,6 +402,7 @@ async def refresh_all_schedule_menus(bot, caption: str = "Главное мен�
     if not stored_messages:
         return
     image_media, fingerprint, is_cached = await get_schedule_image_media()
+    first = True
     for chat_id_raw, payload in stored_messages.items():
         try:
             message_id_raw, is_admin_raw = payload.split(":", maxsplit=1)
@@ -408,24 +412,46 @@ async def refresh_all_schedule_menus(bot, caption: str = "Главное мен�
         except (ValueError, AttributeError):
             await redis.hdel(SCHEDULE_MENU_MESSAGES_KEY, chat_id_raw)
             continue
+        if not first:
+            await asyncio.sleep(MENU_REFRESH_PAUSE)  # stay well under Telegram's flood limits
+        first = False
         media = InputMediaPhoto(media=image_media, caption=caption)
-        try:
-            updated = await bot.edit_message_media(
-                chat_id=chat_id,
-                message_id=message_id,
-                media=media,
-                reply_markup=main_menu_inline(is_admin),
-            )
-            if not is_cached and isinstance(updated, Message):
-                await remember_schedule_file_id(fingerprint, updated)
-                image_media = updated.photo[-1].file_id
-                is_cached = True
-        except Exception as exc:
-            text = str(exc).lower()
-            if "message is not modified" not in text:
-                logger.info("Could not refresh schedule menu for chat %s: %s", chat_id, exc)
-            if "message to edit not found" in text or "bot was blocked" in text or "chat not found" in text:
+        updated = None
+        for attempt in range(2):
+            try:
+                updated = await bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    media=media,
+                    reply_markup=main_menu_inline(is_admin),
+                )
+            except TelegramRetryAfter as exc:
+                if exc.retry_after > MENU_REFRESH_MAX_WAIT:
+                    logger.warning("Schedule menu refresh stopped: Telegram asks to wait %s s", exc.retry_after)
+                    return  # the next schedule change starts a new pass
+                if attempt == 0:
+                    await asyncio.sleep(exc.retry_after)
+                    continue
+                logger.info("Skipped schedule menu of chat %s: still rate limited", chat_id)
+            except (TelegramForbiddenError, TelegramNotFound) as exc:
+                logger.info("Dropped schedule menu of chat %s: %s", chat_id, exc)
                 await forget_schedule_menu(chat_id)
+            except TelegramBadRequest as exc:
+                text = str(exc).lower()
+                if "message is not modified" in text:
+                    pass
+                elif "not found" in text:  # "message to edit not found", "chat not found"
+                    logger.info("Dropped schedule menu of chat %s: %s", chat_id, exc)
+                    await forget_schedule_menu(chat_id)
+                else:
+                    logger.info("Could not refresh schedule menu for chat %s: %s", chat_id, exc)
+            except Exception as exc:
+                logger.info("Could not refresh schedule menu for chat %s: %s", chat_id, exc)
+            break
+        if not is_cached and isinstance(updated, Message) and updated.photo:
+            await remember_schedule_file_id(fingerprint, updated)
+            image_media = updated.photo[-1].file_id
+            is_cached = True
 
 
 async def send_schedule(message: Message) -> None:
@@ -1274,7 +1300,6 @@ async def inline_admin_band_member_action(callback: CallbackQuery, state: FSMCon
         await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
     elif action == "responsible":
         band = await api.update_band_responsible(callback.from_user.id, band_id, member_id)
-        await refresh_all_schedule_menus(callback.message.bot)
         await edit_screen(callback, "Ответственный обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
     elif action == "remove":
         await edit_screen(callback, "Удалить участника из коллектива?", admin_member_remove_confirm_keyboard(band_id, member_id))

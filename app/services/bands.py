@@ -17,7 +17,7 @@ from app.db.models import (
     WaitlistEntry,
 )
 from app.services.errors import ForbiddenError, NotFoundError
-from app.services.outbox import commit_and_publish
+from app.services.outbox import commit_and_publish, queue_schedule_changed
 from app.services.permissions import (
     administered_group_ids,
     can_manage_band,
@@ -202,7 +202,8 @@ async def update_band_responsible(session: AsyncSession, band_id: int, requester
         band_id,
         f"Назначил ответственного коллектива #{band_id}: участник #{member_id}",
     )
-    await session.commit()
+    queue_schedule_changed(session)  # the schedule image prints the responsible person
+    await commit_and_publish(session)
     session.expire(band)
     return await get_band_detail(session, band_id)
 
@@ -253,6 +254,7 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
     if band.responsible_user_id == member.user_id:
         owner = next((m for m in band.members if m.is_owner), None)
         band.responsible_user_id = owner.user_id if owner is not None else None
+        queue_schedule_changed(session)
     deleted = {"member_id": member.id, "band_id": band_id, "user_name": user_name}
     await log_action(
         session,
@@ -264,7 +266,7 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
     )
     await session.delete(member)
     await session.execute(delete(WaitlistEntry).where(WaitlistEntry.band_id == band_id, WaitlistEntry.user_id == member.user_id))
-    await session.commit()
+    await commit_and_publish(session)
     return deleted
 
 

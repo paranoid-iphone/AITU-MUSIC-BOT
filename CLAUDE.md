@@ -50,7 +50,8 @@ Two processes share one codebase and talk over HTTP + Redis:
   whole would also swallow `admin:back`).
 - **Backend → bot notifications:** services call `outbox.queue_notification` / `queue_schedule_changed` on the session
   and then `outbox.commit_and_publish(session)`; events are pushed to the Redis list `bot:outbox` only after the commit,
-  and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst). In tests
+  and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst, in a background task via `bot/menu_refresh.py`, throttled and
+  honouring `RetryAfter`). Whatever changes what the schedule image shows must queue `schedule_changed`; handlers never refresh menus themselves. In tests
   `outbox.publish` is monkeypatched to collect events (see `tests/conftest.py`).
 
 ### Booking model and weekly planning
