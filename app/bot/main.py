@@ -1,10 +1,8 @@
 import asyncio
-import json
 import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from redis.asyncio import Redis
 
 from app.bot.errors import on_error
@@ -15,10 +13,10 @@ from app.bot.handlers_repeat import router as repeat_router
 from app.bot.handlers_waitlist import router as waitlist_router
 from app.bot.menu_button import setup_menu_button
 from app.bot.menu_refresh import MenuRefresher
+from app.bot.outbox_delivery import process_next, recover_processing
 from app.core.config import settings
 
 
-OUTBOX_KEY = "bot:outbox"
 logger = logging.getLogger(__name__)
 
 
@@ -33,63 +31,22 @@ async def outbox_worker(bot: Bot) -> None:
 
 
 async def _outbox_loop(bot: Bot, redis: Redis, refresher: MenuRefresher) -> None:
+    restored = False
     while True:
         try:
-            item = await redis.blpop(OUTBOX_KEY, timeout=1)
-            if item is None:
+            if not restored:
+                count = await recover_processing(redis)
+                restored = True
+                if count:
+                    logger.info("Restored %s unfinished outbox event(s)", count)
+            if not await process_next(bot, redis, refresher):
                 # Queue drained: refresh once per burst of changes instead of once per event, in the background.
                 refresher.poll()
-                continue
-            event = json.loads(item[1])
-            if event.get("type") == "notify":
-                try:
-                    await bot.send_message(event["telegram_id"], event["text"])
-                except Exception as exc:
-                    logger.info("Could not deliver notification to %s: %s", event.get("telegram_id"), exc)
-            elif event.get("type") == "repeat_offer":
-                try:
-                    await bot.send_message(
-                        event["telegram_id"],
-                        event["text"],
-                        reply_markup=InlineKeyboardMarkup(
-                            inline_keyboard=[[InlineKeyboardButton(text=event["button"], callback_data=f"repeat:{event['booking_id']}")]]
-                        ),
-                    )
-                except Exception as exc:
-                    logger.info("Could not deliver repeat offer to %s: %s", event.get("telegram_id"), exc)
-            elif event.get("type") == "move_request":
-                try:
-                    await bot.send_message(
-                        event["telegram_id"],
-                        event["text"],
-                        reply_markup=InlineKeyboardMarkup(
-                            inline_keyboard=[
-                                [
-                                    InlineKeyboardButton(text=event["accept"], callback_data=f"move:accept:{event['request_id']}"),
-                                    InlineKeyboardButton(text=event["decline"], callback_data=f"move:decline:{event['request_id']}"),
-                                ]
-                            ]
-                        ),
-                    )
-                except Exception as exc:
-                    logger.info("Could not deliver move request to %s: %s", event.get("telegram_id"), exc)
-            elif event.get("type") == "waitlist_offer":
-                try:
-                    await bot.send_message(
-                        event["telegram_id"],
-                        event["text"],
-                        reply_markup=InlineKeyboardMarkup(
-                            inline_keyboard=[[InlineKeyboardButton(text=event["button"], callback_data=f"waitlist:take:{event['entry_id']}")]]
-                        ),
-                    )
-                except Exception as exc:
-                    logger.info("Could not deliver waiting-list offer to %s: %s", event.get("telegram_id"), exc)
-            elif event.get("type") == "schedule_changed":
-                refresher.mark_dirty()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Outbox worker error")
+            restored = False  # an event taken just before the failure is still in the processing list
             await asyncio.sleep(2)
 
 

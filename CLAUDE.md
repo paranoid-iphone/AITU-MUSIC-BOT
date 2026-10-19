@@ -49,8 +49,12 @@ Two processes share one codebase and talk over HTTP + Redis:
   `LEGACY_MINI_APP_SCREENS["admin"]` / `REMOVED_ADMIN_TEXTS`: add new removals there, and keep prefixes narrow (`admin:` as a
   whole would also swallow `admin:back`).
 - **Backend → bot notifications:** services call `outbox.queue_notification` / `queue_schedule_changed` on the session
-  and then `outbox.commit_and_publish(session)`; events are pushed to the Redis list `bot:outbox` only after the commit,
-  and `outbox_worker` in `app/bot/main.py` delivers them (and refreshes schedule menus once per burst, in a background task via `bot/menu_refresh.py`, throttled and
+  and then `outbox.commit_and_publish(session)`. `queue_*` add an `OutboxEvent` row (`outbox_events`) to the session, so the event commits or
+  rolls back with the change; after the commit it is pushed to the Redis list `bot:outbox` and stamped `published_at`. The
+  APScheduler job `run_outbox_retry` (every 30 s) re-pushes committed events that missed Redis and purges published rows after 7 days.
+  The bot takes events with `BLMOVE` into `bot:outbox:processing` and `LREM`s them after delivery (`bot/outbox_delivery.py`; unfinished ones are
+  moved back on start), so delivery is at least once; `TelegramRetryAfter` is waited out and the same event retried. `outbox_worker` in
+  `app/bot/main.py` also refreshes schedule menus once per burst, in a background task via `bot/menu_refresh.py`, throttled and
   honouring `RetryAfter`). Whatever changes what the schedule image shows must queue `schedule_changed`; handlers never refresh menus themselves. In tests
   `outbox.publish` is monkeypatched to collect events (see `tests/conftest.py`).
 

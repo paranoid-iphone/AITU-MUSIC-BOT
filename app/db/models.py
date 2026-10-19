@@ -71,6 +71,17 @@ class AuditLog(Base):
     actor: Mapped["User | None"] = relationship("User", foreign_keys=[actor_id])
 
 
+class OutboxEvent(Base):
+    """A backend -> bot event, stored in the transaction that caused it and pushed to Redis after the commit."""
+
+    __tablename__ = "outbox_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
 class User(Base):
     __tablename__ = "users"
 

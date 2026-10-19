@@ -17,8 +17,9 @@ def published(monkeypatch) -> list[dict]:
     """Collect outbox events instead of pushing them to Redis."""
     events: list[dict] = []
 
-    async def _capture(batch: list[dict]) -> None:
+    async def _capture(batch: list[dict]) -> bool:
         events.extend(batch)
+        return True
 
     monkeypatch.setattr(outbox, "publish", _capture)
     return events

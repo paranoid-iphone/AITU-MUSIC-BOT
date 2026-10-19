@@ -15,7 +15,7 @@ from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
 from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
-from app.services import repeat_offers, sheets_sync
+from app.services import outbox, repeat_offers, sheets_sync
 from app.services.errors import AppError
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 sheets_task: asyncio.Task | None = None
 REPEAT_OFFER_JOB_MINUTES = 5
+OUTBOX_JOB_SECONDS = 30
 
 
 async def run_sunday_allocation() -> None:
@@ -70,6 +71,18 @@ async def run_cleanup_waitlist() -> None:
             logger.exception("Cleaning the waiting list failed")
 
 
+async def run_outbox_retry() -> None:
+    """Push bot events that missed Redis and forget the ones published long ago."""
+    async with AsyncSessionLocal() as session:
+        try:
+            resent = await outbox.republish_unpublished(session)
+            if resent:
+                logger.info("Republished %s outbox event(s)", resent)
+            await outbox.purge_published(session)
+        except Exception:
+            logger.exception("Outbox retry failed")
+
+
 async def catch_up_missed_allocations() -> None:
     async with AsyncSessionLocal() as session:
         try:
@@ -88,6 +101,7 @@ async def on_startup() -> None:
     scheduler.add_job(run_repeat_offers, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="repeat_offers")
     scheduler.add_job(run_expire_move_requests, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="expire_move_requests")
     scheduler.add_job(run_cleanup_waitlist, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="cleanup_waitlist")
+    scheduler.add_job(run_outbox_retry, "interval", seconds=OUTBOX_JOB_SECONDS, id="outbox_retry")
     if settings.weekly_planning_enabled:
         run_at = allocation_time()
         scheduler.add_job(run_sunday_allocation, "cron", day_of_week="sun", hour=run_at.hour, minute=run_at.minute, id="weekly_allocation")

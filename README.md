@@ -52,8 +52,8 @@ granted or removed gets a bot message. Group admins see only their own group and
 
 Every create / edit / cancel / DSVR takeover / automatic assignment is stored with who did it and before/after values
 (the Mini App's *Админ → История* tab, filterable by group; the bot's *Админ → История* keeps the action journal).
-Deleting a booking cancels it, so it stays in the history. The backend pushes notifications to a Redis list (`bot:outbox`); the bot delivers them and
-refreshes the schedule menus.
+Deleting a booking cancels it, so it stays in the history. The backend stores notifications in the database (`outbox_events`) and pushes them to a Redis list (`bot:outbox`); events that missed Redis
+are re-sent by a background job, the bot delivers them (at least once) and refreshes the schedule menus.
 
 ## Google Sheets backup
 
