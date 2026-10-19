@@ -230,16 +230,15 @@ def format_band_card(band: dict) -> str:
 def admin_guide_text() -> str:
     return (
         "Инструкция админа\n\n"
-        "Заявки: проверяй имя, фамилию и группу. Отклонение не банит пользователя, он сможет подать заявку позже.\n\n"
-        "Репетиции (мини-приложение): на сетке расписания открой карточку брони, чтобы изменить или отменить её. "
-        "Кнопка «Занять зал» занимает время под стафф/ивент или с приоритетом ДСВР: пересекающиеся брони отменяются.\n\n"
-        "Настройки (мини-приложение): рабочие дни и часы зала, лимиты на коллектив, личные репетиции.\n\n"
-        "Коллективы: можно переименовать коллектив, поменять лидера, отредактировать роли участников или удалить участника из коллектива.\n\n"
-        "Концерты: создай концерт, открой прием номеров, затем смотри заявки номеров со списками участников.\n\n"
-        "Админы и группы (мини-приложение, вкладка «Роли»): админы, ДСВР и админы групп по @username или Telegram ID. "
+        "Мини-приложение, вкладка «Админ»: заявки на регистрацию, пользователи (бан, удаление), роли "
+        "(админы, ДСВР, админы групп), настройки (рабочие дни и часы зала, лимиты, личные репетиции) и история "
+        "расписания. Отклонение заявки не банит пользователя, он сможет подать её позже. "
         "Initial admins защищены от снятия роли.\n\n"
-        "История: журнал действий в боте показывает, кто кого одобрил, удалил, изменил коллектив или концерт; "
-        "история расписания открывается в мини-приложении."
+        "Мини-приложение, расписание: на сетке открой карточку брони, чтобы изменить или отменить её. "
+        "Кнопка «Занять зал» занимает время под стафф/ивент или с приоритетом ДСВР: пересекающиеся брони отменяются.\n\n"
+        "В боте остаются: список коллективов (передать лидерство, назначить ответственного, убрать участника), "
+        "концерты (создай концерт, открой приём номеров, смотри заявки со списками участников), журнал действий "
+        "(кто кого одобрил, удалил, изменил коллектив или концерт) и недельное планирование."
     )
 
 
@@ -254,10 +253,9 @@ def user_help_text(is_approved: bool = True) -> str:
     return (
         "AITU Music Club Bot: инструкция\n\n"
         "Главное меню всегда показывает актуальную картинку расписания на ближайшие 7 дней.\n\n"
-        "Репетиции: можно посмотреть свои брони, забронировать время для коллектива или личную репетицию, "
-        "а также изменить или удалить свою бронь.\n\n"
-        "Коллективы: можно создать коллектив, вступить по коду или ссылке, посмотреть участников. "
-        "Лидер коллектива может менять название, роли, состав и передавать лидерство.\n\n"
+        "Репетиции и коллективы открываются в мини-приложении (кнопки в меню): там можно посмотреть свои брони, "
+        "забронировать время для коллектива или личную репетицию, изменить или удалить свою бронь, встать в очередь "
+        "на занятое время, создать коллектив, вступить по коду или ссылке и управлять составом.\n\n"
         "Концерты: открытые концерты показывают, куда можно подать номер. Лидер выбирает коллектив, песню "
         "и участников. В Моих заявках можно изменить песню/состав или отозвать заявку.\n\n"
         "Профиль: можно изменить имя, фамилию, учебную группу, язык и уведомления.\n\n"
@@ -611,18 +609,18 @@ async def prompt_next_profile_step(message: Message, state: FSMContext, user: di
         return
     if not user.get("last_name"):
         await state.set_state(Onboarding.last_name)
-        await message.answer("Введите фамилию:", reply_markup=ReplyKeyboardRemove())
+        await message.answer(t(language, "ask_last_name"), reply_markup=ReplyKeyboardRemove())
         return
     if not user.get("study_group"):
         await state.set_state(Onboarding.study_group)
-        await message.answer("Введите учебную группу:", reply_markup=ReplyKeyboardRemove())
+        await message.answer(t(language, "ask_study_group"), reply_markup=ReplyKeyboardRemove())
         return
     if user.get("group_id") is None:
         await state.set_state(Onboarding.group)
         await message.answer("Выберите направление:", reply_markup=group_keyboard(await api.list_groups()))
         return
     await state.set_state(Onboarding.language)
-    await message.answer("Выберите язык:", reply_markup=language_keyboard())
+    await message.answer(t(language, "choose_language"), reply_markup=language_keyboard())
 
 
 async def has_full_access(message: Message) -> bool:
@@ -1531,29 +1529,29 @@ async def start(message: Message, state: FSMContext) -> None:
 async def onboarding_first_name(message: Message, state: FSMContext) -> None:
     first_name = message.text.strip()
     if not first_name:
-        await message.answer("Введите имя:")
+        await message.answer(t(settings.default_language, "ask_first_name"))
         return
     await api.update_settings(message.from_user.id, {"first_name": first_name})
     await state.set_state(Onboarding.last_name)
-    await message.answer("Введите фамилию:")
+    await message.answer(t(settings.default_language, "ask_last_name"))
 
 
 @router.message(Onboarding.last_name)
 async def onboarding_last_name(message: Message, state: FSMContext) -> None:
     last_name = message.text.strip()
     if not last_name:
-        await message.answer("Введите фамилию:")
+        await message.answer(t(settings.default_language, "ask_last_name"))
         return
     await api.update_settings(message.from_user.id, {"last_name": last_name})
     await state.set_state(Onboarding.study_group)
-    await message.answer("Введите учебную группу:")
+    await message.answer(t(settings.default_language, "ask_study_group"))
 
 
 @router.message(Onboarding.study_group)
 async def onboarding_group(message: Message, state: FSMContext) -> None:
     study_group = message.text.strip()
     if not study_group:
-        await message.answer("Введите учебную группу:")
+        await message.answer(t(settings.default_language, "ask_study_group"))
         return
     await api.update_settings(message.from_user.id, {"study_group": study_group})
     await state.set_state(Onboarding.group)
@@ -1569,7 +1567,7 @@ async def onboarding_direction(message: Message, state: FSMContext) -> None:
         return
     await api.update_settings(message.from_user.id, {"group_id": chosen["id"]})
     await state.set_state(Onboarding.language)
-    await message.answer("Выберите язык:", reply_markup=language_keyboard())
+    await message.answer(t(settings.default_language, "choose_language"), reply_markup=language_keyboard())
 
 
 @router.message(Onboarding.language)
