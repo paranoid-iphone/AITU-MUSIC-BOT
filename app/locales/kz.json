@@ -293,5 +293,6 @@
   "webapp.admin.history.action.updated": "броньды өзгертті",
   "webapp.admin.history.action.cancelled": "броньды жойды",
   "webapp.admin.history.action.preempted": "броньды ығыстырды (ДСВР)",
-  "webapp.admin.history.action.auto_assigned": "авто-бөлу"
+  "webapp.admin.history.action.auto_assigned": "авто-бөлу",
+  "webapp.admin.history.action.restored": "броньды Sheets-тен қалпына келтірді"
 }

@@ -10,8 +10,9 @@ from app.services.outbox import queue_notification, queue_schedule_changed
 from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
 from app.services.users import get_user_by_telegram_id
 
-# Actions: created | updated | cancelled | preempted | auto_assigned
+# Actions: created | updated | cancelled | preempted | auto_assigned | restored
 ACTION_TITLES = {
+    "restored": "восстановил(а) бронь из Sheets",
     "created": "создал(а) бронь",
     "updated": "изменил(а) бронь",
     "cancelled": "отменил(а) бронь",

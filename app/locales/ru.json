@@ -293,5 +293,6 @@
   "webapp.admin.history.action.updated": "изменил(а) бронь",
   "webapp.admin.history.action.cancelled": "отменил(а) бронь",
   "webapp.admin.history.action.preempted": "вытеснил(а) бронь (ДСВР)",
-  "webapp.admin.history.action.auto_assigned": "авто-распределение"
+  "webapp.admin.history.action.auto_assigned": "авто-распределение",
+  "webapp.admin.history.action.restored": "восстановил(а) бронь из Sheets"
 }

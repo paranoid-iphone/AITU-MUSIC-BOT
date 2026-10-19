@@ -101,7 +101,9 @@ closing of future days (the scheduler itself still runs for the repeat-offer job
 Every booking mutation (create/edit/cancel/DSVR takeover/auto-assign) must go through `services/schedule_history.py` so
 it is recorded with before/after values; bookings are soft-cancelled, never deleted. `services/sheets_sync.py` is a
 one-way background worker (started in `on_startup`, triggered by `request_sync()`) that rewrites the **Расписание**
-sheet and appends to **История**; it is a no-op without `GOOGLE_SHEETS_ID`.
+sheet and appends to **История**; it is a no-op without `GOOGLE_SHEETS_ID`. `python -m app.tools.restore_from_sheets`
+(`app/tools/`, dry-run unless `--apply`, `--csv` for an export) adds the future bookings the DB lacks from the sheet's ID
+columns, never changes existing ones, and records them as the history action `restored`.
 
 ### Permissions
 

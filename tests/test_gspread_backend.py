@@ -32,6 +32,7 @@ class StubWorksheet:
         self.batch_clear = _checked(gspread.Worksheet.batch_clear, calls)
         self.append_rows = _checked(gspread.Worksheet.append_rows, calls)
         self._get_values = _checked(gspread.Worksheet.get_values, calls)
+        self.get_all_values = _checked(gspread.Worksheet.get_all_values, calls)
 
     def update(self, *args, **kwargs):
         self._update(*args, **kwargs)
@@ -127,4 +128,22 @@ def test_connection_is_dropped_after_a_failure_so_it_reconnects(backend, monkeyp
     worksheet.update = boom
     with pytest.raises(ConnectionError):
         backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    assert backend._spreadsheet is None
+
+
+def test_schedule_is_read_back_from_its_sheet(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    assert backend.read_schedule() == []
+    assert backend.calls[-1][0] == "get_all_values"
+
+
+def test_reading_drops_the_connection_after_a_failure(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+
+    def boom():
+        raise ConnectionError("network")
+
+    backend.spreadsheet.sheets[sheets_sync.SCHEDULE_SHEET].get_all_values = boom
+    with pytest.raises(ConnectionError):
+        backend.read_schedule()
     assert backend._spreadsheet is None

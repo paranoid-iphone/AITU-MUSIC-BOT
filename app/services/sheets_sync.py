@@ -140,6 +140,13 @@ class GspreadBackend:
             self._spreadsheet = None  # reconnect next time
             raise
 
+    def read_schedule(self) -> list[list[str]]:
+        try:
+            return self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER)).get_all_values()
+        except Exception:
+            self._spreadsheet = None
+            raise
+
     def append_history(self, rows: list[list]) -> None:
         try:
             worksheet = self._worksheet(HISTORY_SHEET, len(HISTORY_HEADER))

@@ -75,7 +75,26 @@ GOOGLE_SHEETS_ID=1AbC...
 GOOGLE_SERVICE_ACCOUNT_FILE=secrets/google-service-account.json
 ```
 
-The sheet contains names and Telegram usernames, so share it carefully. Restoring *from* the sheet is not automated.
+The sheet contains names and Telegram usernames, so share it carefully.
+
+### Restoring from the sheet
+
+If the database lost bookings, bring the missing future ones back from the sheet. First restore the users and bands
+(a `pg_dump`): the sheet holds only their ids, and a row whose band or author is not in the database is reported and
+skipped.
+
+```bash
+docker compose exec backend python -m app.tools.restore_from_sheets            # dry-run: only a report
+docker compose exec backend python -m app.tools.restore_from_sheets --apply    # write the bookings
+docker compose exec backend python -m app.tools.restore_from_sheets --csv schedule.csv   # a CSV export instead of Google
+```
+
+The tool only adds bookings (with their old ids, recorded in the history as "restored", nobody is notified). A booking
+whose time or status differs from its row, and one that is in the database but not in the sheet, are listed and left
+for an admin to fix in the Mini App. Running it twice changes nothing.
+
+**Download the sheet as CSV before starting the backend on an empty database:** the sync rewrites the sheet with
+what the database holds right after start, which would erase the backup.
 
 ## Quick start
 
