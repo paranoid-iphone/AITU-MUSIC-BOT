@@ -594,11 +594,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
         raise ConflictError("Booking is already cancelled")
     _ensure_booking_not_past(booking)
     band_name = booking_owner_label(booking)
-    created_by = (
-        f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
-        or booking.created_by.telegram_username
-        or str(booking.created_by.telegram_id)
-    )
+    created_by = person_name(booking.created_by)
     deleted = {
         "id": booking.id,
         "band_name": band_name,
@@ -741,9 +737,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
                 "band_id": booking.band_id,
                 "band_name": booking_owner_label(booking),
                 **booking_owner_info(booking),
-                "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
-                or created_by.telegram_username
-                or str(created_by.telegram_id),
+                "created_by": person_name(created_by),
                 "booking_date": booking.booking_date,
                 "start_time": booking.start_time,
                 "end_time": booking.end_time,
@@ -783,9 +777,7 @@ async def list_schedule(session: AsyncSession, viewer=None) -> list[dict]:
                 "band_id": booking.band_id,
                 "band_name": booking_owner_label(booking),
                 **booking_owner_info(booking),
-                "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
-                or created_by.telegram_username
-                or str(created_by.telegram_id),
+                "created_by": person_name(created_by),
                 "booking_date": booking.booking_date,
                 "start_time": booking.start_time,
                 "end_time": booking.end_time,

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.timezone import format_moment, now_local
+from app.core.timezone import format_moment, now_local, utcnow
 from app.db.models import User, UserRole, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
@@ -239,7 +239,7 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     target.moderation_reason = None
     target.registration_retry_after = None
     target.approved_by_id = admin.id
-    target.approved_at = datetime.utcnow()
+    target.approved_at = utcnow()
     await log_action(
         session,
         admin.id,
@@ -271,7 +271,7 @@ async def promote_to_admin(session: AsyncSession, admin_telegram_id: int, target
     target.moderation_reason = None
     target.registration_retry_after = None
     target.approved_by_id = admin.id
-    target.approved_at = datetime.utcnow()
+    target.approved_at = utcnow()
     await log_action(
         session,
         admin.id,

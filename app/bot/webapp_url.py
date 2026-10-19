@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import httpx
 
 from app.core.config import settings
+from app.core.timezone import utcnow
 
 _cached_url: str | None = None
 _cached_until: datetime | None = None
@@ -20,7 +21,7 @@ async def get_webapp_base_url() -> str | None:
     if domain:
         return f"https://{domain}"
 
-    now = datetime.utcnow()
+    now = utcnow()
     if _cached_until and _cached_until > now:
         return _cached_url
 

@@ -7,7 +7,7 @@ Redis and stamped `published_at`, and `republish_unpublished` (a scheduler job) 
 """
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from redis.asyncio import Redis
 from sqlalchemy import delete, inspect, select, update
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import OutboxEvent
+from app.core.timezone import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def commit_and_publish(session: AsyncSession) -> None:
     if await publish([payload for _, payload in sent]):
         try:
             await session.execute(
-                update(OutboxEvent).where(OutboxEvent.id.in_([event_id for event_id, _ in sent])).values(published_at=datetime.utcnow())
+                update(OutboxEvent).where(OutboxEvent.id.in_([event_id for event_id, _ in sent])).values(published_at=utcnow())
             )
             await session.commit()
         except Exception as exc:  # the events are already delivered; the job would only send them a second time
@@ -123,7 +124,7 @@ async def commit_and_publish(session: AsyncSession) -> None:
 async def republish_unpublished(session: AsyncSession) -> int:
     """Push committed events that never reached Redis (it was down, or the backend died right after the commit)."""
     total = 0
-    cutoff = datetime.utcnow() - REPUBLISH_AFTER
+    cutoff = utcnow() - REPUBLISH_AFTER
     while True:
         rows = (
             await session.execute(
@@ -135,7 +136,7 @@ async def republish_unpublished(session: AsyncSession) -> int:
         ).scalars().all()
         if not rows or not await publish([row.payload for row in rows]):
             return total
-        now = datetime.utcnow()
+        now = utcnow()
         for row in rows:
             row.published_at = now
         await session.commit()
@@ -146,6 +147,6 @@ async def republish_unpublished(session: AsyncSession) -> int:
 
 async def purge_published(session: AsyncSession) -> int:
     """Forget events that were published more than KEEP_PUBLISHED ago."""
-    result = await session.execute(delete(OutboxEvent).where(OutboxEvent.published_at < datetime.utcnow() - KEEP_PUBLISHED))
+    result = await session.execute(delete(OutboxEvent).where(OutboxEvent.published_at < utcnow() - KEEP_PUBLISHED))
     await session.commit()
     return result.rowcount or 0

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,7 +23,16 @@ from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
 
 setup_logging()
-app = FastAPI(title=settings.app_name)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await on_startup()
+    try:
+        yield
+    finally:
+        await on_shutdown()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 sheets_task: asyncio.Task | None = None
@@ -95,7 +105,6 @@ async def catch_up_missed_allocations() -> None:
             logger.exception("Catch-up allocation failed")
 
 
-@app.on_event("startup")
 async def on_startup() -> None:
     await prepare_database()
     async with AsyncSessionLocal() as session:
@@ -116,7 +125,6 @@ async def on_startup() -> None:
         sheets_sync.request_sync()  # push the current state right after (re)start
 
 
-@app.on_event("shutdown")
 async def on_shutdown() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)

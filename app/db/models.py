@@ -5,6 +5,8 @@ from uuid import uuid4
 from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.core.timezone import utcnow
+
 
 class Base(DeclarativeBase):
     pass
@@ -66,7 +68,7 @@ class AuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(80))
     entity_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     description: Mapped[str] = mapped_column(String(500), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     actor: Mapped["User | None"] = relationship("User", foreign_keys=[actor_id])
 
@@ -78,7 +80,7 @@ class OutboxEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     payload: Mapped[dict] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
@@ -101,8 +103,8 @@ class User(Base):
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     registration_retry_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     bands_created: Mapped[list["Band"]] = relationship(back_populates="creator", foreign_keys="Band.creator_id")
     memberships: Mapped[list["BandMember"]] = relationship(back_populates="user")
@@ -121,7 +123,7 @@ class Band(Base):
     creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
     responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     creator: Mapped[User] = relationship(back_populates="bands_created", foreign_keys=[creator_id])
     group: Mapped[Group | None] = relationship()
@@ -140,7 +142,7 @@ class BandMember(Base):
     instrument_role: Mapped[str] = mapped_column(String(80), default="other")
     is_owner: Mapped[bool] = mapped_column(Boolean, default=False)
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     band: Mapped[Band] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
@@ -179,7 +181,7 @@ class Booking(Base):
     cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     repeat_offered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     band: Mapped[Band | None] = relationship(back_populates="bookings")
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
@@ -206,7 +208,7 @@ class MoveRequest(Base):
     proposed_end: Mapped[time] = mapped_column(Time)
     message: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=MoveRequestStatus.PENDING.value, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -226,7 +228,7 @@ class WaitlistEntry(Base):
     booking_date: Mapped[date] = mapped_column(Date, index=True)
     start_time: Mapped[time] = mapped_column(Time)
     end_time: Mapped[time] = mapped_column(Time)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
     band: Mapped[Band | None] = relationship()
@@ -267,7 +269,7 @@ class AvailabilityRequest(Base):
     song_title: Mapped[str | None] = mapped_column(String(150), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=RequestStatus.PENDING.value)
     booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     band: Mapped[Band] = relationship()
     submitted_by: Mapped[User] = relationship(foreign_keys=[submitted_by_id])
@@ -306,7 +308,7 @@ class ScheduleChange(Base):
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     sheets_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     actor: Mapped["User | None"] = relationship("User", foreign_keys=[actor_id])
@@ -322,7 +324,7 @@ class Event(Base):
     submission_deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=EventStatus.OPEN.value)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     applications: Mapped[list["EventApplication"]] = relationship(back_populates="event", cascade="all, delete-orphan")
 
@@ -336,7 +338,7 @@ class EventApplication(Base):
     band_id: Mapped[int] = mapped_column(ForeignKey("bands.id"))
     submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     song_title: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     event: Mapped[Event] = relationship(back_populates="applications")
     band: Mapped[Band] = relationship()
@@ -365,7 +367,7 @@ class PersonalEventHistory(Base):
     event_date: Mapped[date] = mapped_column(Date)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
     role_at_event: Mapped[str] = mapped_column(String(100))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship()

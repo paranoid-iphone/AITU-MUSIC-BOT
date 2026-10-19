@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
 from app.db.models import OutboxEvent
 from app.services import outbox
+from app.core.timezone import utcnow
 
 
 async def _rows(session) -> list[OutboxEvent]:
@@ -77,7 +78,7 @@ async def test_republish_sends_old_unpublished_events_and_stamps_them(session, p
         outbox.queue_notification(session, 1, "later")
         await outbox.commit_and_publish(session)
     [row] = await _rows(session)
-    row.created_at = datetime.utcnow() - timedelta(minutes=1)
+    row.created_at = utcnow() - timedelta(minutes=1)
     await session.commit()
 
     assert await outbox.republish_unpublished(session) == 1
@@ -108,7 +109,7 @@ async def test_republish_keeps_events_while_redis_is_still_down(session, monkeyp
     outbox.queue_notification(session, 1, "later")
     await outbox.commit_and_publish(session)
     [row] = await _rows(session)
-    row.created_at = datetime.utcnow() - timedelta(minutes=1)
+    row.created_at = utcnow() - timedelta(minutes=1)
     await session.commit()
 
     assert await outbox.republish_unpublished(session) == 0
@@ -120,9 +121,9 @@ async def test_purge_forgets_only_old_published_events(session, published):
     outbox.queue_notification(session, 2, "recent")
     await outbox.commit_and_publish(session)
     old, recent = await _rows(session)
-    old.published_at = datetime.utcnow() - outbox.KEEP_PUBLISHED - timedelta(hours=1)
+    old.published_at = utcnow() - outbox.KEEP_PUBLISHED - timedelta(hours=1)
     unpublished = OutboxEvent(payload={"type": "notify", "telegram_id": 3, "text": "waiting"})
-    unpublished.created_at = datetime.utcnow() - outbox.KEEP_PUBLISHED - timedelta(days=1)
+    unpublished.created_at = utcnow() - outbox.KEEP_PUBLISHED - timedelta(days=1)
     session.add(unpublished)
     await session.commit()
 

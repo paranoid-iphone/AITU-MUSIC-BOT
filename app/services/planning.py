@@ -1,10 +1,10 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.timezone import now_local
+from app.core.timezone import now_local, utcnow
 from app.db.models import (
     AvailabilityRequest,
     AvailabilityWindow,
@@ -408,7 +408,7 @@ async def run_weekly_allocation(
         row = SchedulingWeek(week_start=week)
         session.add(row)
     row.status = WeekStatus.PUBLISHED.value
-    row.generated_at = datetime.utcnow()
+    row.generated_at = utcnow()
     queue_schedule_changed(session)
     await log_action(
         session,

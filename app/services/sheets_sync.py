@@ -13,7 +13,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.timezone import now_local
+from app.core.timezone import now_local, utcnow
 from app.db.models import Booking, BookingStatus, ScheduleChange
 from app.services.bookings import _band_info, _booking_load_options, booking_owner_label
 from app.services.schedule_history import ACTION_TITLES, describe_slot, person_name
@@ -204,7 +204,7 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
     )
     if pending:
         await asyncio.to_thread(backend.append_history, build_history_rows(pending))
-        now = datetime.utcnow()
+        now = utcnow()
         for change in pending:
             change.sheets_synced_at = now
         await session.commit()

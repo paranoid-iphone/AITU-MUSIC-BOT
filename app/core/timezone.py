@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -10,6 +10,11 @@ def now_local() -> datetime:
     Bookings are stored as naive local dates/times, so comparisons must use the same basis.
     """
     return datetime.now(ZoneInfo(settings.timezone)).replace(tzinfo=None)
+
+
+def utcnow() -> datetime:
+    """Current UTC time as a naive datetime: the basis of the `created_at`-style columns and the outbox timestamps."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def format_moment(moment: datetime) -> str:

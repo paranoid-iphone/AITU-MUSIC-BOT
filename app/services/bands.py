@@ -25,7 +25,7 @@ from app.services.permissions import (
     can_view_invite_code,
     is_global_admin,
 )
-from app.services.schedule_history import record_change, snapshot
+from app.services.schedule_history import person_name, record_change, snapshot
 from app.services.users import get_user_by_telegram_id, require_approved
 
 
@@ -247,11 +247,7 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
         raise NotFoundError("Member not found")
     if member.is_owner:
         raise ForbiddenError("Transfer ownership before removing the band owner")
-    user_name = (
-        f"{member.user.last_name or ''} {member.user.first_name or ''}".strip()
-        or member.user.telegram_username
-        or str(member.user.telegram_id)
-    )
+    user_name = person_name(member.user)
     band = await get_band_detail(session, band_id)
     if band.responsible_user_id == member.user_id:
         owner = next((m for m in band.members if m.is_owner), None)
