@@ -133,20 +133,13 @@ async def test_http_get_band_hides_invite_code_from_plain_member(client, session
     assert as_member.json()["invite_code"] is None
 
 
-async def test_http_my_bands_and_join_hide_invite_code_from_plain_member(client, session, make_user, make_band):
+async def test_http_my_bands_hide_invite_code_from_plain_member(client, session, make_user, make_band):
     owner, member, band = await _band_with_member(session, make_user, make_band)
-    newcomer = await make_user()
 
     mine = await client.get("/bands", params={"telegram_id": member.telegram_id}, headers=AUTH)
-    joined = await client.post(
-        "/bands/join",
-        json={"telegram_id": newcomer.telegram_id, "invite_code": band.invite_code, "instrument_role": "вокал"},
-        headers=AUTH,
-    )
     owner_mine = await client.get("/bands", params={"telegram_id": owner.telegram_id}, headers=AUTH)
 
     assert [b["invite_code"] for b in mine.json()] == [None]
-    assert joined.json()["invite_code"] is None
     assert [b["invite_code"] for b in owner_mine.json()] == [band.invite_code]
 
 

@@ -3,81 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_internal_token
 from app.db.session import get_session
-from app.schemas.admin import (
-    BookingWindowUpdate,
-    DailyBookingLimitUpdate,
-    DayUpdate,
-    MaxFutureBookingsUpdate,
-    PersonalBookingToggle,
-    WeeklyBookingLimitUpdate,
-)
-from app.services import admin, audit, outbox
+from app.services import audit
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
-
-
-@router.put("/days", response_model=dict)
-async def update_day(payload: DayUpdate, session: AsyncSession = Depends(get_session)):
-    day = await admin.update_available_day(session, payload.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by)
-    await outbox.commit_and_publish(session)
-    return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled, "occupied_by": day.occupied_by}
-
-
-@router.get("/settings/weekly-booking-limit")
-async def get_weekly_booking_limit(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.get_weekly_booking_limit(session, telegram_id)
-
-
-@router.put("/settings/weekly-booking-limit")
-async def update_weekly_booking_limit(payload: WeeklyBookingLimitUpdate, session: AsyncSession = Depends(get_session)):
-    return await admin.update_weekly_booking_limit(session, payload.telegram_id, payload.hours)
-
-
-@router.get("/settings/daily-booking-limit")
-async def get_daily_booking_limit(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.get_daily_booking_limit(session, telegram_id)
-
-
-@router.put("/settings/daily-booking-limit")
-async def update_daily_booking_limit(payload: DailyBookingLimitUpdate, session: AsyncSession = Depends(get_session)):
-    return await admin.update_daily_booking_limit(session, payload.telegram_id, payload.hours)
-
-
-@router.get("/settings/max-future-bookings")
-async def get_max_future_bookings(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.get_max_future_bookings(session, telegram_id)
-
-
-@router.put("/settings/max-future-bookings")
-async def update_max_future_bookings(payload: MaxFutureBookingsUpdate, session: AsyncSession = Depends(get_session)):
-    return await admin.update_max_future_bookings(session, payload.telegram_id, payload.count)
-
-
-@router.get("/settings/booking-window")
-async def get_booking_window(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.get_booking_window(session, telegram_id)
-
-
-@router.put("/settings/booking-window")
-async def update_booking_window(payload: BookingWindowUpdate, session: AsyncSession = Depends(get_session)):
-    window = await admin.update_booking_window(session, payload.telegram_id, payload.start_time, payload.end_time)
-    await outbox.commit_and_publish(session)
-    return window
-
-
-@router.get("/settings/personal-bookings")
-async def get_personal_bookings(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.get_personal_bookings_enabled(session, telegram_id, require_admin_access=True)
-
-
-@router.put("/settings/personal-bookings")
-async def update_personal_bookings(payload: PersonalBookingToggle, session: AsyncSession = Depends(get_session)):
-    return await admin.update_personal_bookings_enabled(session, payload.telegram_id, payload.is_enabled)
-
-
-@router.get("/bookings/history")
-async def booking_history(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    return await admin.booking_history(session, telegram_id)
 
 
 @router.get("/actions/history")

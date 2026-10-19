@@ -7,7 +7,7 @@ any other edit. Nothing is booked for the requester: they are told the slot is f
 """
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 

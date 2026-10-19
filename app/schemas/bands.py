@@ -1,31 +1,9 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, StringConstraints
 
 from app.schemas.users import UserRead
-
-
-class BandCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=150)
-    creator_telegram_id: int
-    creator_role: str = Field(default="owner", max_length=80)
-
-
-class BandJoin(BaseModel):
-    telegram_id: int
-    invite_code: str
-    instrument_role: str = Field(default="other", max_length=80)
-
-
-class MemberRoleUpdate(BaseModel):
-    requester_telegram_id: int
-    instrument_role: str = Field(min_length=1, max_length=80)
-
-
-class BandUpdate(BaseModel):
-    requester_telegram_id: int
-    name: str = Field(min_length=1, max_length=150)
 
 
 class GroupRead(BaseModel):

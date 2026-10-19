@@ -2,10 +2,8 @@ from datetime import time
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.db.models import AvailableDay, ClubSetting
-from app.services.bookings import booking_owner_label
 from app.services.errors import ConflictError, NotFoundError
 from app.services.outbox import queue_schedule_changed
 from app.services.users import get_user_by_telegram_id, require_admin
@@ -325,38 +323,3 @@ async def get_settings(session: AsyncSession, telegram_id: int) -> dict:
         "max_future_bookings": future["max_future_bookings_per_band"],
         "personal_enabled": personal["personal_bookings_enabled"],
     }
-
-
-async def booking_history(session: AsyncSession, telegram_id: int) -> list[dict]:
-    from app.db.models import Booking
-
-    user = await get_user_by_telegram_id(session, telegram_id)
-    if user is None:
-        raise NotFoundError("User not found")
-    require_admin(user)
-    result = await session.execute(
-        select(Booking)
-        .options(selectinload(Booking.band), selectinload(Booking.created_by))
-        .order_by(Booking.created_at.desc())
-    )
-    rows = []
-    for booking in result.scalars():
-        rows.append(
-            {
-                "id": booking.id,
-                "band_id": booking.band_id,
-                "band_name": booking_owner_label(booking),
-                "created_by_id": booking.created_by_id,
-                "created_by": f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
-                or booking.created_by.telegram_username
-                or str(booking.created_by.telegram_id),
-                "booking_date": booking.booking_date.isoformat(),
-                "start_time": booking.start_time.isoformat(),
-                "end_time": booking.end_time.isoformat(),
-                "purpose": booking.purpose,
-                "song_title": booking.song_title,
-                "status": booking.status,
-                "created_at": booking.created_at.isoformat(),
-            }
-        )
-    return rows

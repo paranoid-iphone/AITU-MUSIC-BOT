@@ -15,7 +15,7 @@ from app.core.timezone import now_local
 from app.db.models import BandMember, Booking, BookingStatus, WaitlistEntry
 from app.services import bookings as booking_service
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
-from app.services.outbox import commit_and_publish, queue_waitlist_offer
+from app.services.outbox import queue_waitlist_offer
 from app.services.users import get_user_by_telegram_id, require_approved
 
 MAX_ENTRIES_PER_USER = 5

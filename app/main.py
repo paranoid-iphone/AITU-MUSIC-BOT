@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import admin, bands, bookings, events, groups, history, move_requests, planning, users, waitlist, webapp, webapp_admin
+from app.api.routes import admin, bands, bookings, events, groups, move_requests, planning, users, waitlist, webapp, webapp_admin
 from app.core.config import settings
 from app.core.logging_setup import setup_logging
 from app.db.session import prepare_database
@@ -170,7 +170,6 @@ app.include_router(webapp.router)
 app.include_router(webapp_admin.router)
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
-app.include_router(history.router, prefix="/history", tags=["history"])
 app.include_router(planning.router, prefix="/planning", tags=["planning"])
 app.include_router(bands.router, prefix="/bands", tags=["bands"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])

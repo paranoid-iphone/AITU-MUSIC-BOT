@@ -53,9 +53,6 @@ class BackendClient:
         params = {"requester_telegram_id": requester_telegram_id if requester_telegram_id is not None else telegram_id}
         return await self.request("GET", f"/users/{telegram_id}", params=params)
 
-    async def update_profile(self, telegram_id: int, data: dict[str, Any]) -> dict[str, Any]:
-        return await self.request("PATCH", f"/users/{telegram_id}/profile", json=data)
-
     async def update_settings(self, telegram_id: int, data: dict[str, Any]) -> dict[str, Any]:
         return await self.request("PATCH", f"/users/{telegram_id}/settings", json=data)
 
@@ -187,9 +184,6 @@ class BackendClient:
 
     async def schedule_day_closures(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/bookings/day-closures")
-
-    async def booking_history(self, telegram_id: int) -> list[dict[str, Any]]:
-        return await self.request("GET", "/admin/bookings/history", params={"telegram_id": telegram_id})
 
     async def action_history(self, telegram_id: int, limit: int = 30) -> list[dict[str, Any]]:
         return await self.request("GET", "/admin/actions/history", params={"telegram_id": telegram_id, "limit": limit})

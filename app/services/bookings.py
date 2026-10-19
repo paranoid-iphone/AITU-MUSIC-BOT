@@ -701,17 +701,6 @@ async def update_booking(
     return booking
 
 
-async def list_bookings(session: AsyncSession, telegram_id: int | None = None) -> list[Booking]:
-    stmt = select(Booking).options(selectinload(Booking.band)).order_by(Booking.booking_date, Booking.start_time)
-    if telegram_id is not None:
-        user = await get_user_by_telegram_id(session, telegram_id)
-        if user is None:
-            return []
-        stmt = stmt.join(BandMember, BandMember.band_id == Booking.band_id).where(BandMember.user_id == user.id)
-    result = await session.execute(stmt)
-    return list(result.scalars().unique())
-
-
 async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[dict]:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:

@@ -250,20 +250,6 @@ async def test_dsvr_role_change_with_notifications_off_queues_nothing(client, se
     assert notifications(published) == []
 
 
-async def test_internal_dsvr_route_publishes_the_notification(client, session, make_user, published):
-    from app.core.config import settings as app_settings
-
-    main_admin = await make_user(role="admin", group_slug=None)
-    candidate = await make_user()
-    response = await client.post(
-        "/users/dsvr",
-        json={"admin_telegram_id": main_admin.telegram_id, "target": str(candidate.telegram_id), "enabled": True},
-        headers={"X-Internal-Token": app_settings.internal_api_token},
-    )
-    assert response.status_code == 200, response.text
-    assert notifications(published) == [{"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_ON_TEXT}]
-
-
 @pytest.mark.parametrize("path", ["staff/admin", "staff/dsvr"])
 async def test_unknown_target_is_404_and_readable(client, session, make_user, path):
     main_admin, _, _, _ = await staff(make_user, session)

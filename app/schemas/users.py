@@ -9,14 +9,6 @@ class UserTelegramUpsert(BaseModel):
     telegram_full_name: str | None = None
 
 
-class UserProfileUpdate(BaseModel):
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
-    study_group: str = Field(min_length=1, max_length=50)
-    language: str = Field(pattern="^(ru|kz|en)$")
-    group_id: int | None = None
-
-
 class UserSettingsUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -50,12 +42,3 @@ class UserModerationUpdate(BaseModel):
     admin_telegram_id: int
     target: str
     reason: str | None = Field(default=None, max_length=255)
-
-
-class AdminRoleUpdate(BaseModel):
-    admin_telegram_id: int
-    target: str
-
-
-class DsvrRoleUpdate(AdminRoleUpdate):
-    enabled: bool = True

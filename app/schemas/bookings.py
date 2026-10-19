@@ -3,16 +3,6 @@ from datetime import date, time
 from pydantic import BaseModel, Field
 
 
-class BookingCreate(BaseModel):
-    telegram_id: int
-    band_id: int | None = None
-    booking_date: date
-    start_time: time
-    end_time: time
-    purpose: str = Field(default="self", pattern="^(concert|self|personal)$")
-    song_title: str | None = Field(default=None, max_length=150)
-
-
 class BookingRepeat(BaseModel):
     telegram_id: int
 
@@ -35,15 +25,6 @@ class WebAppBookingUpdate(BaseModel):
     start_time: time | None = None
     end_time: time | None = None
     purpose: str | None = Field(default=None, pattern="^(concert|self|personal)$")
-    song_title: str | None = Field(default=None, max_length=150)
-
-
-class BookingUpdate(BaseModel):
-    telegram_id: int
-    booking_date: date | None = None
-    start_time: time | None = None
-    end_time: time | None = None
-    purpose: str | None = Field(default=None, pattern="^(concert|self|staff|personal)$")
     song_title: str | None = Field(default=None, max_length=150)
 
 
@@ -75,18 +56,6 @@ class ScheduleBookingRead(BaseModel):
     status: str
 
 
-class StaffBookingCreate(BaseModel):
-    telegram_id: int
-    booking_date: date
-    start_time: time
-    end_time: time
-    title: str = Field(min_length=1, max_length=150)
-
-
-class PriorityBookingCreate(StaffBookingCreate):
-    pass
-
-
 class WebAppPriorityCreate(BaseModel):
     """Mini App takeover by DSVR or an admin: the acting user comes from the signed initData."""
 
@@ -99,13 +68,3 @@ class WebAppPriorityCreate(BaseModel):
 class PriorityBookingResult(BaseModel):
     booking: BookingRead
     cancelled: list[dict]
-
-
-class AvailableSlotRead(BaseModel):
-    id: int
-    day_of_week: int
-    start_time: time
-    end_time: time
-    is_enabled: bool
-
-    model_config = {"from_attributes": True}
