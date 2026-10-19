@@ -4,7 +4,7 @@ import pytest
 
 from app.bot import webapp_url
 from app.core import logging_setup
-from app.core.config import settings
+from app.core.config import Settings, settings
 
 
 @pytest.fixture(autouse=True)
@@ -63,3 +63,10 @@ def test_setup_logging_falls_back_to_info_on_garbage(monkeypatch):
 
 def test_sql_echo_defaults_off():
     assert settings.sql_echo is False
+
+
+def test_env_file_may_hold_compose_only_variables(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("BACKUP_INTERVAL_HOURS=24\nBACKUP_KEEP_DAYS=14\nLOG_LEVEL=WARNING\n", encoding="utf-8")
+    loaded = Settings(_env_file=env_file)
+    assert loaded.log_level == "WARNING"

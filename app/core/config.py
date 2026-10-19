@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     google_sheets_id: str = ""
     google_service_account_file: str = ""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
     def initial_admin_ids(self) -> set[int]:
