@@ -79,6 +79,7 @@ async def schedule(
             "band_name": "Личная репетиция"
             if item["purpose"] == "personal" and item["band_name"].startswith("Личная репетиция")
             else item["band_name"],
+            "owner_person": None,  # the public grid never names who holds a personal rehearsal
             "booking_date": item["booking_date"].isoformat(),
             "start_time": item["start_time"].isoformat(),
             "end_time": item["end_time"].isoformat(),

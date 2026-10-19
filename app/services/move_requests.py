@@ -285,6 +285,7 @@ def _row(request: MoveRequest) -> dict:
         "id": request.id,
         "booking_id": booking.id,
         "band_name": booking_service.booking_owner_label(booking),
+        **booking_service.booking_owner_info(booking),
         "song_title": booking.song_title,
         "booking_date": booking.booking_date,
         "start_time": booking.start_time,

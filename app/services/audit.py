@@ -91,6 +91,7 @@ async def list_actions(
                 "actor_id": item.actor_id,
                 "actor_telegram_id": actor.telegram_id if actor is not None else None,
                 "actor_name": person_name(actor),
+                "actor_is_system": actor is None,
                 "action": item.action,
                 "entity_type": item.entity_type,
                 "entity_id": item.entity_id,

@@ -174,6 +174,8 @@ async def list_for_user(session: AsyncSession, telegram_id: int) -> list[dict]:
             "id": entry.id,
             "band_id": entry.band_id,
             "band_name": _label(entry),
+            "owner_kind": "band" if entry.band is not None else "personal",
+            "owner_person": None,
             "booking_date": entry.booking_date,
             "start_time": entry.start_time,
             "end_time": entry.end_time,

@@ -45,6 +45,26 @@ function t(key, fallback) {
   return state.strings[key] || fallback || key;
 }
 
+// The server stores "Personal rehearsal" / "Staff" labels in Russian; rows say what the owner is and the app words it.
+function ownerLabel(item) {
+  if (item.owner_kind === "personal") {
+    return item.owner_person ? `${t("webapp.label.personal")} | ${item.owner_person}` : t("webapp.label.personal");
+  }
+  if (item.owner_kind === "staff") return t("webapp.label.staff");
+  return item.band_name;
+}
+
+function actorName(item) {
+  return item.actor_is_system ? t("webapp.label.system") : item.actor_name;
+}
+
+// A history reason: known ones are translated, free text (an admin's own words) is shown as written.
+function reasonText(item) {
+  if (item.reason_code === "preempted") return fill(`webapp.admin.history.reason_preempted_${item.reason_by}`, { title: item.reason_title });
+  if (item.reason_code) return t(`webapp.admin.history.reason_code.${item.reason_code}`, item.reason);
+  return item.reason;
+}
+
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [name, value] of Object.entries(props)) {
@@ -404,7 +424,7 @@ function bookingBlock(item) {
   const purpose = t(`webapp.purpose.${item.purpose}`, item.purpose);
   const block = el("div", { className: `event${item.purpose === "staff" ? " staff" : ""}`, role: "button", tabindex: "0" }, [
     el("div", { className: "song", text: item.song_title || t("webapp.song_missing") }),
-    el("div", { className: "band", text: `${item.band_name}${group}` }),
+    el("div", { className: "band", text: `${ownerLabel(item)}${group}` }),
     responsible ? el("div", { className: "resp", text: responsible }) : null,
     el("div", { className: "purpose", text: `${item.start_time.slice(0, 5)}-${item.end_time.slice(0, 5)} · ${purpose}` }),
   ]);
@@ -434,7 +454,7 @@ function takeoverToggle() {
 }
 
 function affectedLine(row) {
-  const who = row.responsible_name ? `${row.band_name} (${t("webapp.responsible_short")}: ${row.responsible_name})` : row.band_name;
+  const who = row.responsible_name ? `${ownerLabel(row)} (${t("webapp.responsible_short")}: ${row.responsible_name})` : ownerLabel(row);
   return `${row.start_time.slice(0, 5)}–${row.end_time.slice(0, 5)} · ${who} · ${row.song_title || t("webapp.song_missing")}`;
 }
 
@@ -550,7 +570,7 @@ function openBookingCard(item) {
   openSheet([
     el("h2", { text: item.song_title || t("webapp.song_missing") }),
     detailRow(t("webapp.card.when"), `${weekdayLabel(item.booking_date)} ${shortDate(item.booking_date)} · ${item.start_time.slice(0, 5)}–${item.end_time.slice(0, 5)}`),
-    detailRow(t("webapp.card.band"), item.band_name),
+    detailRow(t("webapp.card.band"), ownerLabel(item)),
     detailRow(t("webapp.card.group"), item.group_title),
     detailRow(t("webapp.card.booked_by"), item.created_by),
     detailRow(t("webapp.card.responsible"), responsible),
@@ -598,7 +618,7 @@ function openMoveForm(item) {
 
   const form = el("form", { className: "form" }, [
     el("h2", { text: t("webapp.move.title") }),
-    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    el("div", { className: "summary", text: `${ownerLabel(item)} · ${bookingWhen(item)}` }),
     el("div", { className: "meta", text: t("webapp.move.hint") }),
     el("label", {}, [t("webapp.move.date"), day]),
     el("label", {}, [t("webapp.move.start"), start]),
@@ -721,7 +741,7 @@ function waitlistCard(entry) {
   if (entry.is_free) press("webapp.waitlist.take", "btn", "take", "webapp.waitlist.taken");
   press("webapp.waitlist.leave", "btn secondary", "leave", "webapp.waitlist.left");
   return el("div", { className: "card" }, [
-    el("h2", { text: entry.band_name }),
+    el("h2", { text: ownerLabel(entry) }),
     el("div", { className: "summary", text: bookingWhen(entry) }),
     el("div", { className: "meta", text: t(entry.is_free ? "webapp.waitlist.free" : "webapp.waitlist.waiting") }),
     el("div", { className: "actions" }, buttons),
@@ -859,7 +879,7 @@ async function answerMoveRequest(request, action, doneKey) {
 function moveRequestCard(request, incoming) {
   const person = request.requester_name + (request.requester_username ? ` @${request.requester_username}` : "");
   const summary = fill("webapp.move.row", {
-    name: incoming ? person : request.band_name,
+    name: incoming ? person : ownerLabel(request),
     from: moveWhen(request.booking_date, request.start_time, request.end_time),
     to: moveWhen(request.proposed_date, request.proposed_start, request.proposed_end),
   });
@@ -877,7 +897,7 @@ function moveRequestCard(request, incoming) {
   }
   const until = `${shortDate(request.expires_at.slice(0, 10))} ${request.expires_at.slice(11, 16)}`;
   return el("div", { className: "card" }, [
-    el("h2", { text: request.song_title || request.band_name }),
+    el("h2", { text: request.song_title || ownerLabel(request) }),
     el("div", { className: "summary", text: summary }),
     request.message ? el("div", { className: "meta", text: request.message }) : null,
     el("div", { className: "meta", text: fill("webapp.move.until", { time: until }) }),
@@ -919,7 +939,7 @@ async function renderMine(screen, token) {
     return el("div", { className: "card" }, [
       el("h2", { text: item.song_title || t("webapp.song_missing") }),
       detailRow(t("webapp.card.when"), bookingWhen(item)),
-      detailRow(t("webapp.card.band"), item.band_name),
+      detailRow(t("webapp.card.band"), ownerLabel(item)),
       detailRow(t("webapp.card.purpose"), t(`webapp.purpose.${item.purpose}`, item.purpose)),
       actions.length ? el("div", { className: "actions" }, actions) : el("div", { className: "meta", text: t("webapp.mine.read_only") }),
     ]);
@@ -998,7 +1018,7 @@ async function openEditForm(item) {
 
   const form = el("form", { className: "form" }, [
     el("h2", { text: t("webapp.edit.title") }),
-    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    el("div", { className: "summary", text: `${ownerLabel(item)} · ${bookingWhen(item)}` }),
     el("label", {}, [t("webapp.edit.date"), day]),
     el("label", {}, [t("webapp.edit.start"), start]),
     el("label", {}, [t("webapp.edit.end"), end]),
@@ -1061,7 +1081,7 @@ function openCancelConfirm(item) {
   });
   openSheet([
     el("h2", { text: t("webapp.cancel.title") }),
-    el("div", { className: "summary", text: `${item.band_name} · ${bookingWhen(item)}` }),
+    el("div", { className: "summary", text: `${ownerLabel(item)} · ${bookingWhen(item)}` }),
     error,
     el("div", { className: "actions" }, [confirm, keep]),
   ]);
@@ -1751,11 +1771,12 @@ function historyRow(item) {
     ? `${historySlot(item.before)} → ${historySlot(item.after)}`
     : historySlot(["cancelled", "preempted"].includes(item.action) ? item.before || item.after : item.after);
   const stamp = `${shortDate(item.created_local.slice(0, 10))} ${item.created_local.slice(11, 16)}`;
-  const lines = [`${stamp} · ${item.band_name || "—"}`, slot];
-  if (item.reason) lines.push(`${t("webapp.admin.history.reason")}: ${item.reason}`);
+  const lines = [`${stamp} · ${ownerLabel(item) || "—"}`, slot];
+  const reason = reasonText(item);
+  if (reason) lines.push(`${t("webapp.admin.history.reason")}: ${reason}`);
   return el("div", { className: "member static" }, [
     el("div", {}, [
-      el("div", { className: "member-name", text: `${item.actor_name} ${t(`webapp.admin.history.action.${item.action}`, item.action)}` }),
+      el("div", { className: "member-name", text: `${actorName(item)} ${t(`webapp.admin.history.action.${item.action}`, item.action)}` }),
       ...lines.map((text) => el("div", { className: "meta", text })),
     ]),
   ]);
@@ -1816,7 +1837,7 @@ function actionRow(item) {
   const stamp = `${shortDate(item.created_local.slice(0, 10))} ${item.created_local.slice(11, 16)}`;
   return el("div", { className: "member static" }, [
     el("div", {}, [
-      el("div", { className: "member-name", text: item.actor_name }),
+      el("div", { className: "member-name", text: actorName(item) }),
       el("div", { className: "meta", text: item.description || item.action }),
       el("div", { className: "meta", text: stamp }),
     ]),

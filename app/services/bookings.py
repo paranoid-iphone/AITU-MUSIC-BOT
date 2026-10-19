@@ -47,6 +47,15 @@ def booking_owner_label(booking: Booking) -> str:
     return "Стафф / кабинет"
 
 
+def booking_owner_info(booking: Booking) -> dict:
+    """Who holds a booking as data, for clients that translate the "Personal rehearsal" / "Staff" labels themselves."""
+    if booking.band is not None:
+        return {"owner_kind": "band", "owner_person": None}
+    if booking.purpose == "personal":
+        return {"owner_kind": "personal", "owner_person": person_name(booking.created_by)}
+    return {"owner_kind": "staff", "owner_person": None}
+
+
 def _band_info(booking: Booking) -> dict:
     """Group and responsible person shown next to a booking in the schedule table."""
     band = booking.band
@@ -481,6 +490,7 @@ def _preempted_row(booking: Booking) -> dict:
     return {
         "id": booking.id,
         "band_name": booking_owner_label(booking),
+        **booking_owner_info(booking),
         "booking_date": booking.booking_date.isoformat(),
         "start_time": booking.start_time.isoformat(),
         "end_time": booking.end_time.isoformat(),
@@ -730,6 +740,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
                 "id": booking.id,
                 "band_id": booking.band_id,
                 "band_name": booking_owner_label(booking),
+                **booking_owner_info(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
                 or str(created_by.telegram_id),
@@ -771,6 +782,7 @@ async def list_schedule(session: AsyncSession, viewer=None) -> list[dict]:
                 "id": booking.id,
                 "band_id": booking.band_id,
                 "band_name": booking_owner_label(booking),
+                **booking_owner_info(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
                 or str(created_by.telegram_id),

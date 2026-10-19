@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from sqlalchemy import or_, select
@@ -39,6 +40,34 @@ def describe_slot(snap: dict | None) -> str:
     day = date.fromisoformat(snap["date"]).strftime("%d.%m")
     title = f" · {snap['song_title']}" if snap.get("song_title") else ""
     return f"{day} {snap['start']}–{snap['end']}{title}"
+
+
+# Reasons the backend writes itself. Their text is Russian (the bot and Sheets show it as is); the Mini App gets a
+# code or the parts and translates them.
+FIXED_REASONS = {
+    "Коллектив удалён": "band_deleted",
+    "Пользователь заблокирован": "user_banned",
+    "Пользователь удалён": "user_deleted",
+}
+_PREEMPT_REASON = re.compile(r"^Вытеснено (?P<by>админом|ДСВР): (?P<title>.*)$", re.DOTALL)
+
+
+def reason_parts(reason: str | None) -> dict:
+    """Structured form of a known reason, empty for free text."""
+    if reason in FIXED_REASONS:
+        return {"reason_code": FIXED_REASONS[reason]}
+    match = _PREEMPT_REASON.match(reason or "")
+    if match:
+        return {"reason_code": "preempted", "reason_by": "admin" if match["by"] == "админом" else "dsvr", "reason_title": match["title"]}
+    return {}
+
+
+def owner_kind(item: ScheduleChange) -> str:
+    """band | personal | staff, from the booking snapshot (the label itself is stored as Russian text)."""
+    snapshot = item.after or item.before or {}
+    if item.band_id is None and snapshot.get("purpose") in ("personal", "staff"):
+        return snapshot["purpose"]
+    return "band"
 
 
 def person_name(user: User | None) -> str:
@@ -175,9 +204,12 @@ async def list_changes(
             "booking_date": item.booking_date.isoformat() if item.booking_date is not None else None,
             "action": item.action,
             "actor_name": person_name(item.actor),
+            "actor_is_system": item.actor is None,
+            "owner_kind": owner_kind(item),
             "before": item.before,
             "after": item.after,
             "reason": item.reason,
+            **reason_parts(item.reason),
             "created_at": item.created_at.isoformat(),
         }
         for item in result.scalars()
