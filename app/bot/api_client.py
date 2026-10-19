@@ -2,17 +2,30 @@ from typing import Any
 
 import httpx
 
+from app.bot.i18n import t
 from app.core.config import settings
 
 
+class BackendUnavailable(RuntimeError):
+    """The backend did not answer or failed on its own (5xx); the message is safe to show to a user."""
+
+
 class BackendClient:
-    def __init__(self) -> None:
+    def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.base_url = settings.backend_base_url.rstrip("/")
         self.headers = {"X-Internal-Token": settings.internal_api_token}
+        self._transport = transport  # tests only
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        async with httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=20) as client:
-            response = await client.request(method, path, **kwargs)
+        async with httpx.AsyncClient(
+            base_url=self.base_url, headers=self.headers, timeout=20, transport=self._transport
+        ) as client:
+            try:
+                response = await client.request(method, path, **kwargs)
+            except httpx.TransportError as exc:
+                raise BackendUnavailable(t("ru", "error_backend_unavailable")) from exc
+            if response.status_code >= 500:
+                raise BackendUnavailable(t("ru", "error_backend_unavailable"))
             if response.status_code >= 400:
                 try:
                     detail = response.json().get("detail", response.text)

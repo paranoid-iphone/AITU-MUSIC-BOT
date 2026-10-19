@@ -7,6 +7,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from redis.asyncio import Redis
 
+from app.bot.errors import on_error
 from app.bot.handlers import refresh_all_schedule_menus, router
 from app.bot.handlers_planning import router as planning_router
 from app.bot.handlers_move import router as move_router
@@ -92,6 +93,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
+    dispatcher.errors.register(on_error)
     # Feature routers go first: the main router has catch-all fallback handlers.
     dispatcher.include_router(planning_router)
     dispatcher.include_router(repeat_router)
