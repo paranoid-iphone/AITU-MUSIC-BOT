@@ -11,6 +11,13 @@ from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
 
 
+def _request_sheet_sync() -> None:
+    """The concerts sheet follows every committed change of a concert or its applications."""
+    from app.services.sheets_sync import request_sync  # lazy: sheets_sync imports booking code
+
+    request_sync()
+
+
 async def create_event(session: AsyncSession, telegram_id: int, **data) -> Event:
     from app.services.audit import log_action
 
@@ -32,6 +39,7 @@ async def create_event(session: AsyncSession, telegram_id: int, **data) -> Event
     )
     await session.commit()
     await session.refresh(event)
+    _request_sheet_sync()
     return event
 
 
@@ -59,6 +67,7 @@ async def update_event(session: AsyncSession, event_id: int, telegram_id: int, *
     )
     await session.commit()
     await session.refresh(event)
+    _request_sheet_sync()
     return event
 
 
@@ -120,6 +129,7 @@ async def submit_application(
         old_members = await session.execute(select(EventApplicationMember).where(EventApplicationMember.application_id == application.id))
         for old_member in old_members.scalars():
             await session.delete(old_member)
+        await session.flush()  # the unit of work inserts before it deletes; a kept member would hit uq_application_user
     for member in members:
         session.add(EventApplicationMember(application_id=application.id, user_id=member.user_id, instrument_role=member.instrument_role))
     await log_action(
@@ -132,6 +142,7 @@ async def submit_application(
     )
     await session.commit()
     await session.refresh(application)
+    _request_sheet_sync()
     return application
 
 
@@ -297,6 +308,7 @@ async def update_application(
         old_members = await session.execute(select(EventApplicationMember).where(EventApplicationMember.application_id == application.id))
         for old_member in old_members.scalars():
             await session.delete(old_member)
+        await session.flush()  # the unit of work inserts before it deletes; a kept member would hit uq_application_user
         for member in members:
             session.add(EventApplicationMember(application_id=application.id, user_id=member.user_id, instrument_role=member.instrument_role))
     await log_action(
@@ -309,6 +321,7 @@ async def update_application(
     )
     await session.commit()
     await session.refresh(application)
+    _request_sheet_sync()
     return application
 
 
@@ -340,6 +353,7 @@ async def delete_application(session: AsyncSession, telegram_id: int, applicatio
     )
     await session.delete(application)
     await session.commit()
+    _request_sheet_sync()
     return deleted
 
 

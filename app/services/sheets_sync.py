@@ -5,6 +5,8 @@ If the server goes down, the sheet still holds the current and next week's sched
 - Sheet "Расписание": rewritten whenever the schedule changes (this week up to 30 days ahead, confirmed bookings).
   The ID columns (booking, band, author) let `app.tools.restore_from_sheets` put the bookings back.
 - Sheet "История": every schedule change is appended exactly once (marked with `sheets_synced_at`).
+- Sheet "Концерты": the concerts of the last EVENTS_PAST_DAYS days and later with the members of every band application,
+  one row per member (a concert without applications gets one row), rewritten whenever it changed.
 
 Writes are debounced (DEBOUNCE_SECONDS: a burst of changes becomes one write). History goes out in batches of
 HISTORY_BATCH rows, oldest first, so a long backlog takes several rounds. If Google is unreachable the worker waits
@@ -26,7 +28,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.timezone import now_local, utcnow
-from app.db.models import Booking, BookingStatus, ScheduleChange
+from app.db.models import Booking, BookingStatus, Event, EventApplication, EventApplicationMember, ScheduleChange
 from app.services.bookings import _band_info, _booking_load_options, booking_owner_label
 from app.services.schedule_history import ACTION_TITLES, describe_slot, person_name
 from app.services.weeks import week_start_of
@@ -35,15 +37,20 @@ logger = logging.getLogger(__name__)
 
 SCHEDULE_SHEET = "Расписание"
 HISTORY_SHEET = "История"
+EVENTS_SHEET = "Концерты"
 SCHEDULE_HEADER = [
     "Дата", "День", "Начало", "Конец", "Номер", "Направление", "Ответственный", "Telegram ответственного",
     "Цель", "Песня / название", "Источник", "ID брони", "ID номера", "ID автора",
 ]
 HISTORY_HEADER = ["Время", "Кто", "Действие", "Номер", "Было", "Стало", "Причина", "ID брони", "ID записи"]
+EVENTS_HEADER = [
+    "Концерт", "Дата", "Место", "Номер", "Песня", "Фамилия", "Имя", "Учебная группа", "Роль", "Telegram", "ID концерта", "ID заявки",
+]
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 PURPOSES = {"concert": "к концерту", "self": "для себя", "personal": "личная", "staff": "стафф / ДСВР"}
 SOURCES = {"manual": "вручную", "auto": "авто-распределение", "dsvr": "ДСВР", "staff": "админ"}
 SCHEDULE_HORIZON_DAYS = 30
+EVENTS_PAST_DAYS = 60
 HISTORY_BATCH = 500
 DEBOUNCE_SECONDS = 5
 RETRY_SECONDS = 30
@@ -55,6 +62,8 @@ class SheetsBackend(Protocol):
     def replace_schedule(self, rows: list[list]) -> None: ...
 
     def append_history(self, rows: list[list]) -> None: ...
+
+    def replace_events(self, rows: list[list]) -> None: ...
 
 
 def is_enabled() -> bool:
@@ -84,6 +93,33 @@ def build_schedule_rows(bookings: list[Booking]) -> list[list]:
                 booking.created_by_id,
             ]
         )
+    return rows
+
+
+def build_event_rows(events: list[Event]) -> list[list]:
+    rows: list[list] = [EVENTS_HEADER]
+    for event in sorted(events, key=lambda item: (item.event_date, item.id)):
+        head = [event.title, event.event_date.isoformat(), event.location or ""]
+        applications = sorted(event.applications, key=lambda item: item.id)
+        if not applications:
+            rows.append([*head, "", "", "", "", "", "", "", event.id, ""])
+        for application in applications:
+            for member in sorted(application.members, key=lambda item: item.id):
+                user = member.user
+                rows.append(
+                    [
+                        *head,
+                        application.band.name,
+                        application.song_title or "",
+                        user.last_name or "",
+                        user.first_name or "",
+                        user.study_group or "",
+                        member.instrument_role or "",
+                        f"@{user.telegram_username}" if user.telegram_username else "",
+                        event.id,
+                        application.id,
+                    ]
+                )
     return rows
 
 
@@ -132,9 +168,9 @@ class GspreadBackend:
         except gspread.WorksheetNotFound:
             return spreadsheet.add_worksheet(title, rows=1000, cols=columns)
 
-    def replace_schedule(self, rows: list[list]) -> None:
+    def _replace(self, title: str, rows: list[list]) -> None:
         try:
-            worksheet = self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER))
+            worksheet = self._worksheet(title, len(rows[0]))
             if len(rows) > worksheet.row_count:
                 worksheet.resize(rows=len(rows))
             worksheet.update(values=rows, range_name="A1", value_input_option="RAW")
@@ -142,6 +178,12 @@ class GspreadBackend:
         except Exception:
             self._spreadsheet = None  # reconnect next time
             raise
+
+    def replace_schedule(self, rows: list[list]) -> None:
+        self._replace(SCHEDULE_SHEET, rows)
+
+    def replace_events(self, rows: list[list]) -> None:
+        self._replace(EVENTS_SHEET, rows)
 
     def read_schedule(self) -> list[list[str]]:
         try:
@@ -163,6 +205,7 @@ class GspreadBackend:
 
 class _State:
     schedule_digest: str | None = None
+    events_digest: str | None = None
     wakeup: asyncio.Event | None = None
 
 
@@ -187,7 +230,7 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
         .options(*_booking_load_options())
     )
     schedule_rows = build_schedule_rows(list(result.scalars().unique()))
-    summary = {"schedule_rewritten": False, "history_rows": 0}
+    summary = {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False}
     digest = _digest(schedule_rows)
     if digest != _state.schedule_digest:
         await asyncio.to_thread(backend.replace_schedule, schedule_rows)
@@ -212,7 +255,29 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
             change.sheets_synced_at = now
         await session.commit()
         summary["history_rows"] = len(pending)
+
+    # Last, so that a failing concerts sheet never holds the history back; the digest is kept until the write worked.
+    event_rows = build_event_rows(await _load_events(session))
+    event_digest = _digest(event_rows)
+    if event_digest != _state.events_digest:
+        await asyncio.to_thread(backend.replace_events, event_rows)
+        _state.events_digest = event_digest
+        summary["events_rewritten"] = True
     return summary
+
+
+async def _load_events(session: AsyncSession) -> list[Event]:
+    cutoff = now_local().date() - timedelta(days=EVENTS_PAST_DAYS)
+    result = await session.execute(
+        select(Event)
+        .where(Event.event_date >= cutoff)
+        .options(
+            selectinload(Event.applications).selectinload(EventApplication.band),
+            selectinload(Event.applications).selectinload(EventApplication.members).selectinload(EventApplicationMember.user),
+        )
+        .execution_options(populate_existing=True)  # a long-lived session must not serve stale collections
+    )
+    return list(result.scalars().unique())
 
 
 def _wakeup() -> asyncio.Event:
@@ -240,7 +305,7 @@ async def sync_worker(session_factory: async_sessionmaker[AsyncSession], backend
             _wakeup().clear()
             async with session_factory() as session:
                 summary = await sync_once(session, backend)
-            if summary["schedule_rewritten"] or summary["history_rows"]:
+            if summary["schedule_rewritten"] or summary["history_rows"] or summary["events_rewritten"]:
                 logger.info("Google Sheets synced: %s", summary)
         except asyncio.CancelledError:
             raise

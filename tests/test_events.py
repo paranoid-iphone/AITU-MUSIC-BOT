@@ -111,6 +111,20 @@ async def test_a_band_owner_sees_and_opens_only_the_applications_of_their_own_ba
         await events.get_application_detail(session, owner.telegram_id, 9999)
 
 
+async def test_an_owner_can_resubmit_and_edit_a_list_that_keeps_the_same_members(session, make_user, make_band):
+    admin = await make_user(role="admin")
+    owner, band, member_id = await _band_with_member(session, make_user, make_band)
+    event = await _event(session, admin)
+    first = await events.submit_application(session, event.id, owner.telegram_id, band.id, "Song", [member_id])
+
+    again = await events.submit_application(session, event.id, owner.telegram_id, band.id, "New song", [member_id])
+    changed = await events.update_application(session, first.id, owner.telegram_id, member_ids=[member_id], song_title="Third")
+
+    assert again.id == first.id == changed.id and changed.song_title == "Third"
+    rows = await events.list_event_applications(session, admin.telegram_id, event.id)
+    assert [len(row["members"]) for row in rows] == [1]
+
+
 # --- the history of a member -----------------------------------------------------------------------------------------
 
 

@@ -15,6 +15,7 @@ class FakeBackend:
     def __init__(self):
         self.schedules: list[list[list]] = []
         self.history: list[list[list]] = []
+        self.events: list[list[list]] = []
         self.fail = False
         self.attempts = 0
 
@@ -29,10 +30,16 @@ class FakeBackend:
             raise ConnectionError("google is down")
         self.history.append(rows)
 
+    def replace_events(self, rows):
+        if self.fail:
+            raise ConnectionError("google is down")
+        self.events.append(rows)
+
 
 @pytest.fixture(autouse=True)
 def _reset_state():
     sheets_sync._state.schedule_digest = None
+    sheets_sync._state.events_digest = None
     sheets_sync._state.wakeup = None  # an asyncio.Event belongs to the loop of the test that created it
     yield
     sheets_sync._state.schedule_digest = None
@@ -127,8 +134,8 @@ async def test_history_is_appended_once_and_marked(session, make_user, make_band
     first = await sheets_sync.sync_once(session, backend)
     second = await sheets_sync.sync_once(session, backend)
 
-    assert first == {"schedule_rewritten": True, "history_rows": 1}
-    assert second == {"schedule_rewritten": False, "history_rows": 0}
+    assert first == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True}
+    assert second == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False}
     assert len(backend.history) == 1 and len(backend.schedules) == 1
     stamp, who, action, band, before, after, reason, booking_id, change_id = backend.history[0][0]
     assert (who, action, band, before) == ("Петров Иван", "создал(а) бронь", "Rockers", "")
@@ -147,7 +154,7 @@ async def test_changes_made_later_are_synced_incrementally(session, make_user, m
     await bookings.update_booking(session, leader.telegram_id, booking.id, song_title="Renamed")
     result = await sheets_sync.sync_once(session, backend)
 
-    assert result == {"schedule_rewritten": True, "history_rows": 1}
+    assert result == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": False}
     assert backend.schedules[-1][1][9] == "Renamed"
     assert backend.history[-1][0][2] == "изменил(а) бронь"
 
@@ -176,7 +183,7 @@ async def test_google_outage_keeps_history_unsynced_and_retries(session, make_us
 
     backend.fail = False
     recovered = await sheets_sync.sync_once(session, backend)
-    assert recovered == {"schedule_rewritten": True, "history_rows": 1}
+    assert recovered == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True}
 
 
 async def test_old_weeks_are_not_in_the_schedule_sheet(session, make_user, make_band):
@@ -298,3 +305,114 @@ async def test_a_change_request_wakes_the_worker_before_the_next_poll(session, m
         task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# --- the concerts sheet ----------------------------------------------------------------------------------------------
+
+
+async def _concert(session, admin, title="Autumn", days=10, **extra):
+    from app.services import events
+
+    day = (now_local() + timedelta(days=days)).date()
+    return await events.create_event(session, admin.telegram_id, title=title, event_date=day, submission_deadline=None, **extra)
+
+
+async def _apply(session, event, make_user, make_band, band_name="Rockers", song="Song"):
+    from app.services import events
+
+    owner = await make_user(last_name="Петров", first_name="Иван", telegram_username="petrov")
+    band = await make_band(owner, band_name)
+    member_id = (await session.execute(select(models.BandMember.id).where(models.BandMember.band_id == band.id))).scalar_one()
+    return await events.submit_application(session, event.id, owner.telegram_id, band.id, song, [member_id])
+
+
+async def test_the_concerts_sheet_has_a_row_per_member_and_one_for_an_empty_concert(session, make_user, make_band):
+    admin = await make_user(role="admin")
+    full = await _concert(session, admin, "Autumn", days=10, location="Hall")
+    empty = await _concert(session, admin, "Winter", days=20)
+    application = await _apply(session, full, make_user, make_band)
+    backend = FakeBackend()
+
+    summary = await sheets_sync.sync_once(session, backend)
+
+    header, first, second = backend.events[0]
+    assert summary["events_rewritten"] is True and header == sheets_sync.EVENTS_HEADER
+    day = (now_local() + timedelta(days=10)).date().isoformat()
+    assert first[:5] == ["Autumn", day, "Hall", "Rockers", "Song"]
+    assert first[5:10] == ["Петров", "Иван", "SE-2401", first[8], "@petrov"] and first[10:] == [full.id, application.id]
+    assert second[0] == "Winter" and second[3:10] == [""] * 7 and second[10:] == [empty.id, ""]
+
+
+async def test_the_concerts_sheet_is_rewritten_only_when_something_changed(session, make_user, make_band):
+    from app.services import events
+
+    admin = await make_user(role="admin")
+    event = await _concert(session, admin)
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    assert (await sheets_sync.sync_once(session, backend))["events_rewritten"] is False
+
+    application = await _apply(session, event, make_user, make_band)
+    assert (await sheets_sync.sync_once(session, backend))["events_rewritten"] is True
+    owner_id = (await session.execute(select(models.User.telegram_id).where(models.User.telegram_username == "petrov"))).scalar_one()
+    await events.update_application(session, application.id, owner_id, song_title="Other song")
+    assert (await sheets_sync.sync_once(session, backend))["events_rewritten"] is True
+    await events.delete_application(session, owner_id, application.id)
+    await sheets_sync.sync_once(session, backend)
+
+    assert len(backend.events) == 4 and len(backend.events[-1]) == 2  # header + the concert without applications
+
+
+async def test_long_past_concerts_leave_the_sheet(session, make_user):
+    admin = await make_user(role="admin")
+    await _concert(session, admin, "Ancient", days=-(sheets_sync.EVENTS_PAST_DAYS + 5))
+    await _concert(session, admin, "Recent", days=-5)
+    backend = FakeBackend()
+
+    await sheets_sync.sync_once(session, backend)
+
+    assert [row[0] for row in backend.events[0][1:]] == ["Recent"]
+
+
+async def test_a_failing_concerts_sheet_does_not_hold_the_history_back(session, make_user, make_band):
+    await _book(session, make_user, make_band)
+    backend = FakeBackend()
+    original = backend.replace_events
+
+    def broken(rows):
+        raise ConnectionError("sheet is gone")
+
+    backend.replace_events = broken
+    with pytest.raises(ConnectionError):
+        await sheets_sync.sync_once(session, backend)
+    assert len(backend.history) == 1  # the history went out first and is marked as synced
+
+    backend.replace_events = original
+    recovered = await sheets_sync.sync_once(session, backend)
+    assert recovered == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": True}
+
+
+@pytest.mark.parametrize("change", ["create", "update", "submit", "update_application", "delete_application"])
+async def test_every_concert_change_asks_for_a_sync(session, make_user, make_band, monkeypatch, change):
+    from app.services import events
+
+    admin = await make_user(role="admin")
+    event = await _concert(session, admin)
+    application = await _apply(session, event, make_user, make_band)
+    owner_id = (await session.execute(select(models.User.telegram_id).where(models.User.telegram_username == "petrov"))).scalar_one()
+    calls = []
+    monkeypatch.setattr(sheets_sync, "request_sync", lambda: calls.append(change))
+
+    if change == "create":
+        await _concert(session, admin, "Another")
+    elif change == "update":
+        await events.update_event(session, event.id, admin.telegram_id, title="Renamed")
+    elif change == "submit":
+        member_id = (await session.execute(select(models.BandMember.id).where(models.BandMember.band_id == application.band_id))).scalar_one()
+        await events.submit_application(session, event.id, owner_id, application.band_id, "Again", [member_id])
+    elif change == "update_application":
+        await events.update_application(session, application.id, owner_id, song_title="Other")
+    else:
+        await events.delete_application(session, owner_id, application.id)
+
+    assert calls == [change]

@@ -73,7 +73,10 @@ One-way (bot → sheet) so the schedule survives a server outage:
 
 - sheet **Расписание** – bookings from the start of this week up to 30 days ahead, rewritten after each change; it carries
   the booking, band and author ids so the bookings can be restored;
-- sheet **История** – every schedule change appended once.
+- sheet **История** – every schedule change appended once;
+- sheet **Концерты** – the concerts of the last 60 days and later with the members of every band application (one row per
+  member, a concert without applications gets one row), rewritten after every concert or application change. It is the same
+  list as the Excel export, always current: *File → Download → .xlsx* gives the file.
 
 Setup:
 
@@ -241,8 +244,8 @@ pytest
 - The Sheets sync is one-way; Telegram messages are best-effort (a blocked bot is skipped).
 - Concerts (creating them, band applications, personal event history) and weekly planning are still managed in the bot, not
   in the Mini App.
-- Excel export of concert lists is `GET /events/{id}/export.xlsx?telegram_id=<admin>` with the internal token. It is not
-  reachable through the ngrok tunnel, so call it from the host (`localhost:8001`).
+- Without Google Sheets, the Excel export of a concert is `GET /events/{id}/export.xlsx?telegram_id=<admin>` with the internal
+  token. It is not reachable through the ngrok tunnel, so call it from the host (`localhost:8001`).
 - Profile editing and registration are bot flows; the Mini App only shows the profile.
 - The public schedule (`/webapp/api/schedule` without `initData`) is read-only and open on purpose; booking needs a signed session.
 - The test suite runs on SQLite. Postgres-only code (the legacy branch of the baseline migration and the advisory locks
