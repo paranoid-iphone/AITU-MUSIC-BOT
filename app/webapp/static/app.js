@@ -59,11 +59,20 @@ function el(tag, props = {}, children = []) {
 }
 
 class ApiError extends Error {
-  constructor(status, detail) {
+  constructor(status, detail, code = "", params = {}) {
     super(detail || `HTTP ${status}`);
     this.status = status;
     this.detail = detail || "";
+    this.code = code;
+    this.params = params;
   }
+}
+
+// The server's message is English; known ones come with a code that the locale translates.
+function failureDetail(failure) {
+  const key = `webapp.error.code.${failure.code}`;
+  if (failure.code && state.strings[key]) return fill(key, failure.params || {});
+  return failure.detail;
 }
 
 async function api(path, options = {}) {
@@ -75,9 +84,9 @@ async function api(path, options = {}) {
   }
   const response = await fetch(`/webapp/api${path}`, init);
   if (!response.ok) {
-    let detail = "";
-    try { detail = (await response.json()).detail; } catch (_) { /* not JSON */ }
-    throw new ApiError(response.status, typeof detail === "string" ? detail : "");
+    let body = {};
+    try { body = await response.json(); } catch (_) { /* not JSON */ }
+    throw new ApiError(response.status, typeof body.detail === "string" ? body.detail : "", body.code || "", body.params || {});
   }
   return response.json();
 }
@@ -803,7 +812,7 @@ async function openBookingForm() {
     } catch (failure) {
       submit.disabled = false;
       if (failure.status === 401) error.textContent = t("webapp.error.session");
-      else error.textContent = `${t("webapp.error.save")}${failure.detail ? `: ${failure.detail}` : ""}`;
+      else error.textContent = `${t("webapp.error.save")}${failureDetail(failure) ? `: ${failureDetail(failure)}` : ""}`;
       if (failure.status === 409) render(); // somebody else may have taken the time: show the fresh grid
       haptic("error");
       return;
@@ -826,7 +835,7 @@ function bookingWhen(item) {
 
 function sessionAwareMessage(failure, fallbackKey) {
   if (failure.status === 401) return t("webapp.error.session");
-  return `${t(fallbackKey)}${failure.detail ? `: ${failure.detail}` : ""}`;
+  return `${t(fallbackKey)}${failureDetail(failure) ? `: ${failureDetail(failure)}` : ""}`;
 }
 
 function moveWhen(date, start, end) {

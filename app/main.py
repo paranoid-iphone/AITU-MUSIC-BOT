@@ -17,7 +17,7 @@ from app.services import planning as planning_service
 from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
 from app.services import outbox, repeat_offers, sheets_sync
-from app.services.errors import AppError
+from app.services.errors import AppError, describe_error
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
 
@@ -137,7 +137,7 @@ async def restrict_tunnel_access(request: Request, call_next):
 
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+    return JSONResponse(status_code=exc.status_code, content=describe_error(str(exc)))
 
 
 @app.get("/health")
