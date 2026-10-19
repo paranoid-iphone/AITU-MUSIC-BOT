@@ -162,6 +162,8 @@ Users listed in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and canno
 | `TIMEZONE` (`Asia/Almaty`) | club clock used for bookings, deadlines and the Sunday job |
 | `WEEKLY_PLANNING_ENABLED`, `ALLOCATION_TIME` | weekly planning switch (default `false` = sliding 7-day window); Sunday allocation time `HH:MM` |
 | `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE` | enable the Sheets backup |
+| `NGROK_DOMAIN` | reserved ngrok domain (`my-club.ngrok-free.app`): the tunnel and the Mini App link stay the same after restarts; empty = random address, found through the ngrok API. `WEBAPP_BASE_URL` overrides both |
+| `LOG_LEVEL` (`INFO`), `SQL_ECHO` (`false`) | log level of backend and bot; log every SQL statement |
 | `REGISTRATION_RETRY_HOURS` | cooldown before a rejected registration may be resubmitted |
 
 Booking limits, room hours and closed weekdays are changed by the main admin in the Mini App (*Админ → Настройки*).

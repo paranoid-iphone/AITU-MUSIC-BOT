@@ -132,6 +132,8 @@ their own group, DSVR, admin). Users in `INITIAL_ADMIN_TELEGRAM_IDS` become admi
   fixture monkeypatches the locks away. Verify such changes against a real Postgres.
 - Tests force `weekly_planning_enabled=False` because planning closes next-week days and would make date-relative tests
   depend on the weekday; planning tests opt in via the `planning_on` fixture.
+- The Mini App base URL (`bot/webapp_url.py`) is `WEBAPP_BASE_URL`, else `https://<NGROK_DOMAIN>`, else the ngrok API. Logging is set up
+  by `core/logging_setup.setup_logging()` (backend import and bot start; `LOG_LEVEL`); SQL echo is the separate `SQL_ECHO` flag.
 - Time is club-local (`TIMEZONE`, default `Asia/Almaty`); use `core/timezone.now_local()` rather than naive `datetime.now()`.
 - The backend refuses to start with an empty `INTERNAL_API_TOKEN`; with `ENVIRONMENT` other than `local` it must also be
   non-default and at least 32 chars (`core/config.py`). `.env.example` ships `ENVIRONMENT=production` and an empty token.

@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.db import models
 from app.db.migrate import upgrade_to_head
 
-engine = create_async_engine(settings.database_url, echo=settings.environment == "local")
+engine = create_async_engine(settings.database_url, echo=settings.sql_echo)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 # Defaults a fresh club starts with; existing values are never overwritten.

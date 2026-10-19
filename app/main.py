@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import admin, bands, bookings, events, groups, history, move_requests, planning, users, waitlist, webapp, webapp_admin
 from app.core.config import settings
+from app.core.logging_setup import setup_logging
 from app.db.session import prepare_database
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
@@ -20,6 +21,7 @@ from app.services.errors import AppError
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
 
+setup_logging()
 app = FastAPI(title=settings.app_name)
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)

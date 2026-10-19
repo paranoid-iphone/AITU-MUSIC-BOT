@@ -15,6 +15,7 @@ from app.bot.menu_button import setup_menu_button
 from app.bot.menu_refresh import MenuRefresher
 from app.bot.outbox_delivery import process_next, recover_processing
 from app.core.config import settings
+from app.core.logging_setup import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ async def _outbox_loop(bot: Bot, redis: Redis, refresher: MenuRefresher) -> None
 async def main() -> None:
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is required")
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
     dispatcher.errors.register(on_error)
