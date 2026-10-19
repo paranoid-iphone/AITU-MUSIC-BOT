@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.timezone import now_local
 from app.db.models import Booking, BookingStatus, ScheduleChange
-from app.services.bookings import _band_info, _booking_load_options, _booking_owner_label
+from app.services.bookings import _band_info, _booking_load_options, booking_owner_label
 from app.services.schedule_history import ACTION_TITLES, describe_slot, person_name
 from app.services.weeks import week_start_of
 
@@ -69,7 +69,7 @@ def build_schedule_rows(bookings: list[Booking]) -> list[list]:
                 WEEKDAYS[booking.booking_date.weekday()],
                 booking.start_time.strftime("%H:%M"),
                 booking.end_time.strftime("%H:%M"),
-                _booking_owner_label(booking),
+                booking_owner_label(booking),
                 info["group_title"] or "",
                 info["responsible_name"] or "",
                 f"@{username}" if username else "",

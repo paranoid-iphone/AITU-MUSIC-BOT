@@ -8,7 +8,7 @@ from app.core.timezone import now_local
 from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting
 from app.services.outbox import commit_and_publish
 from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
-from app.services.schedule_history import record_change, snapshot
+from app.services.schedule_history import person_name, record_change, snapshot
 from app.services.weeks import is_date_open_for_booking
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.users import get_user_by_telegram_id, require_admin, require_approved
@@ -39,22 +39,12 @@ def _overlaps(start_time: time, end_time: time, booked_start: time, booked_end: 
     return start_time < booked_end and end_time > booked_start
 
 
-def _booking_owner_label(booking: Booking) -> str:
+def booking_owner_label(booking: Booking) -> str:
     if booking.band is not None:
         return booking.band.name
     if booking.purpose == "personal":
-        created_by = booking.created_by
-        name = (
-            f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
-            or created_by.telegram_username
-            or str(created_by.telegram_id)
-        )
-        return f"Личная репетиция | {name}"
+        return f"Личная репетиция | {person_name(booking.created_by)}"
     return "Стафф / кабинет"
-
-
-def _person_name(user) -> str:
-    return f"{user.last_name or ''} {user.first_name or ''}".strip() or user.telegram_username or str(user.telegram_id)
 
 
 def _band_info(booking: Booking) -> dict:
@@ -65,7 +55,7 @@ def _band_info(booking: Booking) -> dict:
     responsible = band.responsible
     return {
         "group_title": band.group.title if band.group is not None else None,
-        "responsible_name": _person_name(responsible) if responsible is not None else None,
+        "responsible_name": person_name(responsible) if responsible is not None else None,
         "responsible_username": responsible.telegram_username if responsible is not None else None,
     }
 
@@ -490,7 +480,7 @@ async def _overlapping_confirmed(session: AsyncSession, booking_date: date, star
 def _preempted_row(booking: Booking) -> dict:
     return {
         "id": booking.id,
-        "band_name": _booking_owner_label(booking),
+        "band_name": booking_owner_label(booking),
         "booking_date": booking.booking_date.isoformat(),
         "start_time": booking.start_time.isoformat(),
         "end_time": booking.end_time.isoformat(),
@@ -593,7 +583,7 @@ async def delete_booking(session: AsyncSession, telegram_id: int, booking_id: in
     if booking.status != BookingStatus.CONFIRMED.value:
         raise ConflictError("Booking is already cancelled")
     _ensure_booking_not_past(booking)
-    band_name = _booking_owner_label(booking)
+    band_name = booking_owner_label(booking)
     created_by = (
         f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
         or booking.created_by.telegram_username
@@ -750,7 +740,7 @@ async def list_my_booking_rows(session: AsyncSession, telegram_id: int) -> list[
             {
                 "id": booking.id,
                 "band_id": booking.band_id,
-                "band_name": _booking_owner_label(booking),
+                "band_name": booking_owner_label(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
                 or str(created_by.telegram_id),
@@ -791,7 +781,7 @@ async def list_schedule(session: AsyncSession, viewer=None) -> list[dict]:
             {
                 "id": booking.id,
                 "band_id": booking.band_id,
-                "band_name": _booking_owner_label(booking),
+                "band_name": booking_owner_label(booking),
                 "created_by": f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
                 or created_by.telegram_username
                 or str(created_by.telegram_id),

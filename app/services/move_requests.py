@@ -87,7 +87,7 @@ def _expire(session: AsyncSession, request: MoveRequest, now: datetime) -> None:
     _notify(
         session,
         request.requester,
-        f"Просьба перенести бронь «{booking_service._booking_owner_label(request.booking)}» "
+        f"Просьба перенести бронь «{booking_service.booking_owner_label(request.booking)}» "
         f"({_booking_slot(request.booking)}) осталась без ответа или потеряла смысл — она закрыта.",
     )
 
@@ -163,7 +163,7 @@ async def create_request(
             session,
             contact.telegram_id,
             request.id,
-            f"{person_name(user)} просит подвинуть репетицию «{booking_service._booking_owner_label(booking)}»:\n"
+            f"{person_name(user)} просит подвинуть репетицию «{booking_service.booking_owner_label(booking)}»:\n"
             f"сейчас {_booking_slot(booking)}, предлагается {_proposed_slot(request)}.{note}\n"
             f"Ответить нужно до {request.expires_at.strftime('%d.%m %H:%M')}.",
             "✅ Согласен",
@@ -212,7 +212,7 @@ async def accept(session: AsyncSession, telegram_id: int, request_id: int) -> Mo
     request.status = MoveRequestStatus.ACCEPTED.value
     request.resolved_at = now
     request.resolved_by_id = user.id
-    label = booking_service._booking_owner_label(booking)
+    label = booking_service.booking_owner_label(booking)
     _notify(
         session,
         request.requester,
@@ -242,7 +242,7 @@ async def decline(session: AsyncSession, telegram_id: int, request_id: int) -> M
     _notify(
         session,
         request.requester,
-        f"По «{booking_service._booking_owner_label(request.booking)}» ({_booking_slot(request.booking)}) "
+        f"По «{booking_service.booking_owner_label(request.booking)}» ({_booking_slot(request.booking)}) "
         f"вам отказали: бронь остаётся на месте.",
     )
     await log_action(session, user.id, "move_request.decline", "move_request", request.id, f"Отказал в переносе брони #{request.booking_id}")
@@ -284,7 +284,7 @@ def _row(request: MoveRequest) -> dict:
     return {
         "id": request.id,
         "booking_id": booking.id,
-        "band_name": booking_service._booking_owner_label(booking),
+        "band_name": booking_service.booking_owner_label(booking),
         "song_title": booking.song_title,
         "booking_date": booking.booking_date,
         "start_time": booking.start_time,

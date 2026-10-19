@@ -39,6 +39,7 @@ from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
 from app.services.errors import NotFoundError
 from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin
+from app.services.schedule_history import person_name
 
 router = APIRouter(prefix="/webapp/api", tags=["webapp"])
 
@@ -305,15 +306,11 @@ async def take_waitlist(
     return await waitlist_service.take(session, user.telegram_id, entry_id)
 
 
-def _person_name(user: User) -> str:
-    return f"{user.last_name or ''} {user.first_name or ''}".strip() or user.telegram_username or str(user.telegram_id)
-
-
 async def _band_payload(session: AsyncSession, viewer: User, band: Band, invite_visible: bool) -> dict:
     members = [
         {
             "id": member.id,
-            "name": _person_name(member.user),
+            "name": person_name(member.user),
             "study_group": member.user.study_group,
             "telegram_username": member.user.telegram_username,
             "instrument_role": member.instrument_role,

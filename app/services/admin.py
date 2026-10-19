@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import AvailableDay, ClubSetting
+from app.services.bookings import booking_owner_label
 from app.services.errors import ConflictError, NotFoundError
 from app.services.outbox import queue_schedule_changed
 from app.services.users import get_user_by_telegram_id, require_admin
@@ -16,20 +17,6 @@ def _time_to_minutes(value: time) -> int:
 
 def _minutes_to_hhmm(value: int) -> str:
     return f"{value // 60:02d}:{value % 60:02d}"
-
-
-def _booking_owner_label(booking) -> str:
-    if booking.band is not None:
-        return booking.band.name
-    if booking.purpose == "personal":
-        created_by = booking.created_by
-        name = (
-            f"{created_by.last_name or ''} {created_by.first_name or ''}".strip()
-            or created_by.telegram_username
-            or str(created_by.telegram_id)
-        )
-        return f"Личная репетиция | {name}"
-    return "Стафф / кабинет"
 
 
 async def update_available_day(
@@ -328,7 +315,7 @@ async def booking_history(session: AsyncSession, telegram_id: int) -> list[dict]
             {
                 "id": booking.id,
                 "band_id": booking.band_id,
-                "band_name": _booking_owner_label(booking),
+                "band_name": booking_owner_label(booking),
                 "created_by_id": booking.created_by_id,
                 "created_by": f"{booking.created_by.last_name or ''} {booking.created_by.first_name or ''}".strip()
                 or booking.created_by.telegram_username
