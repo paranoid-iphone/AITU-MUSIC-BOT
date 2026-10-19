@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 secrets/
+backups/
 .git/
 .gitignore
 .claude/

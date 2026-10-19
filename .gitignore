@@ -1,5 +1,6 @@
 .env
 secrets/
+backups/
 ngrok.yaml
 .git/
 .git-local/

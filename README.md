@@ -96,6 +96,30 @@ for an admin to fix in the Mini App. Running it twice changes nothing.
 **Download the sheet as CSV before starting the backend on an empty database:** the sync rewrites the sheet with
 what the database holds right after start, which would erase the backup.
 
+## Database backups
+
+The compose service `backup` runs `pg_dump` (custom format) right after start and then every `BACKUP_INTERVAL_HOURS`
+(default 24) into `./backups/aitu_music-<UTC time>.dump`. Dumps older than `BACKUP_KEEP_DAYS` (default 14) are deleted,
+but only after a new dump succeeded. A manual backup, e.g. before an update:
+
+```bash
+docker compose exec backup sh /ops/pg_backup.sh once
+```
+
+The dumps live on the same machine as the database: copy `./backups` somewhere else regularly.
+
+To restore a dump and then catch up the bookings made after it from the Google Sheets backup:
+
+```bash
+docker compose stop backend bot
+docker compose exec -T db pg_restore -U aitu -d aitu_music --clean --if-exists --no-owner < backups/<file>.dump
+docker compose run --rm backend python -m app.tools.restore_from_sheets           # check the report
+docker compose run --rm backend python -m app.tools.restore_from_sheets --apply
+docker compose start backend bot
+```
+
+The one-off `run` container does not start the web server, so the sheet is not overwritten before it is read.
+
 ## Quick start
 
 ```bash

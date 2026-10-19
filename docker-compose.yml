@@ -15,6 +15,24 @@ services:
       timeout: 5s
       retries: 10
 
+  backup:
+    image: postgres:16-alpine
+    entrypoint: ["sh", "/ops/pg_backup.sh"]
+    environment:
+      PGHOST: db
+      PGDATABASE: aitu_music
+      PGUSER: aitu
+      PGPASSWORD: aitu
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./ops:/ops:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   backend:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

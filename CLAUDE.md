@@ -13,8 +13,11 @@ pytest                                  # whole suite (asyncio_mode=auto, tests/
 pytest tests/test_allocator.py -k name  # single file / single test
 python -m compileall -q app             # quick syntax check after bulk edits
 
-cp .env.example .env && docker compose up --build   # db(postgres) + redis + backend + ngrok + bot
+cp .env.example .env && docker compose up --build   # db(postgres) + redis + backend + ngrok + bot + backup
 ```
+
+The `backup` service runs `ops/pg_backup.sh` (pg_dump into `./backups` with rotation; README has the restore order).
+`.gitattributes` keeps `*.sh` on LF, which the Alpine `sh` in the container needs.
 
 Backend: `uvicorn app.main:app` (port 8001 on the host in compose, docs at `/docs`). Bot: `python -m app.bot.main`.
 There is no linter configured.
