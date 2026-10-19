@@ -14,8 +14,13 @@ pytest tests/test_allocator.py -k name  # single file / single test
 python -m compileall -q app             # quick syntax check after bulk edits
 alembic upgrade head                    # manual migration run (the backend does it on start); alembic check = drift
 
-cp .env.example .env && docker compose up --build   # db(postgres) + redis + backend + ngrok + bot + backup
+cp .env.example .env && docker compose up -d --build   # prod: db(postgres) + redis + backend + ngrok + bot + backup
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build   # dev overlay: .:/app mounts + uvicorn --reload
 ```
+
+`docker-compose.yml` is the production config (code in the image, only `./secrets` mounted into the backend,
+`restart: unless-stopped`, healthchecks on db/redis/backend with `service_healthy` ordering, Redis AOF on `redis_data`,
+rotated json logs). Anything that needs the working tree mounted belongs in `docker-compose.dev.yml`.
 
 The `backup` service runs `ops/pg_backup.sh` (pg_dump into `./backups` with rotation; README has the restore order).
 `.gitattributes` keeps `*.sh` on LF, which the Alpine `sh` in the container needs.

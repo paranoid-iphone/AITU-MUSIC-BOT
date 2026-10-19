@@ -1,10 +1,19 @@
+# Production configuration: code is baked into the image, every service restarts on failure.
+# For development use the overlay: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: aitu_music
       POSTGRES_USER: aitu
-      POSTGRES_PASSWORD: aitu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aitu}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -14,6 +23,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+    logging: *default-logging
 
   backup:
     image: postgres:16-alpine
@@ -22,7 +33,7 @@ services:
       PGHOST: db
       PGDATABASE: aitu_music
       PGUSER: aitu
-      PGPASSWORD: aitu
+      PGPASSWORD: ${POSTGRES_PASSWORD:-aitu}
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
     volumes:
@@ -32,25 +43,47 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   backend:
     build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     env_file: .env
     ports:
       - "127.0.0.1:8001:8000"
     volumes:
-      - .:/app
+      # secrets/ is excluded from the image (.dockerignore), so the Sheets key is mounted
+      - ./secrets:/app/secrets:ro
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      # /health answers only after on_startup, i.e. after the migrations; the slim image has no curl
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
+    # AOF keeps the bot's FSM state and bot:outbox:processing across restarts
+    command: redis-server --appendonly yes
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
 
   ngrok:
     image: ngrok/ngrok:3
@@ -63,18 +96,25 @@ services:
     ports:
       - "127.0.0.1:4040:4040"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
 
   bot:
     build: .
     command: python -m app.bot.main
     env_file: .env
-    volumes:
-      - .:/app
     depends_on:
-      - backend
-      - redis
-      - ngrok
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ngrok:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:
+  redis_data:

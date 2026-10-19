@@ -124,8 +124,27 @@ The one-off `run` container does not start the web server, so the sheet is not o
 
 ```bash
 cp .env.example .env     # set BOT_TOKEN, NGROK_AUTHTOKEN, INITIAL_ADMIN_TELEGRAM_IDS, a strong INTERNAL_API_TOKEN
-docker compose up --build
+docker compose up -d --build
 ```
+
+`docker-compose.yml` is the production setup: the code is baked into the image, every service restarts unless stopped,
+`db`/`redis`/`backend` have healthchecks (`docker compose ps` shows `healthy`) and the others wait for them, Redis keeps
+its data (FSM state, undelivered notifications) in an append-only file on the `redis_data` volume, and container logs are
+rotated (3 × 10 MB per service). Only `secrets/` is mounted into the backend. To update:
+
+```bash
+git pull && docker compose up -d --build
+```
+
+For development use the overlay that mounts the working tree and runs the backend with `--reload`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+The database password is `aitu` unless `POSTGRES_PASSWORD` is set in `.env`; it must match the password in
+`DATABASE_URL`. Postgres applies it only when it creates the volume, so changing it later needs `ALTER USER` inside the
+database (or a fresh volume).
 
 API docs: <http://localhost:8001/docs>. All routes except `/health` and `/webapp/*` need the header
 `X-Internal-Token`. Through the ngrok tunnel only `/webapp/*` and `/health` are reachable.
