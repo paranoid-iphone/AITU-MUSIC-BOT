@@ -1,8 +1,9 @@
 # AITU Music Club Bot
 
 Telegram bot + FastAPI backend that plans a **shared rehearsal room** for several club groups (music, dance,
-cheerleading): weekly requests with priorities, an automatic Sunday allocation, DSVR priority, schedule history and a
-Google Sheets backup.
+cheerleading). Members book rehearsals in a Telegram Mini App on a sliding 7-day window; on top of that there are DSVR
+priority, a waiting list, "ask to move" requests, schedule history and a Google Sheets backup. An optional weekly planning
+mode (requests with priorities and an automatic Sunday allocation) can replace the sliding window.
 
 ## How booking works
 
@@ -36,11 +37,11 @@ If the server was down on Sunday evening, the missed allocation runs automatical
 
 | Role | Can do |
 |------|--------|
-| user | request/book for own bands, edit own bookings, see own band history |
-| band leader / **responsible person** | submit weekly requests; the responsible person is notified about every change of the band's schedule and is shown in the schedule table |
+| user | book for own bands or personally, edit own bookings, see own band history |
+| band leader / **responsible person** | submit weekly requests (weekly planning mode); the responsible person is notified about every change of the band's schedule and is shown in the schedule table |
 | group admin (music / dance / cheer) | approve registrations and manage bands of **their own group** |
 | **DSVR** | take the room at any time up to 30 days ahead: overlapping bookings are cancelled and their people notified; can edit any booking |
-| admin | everything, including groups, group admins, DSVR role, limits, working hours, allocation preview/run |
+| admin | everything, including groups, group admins, DSVR role, limits, working hours, allocation preview/run (weekly planning mode) |
 
 New users pick their group (music / dance / cheer) during registration; the request goes to that group's admins and
 to the main admins. Registration requests, user moderation (approve / reject / ban / delete), the admin, DSVR and
@@ -187,11 +188,18 @@ alembic revision --autogenerate -m "describe change"     # developers: after edi
 
 ```text
 app/
-  api/routes/   FastAPI routes (users, groups, bands, bookings, planning, history, events, admin)
-  bot/          aiogram handlers (handlers*.py), keyboards, states, API client, schedule image
-  core/         settings, timezone, internal-token and Telegram initData validation
+  api/routes/   FastAPI routes: internal ones (users, groups, bands, bookings, move_requests, waitlist, planning, history,
+                events, admin) and the Mini App API (webapp.py, webapp_admin.py, signed initData instead of the internal token)
+  bot/          aiogram handlers (handlers*.py), keyboards, states, API client, outbox delivery, schedule image, Mini App menu button
+  core/         settings, timezone, logging, internal-token and Telegram initData validation
   db/           engine, models, startup (migrations run by Alembic, see alembic/)
-  services/     business logic: bookings, planning, allocator (pure), schedule_history, outbox, sheets_sync, permissions
+  locales/      ru / en / kz strings for the bot and the Mini App
+  services/     business logic: bookings, bands, users, groups, permissions, schedule_history, outbox, sheets_sync,
+                move_requests, waitlist, repeat_offers, planning + weeks + allocator (weekly mode; allocator is pure)
+  tools/        one-off commands, e.g. restore_from_sheets
+  webapp/       Telegram Mini App: vanilla-JS static files served at /webapp/static
+alembic/        migration revisions (applied on backend start)
+ops/            pg_backup.sh, the pg_dump sidecar script
 tests/          pytest suite (SQLite in memory)
 ```
 
