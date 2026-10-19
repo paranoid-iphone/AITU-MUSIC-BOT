@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import AvailableDay, ClubSetting, TimeSlot
+from app.db.models import AvailableDay, ClubSetting
 from app.services.errors import ConflictError, NotFoundError
 from app.services.outbox import queue_schedule_changed
 from app.services.users import get_user_by_telegram_id, require_admin
@@ -67,53 +67,6 @@ async def update_available_day(
     await session.commit()
     await session.refresh(day)
     return day
-
-
-async def create_slot(session: AsyncSession, telegram_id: int, day_of_week: int, start_time: time, end_time: time) -> TimeSlot:
-    from app.services.audit import log_action
-
-    user = await get_user_by_telegram_id(session, telegram_id)
-    if user is None:
-        raise NotFoundError("User not found")
-    require_admin(user)
-    slot = TimeSlot(day_of_week=day_of_week, start_time=start_time, end_time=end_time)
-    session.add(slot)
-    await log_action(
-        session,
-        user.id,
-        "schedule.slot.create",
-        "time_slot",
-        None,
-        f"Создал слот: день {day_of_week}, {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}",
-    )
-    await session.commit()
-    await session.refresh(slot)
-    return slot
-
-
-async def toggle_slot(session: AsyncSession, telegram_id: int, slot_id: int, is_enabled: bool) -> TimeSlot:
-    from app.services.audit import log_action
-
-    user = await get_user_by_telegram_id(session, telegram_id)
-    if user is None:
-        raise NotFoundError("User not found")
-    require_admin(user)
-    result = await session.execute(select(TimeSlot).where(TimeSlot.id == slot_id))
-    slot = result.scalar_one_or_none()
-    if slot is None:
-        raise NotFoundError("Slot not found")
-    slot.is_enabled = is_enabled
-    await log_action(
-        session,
-        user.id,
-        "schedule.slot.update",
-        "time_slot",
-        slot.id,
-        f"{'Включил' if is_enabled else 'Выключил'} слот: день {slot.day_of_week}, {slot.start_time.strftime('%H:%M')}-{slot.end_time.strftime('%H:%M')}",
-    )
-    await session.commit()
-    await session.refresh(slot)
-    return slot
 
 
 async def get_weekly_booking_limit(session: AsyncSession, telegram_id: int) -> dict:

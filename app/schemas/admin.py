@@ -10,18 +10,6 @@ class DayUpdate(BaseModel):
     occupied_by: str | None = Field(default=None, max_length=150)
 
 
-class SlotCreate(BaseModel):
-    telegram_id: int
-    day_of_week: int = Field(ge=0, le=6)
-    start_time: time
-    end_time: time
-
-
-class SlotToggle(BaseModel):
-    telegram_id: int
-    is_enabled: bool
-
-
 class WeeklyBookingLimitUpdate(BaseModel):
     telegram_id: int
     hours: float = Field(gt=0, le=24)

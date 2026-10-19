@@ -9,11 +9,8 @@ from app.schemas.admin import (
     DayUpdate,
     MaxFutureBookingsUpdate,
     PersonalBookingToggle,
-    SlotCreate,
-    SlotToggle,
     WeeklyBookingLimitUpdate,
 )
-from app.schemas.bookings import AvailableSlotRead
 from app.services import admin, audit, outbox
 
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
@@ -24,16 +21,6 @@ async def update_day(payload: DayUpdate, session: AsyncSession = Depends(get_ses
     day = await admin.update_available_day(session, payload.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by)
     await outbox.commit_and_publish(session)
     return {"day_of_week": day.day_of_week, "is_enabled": day.is_enabled, "occupied_by": day.occupied_by}
-
-
-@router.post("/slots", response_model=AvailableSlotRead)
-async def create_slot(payload: SlotCreate, session: AsyncSession = Depends(get_session)):
-    return await admin.create_slot(session, payload.telegram_id, payload.day_of_week, payload.start_time, payload.end_time)
-
-
-@router.patch("/slots/{slot_id}", response_model=AvailableSlotRead)
-async def toggle_slot(slot_id: int, payload: SlotToggle, session: AsyncSession = Depends(get_session)):
-    return await admin.toggle_slot(session, payload.telegram_id, slot_id, payload.is_enabled)
 
 
 @router.get("/settings/weekly-booking-limit")

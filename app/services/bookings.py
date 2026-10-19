@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.timezone import now_local
-from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting, TimeSlot
+from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting
 from app.services.outbox import commit_and_publish
 from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
 from app.services.schedule_history import record_change, snapshot
@@ -20,9 +20,6 @@ async def seed_default_schedule(session: AsyncSession) -> None:
         return
     for day in range(7):
         session.add(AvailableDay(day_of_week=day, is_enabled=day < 6))
-    for day in range(6):
-        for start_hour in (18, 19, 20):
-            session.add(TimeSlot(day_of_week=day, start_time=time(start_hour), end_time=time(start_hour + 1)))
     await session.commit()
 
 

@@ -1,6 +1,7 @@
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 
 from app.db import models
@@ -71,6 +72,26 @@ def test_upgrade_adopts_a_database_created_by_create_all(tmp_path):
     try:
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT slug FROM groups").scalars().all() == ["music"]
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0001_baseline"
+            head = ScriptDirectory.from_config(alembic_config(async_url)).get_current_head()
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == head
+    finally:
+        engine.dispose()
+
+
+def test_time_slots_are_dropped_with_their_rows(tmp_path):
+    async_url, sync_url = _urls(tmp_path)
+    config = alembic_config(async_url)
+    command.upgrade(config, "0001_baseline")
+
+    engine = create_engine(sync_url)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO time_slots (day_of_week, start_time, end_time, is_enabled) VALUES (0, '18:00:00', '19:00:00', 1)"
+            )
+        command.upgrade(config, "head")
+        assert "time_slots" not in inspect(engine).get_table_names()
+        command.downgrade(config, "0001_baseline")
+        assert "time_slots" in inspect(engine).get_table_names()
     finally:
         engine.dispose()

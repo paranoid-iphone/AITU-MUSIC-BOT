@@ -155,17 +155,6 @@ class AvailableDay(Base):
     occupied_by: Mapped[str | None] = mapped_column(String(150))
 
 
-class TimeSlot(Base):
-    __tablename__ = "time_slots"
-    __table_args__ = (UniqueConstraint("day_of_week", "start_time", "end_time", name="uq_slot"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    day_of_week: Mapped[int] = mapped_column(Integer)
-    start_time: Mapped[time] = mapped_column(Time)
-    end_time: Mapped[time] = mapped_column(Time)
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
 class ClubSetting(Base):
     __tablename__ = "club_settings"
 
