@@ -414,6 +414,39 @@ async def test_limits_change_only_what_is_sent(client, make_user):
         assert (await client.put(f"{SETTINGS}/limits", json=bad, headers=headers)).status_code == 422
 
 
+async def test_room_hours_must_sit_on_the_half_hour_grid(client, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+
+    for start, end in (("10:15", "20:00"), ("10:00", "20:45")):
+        response = await client.put(f"{SETTINGS}/window", json={"start_time": start, "end_time": end}, headers=headers)
+        assert response.status_code == 409
+    assert (await client.get(SETTINGS, headers=headers)).json()["window"] == {"start_time": "08:00", "end_time": "21:00"}
+
+
+async def test_a_day_cannot_be_longer_than_a_week_and_a_rejected_change_stores_nothing(client, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+    await client.put(f"{SETTINGS}/limits", json={"weekly_hours": 3, "daily_hours": 2}, headers=headers)
+
+    too_long_day = await client.put(
+        f"{SETTINGS}/limits", json={"daily_hours": 5, "max_future_bookings": 9}, headers=headers
+    )
+    shorter_week = await client.put(f"{SETTINGS}/limits", json={"weekly_hours": 1}, headers=headers)
+
+    assert too_long_day.status_code == 409 and shorter_week.status_code == 409
+    data = (await client.get(SETTINGS, headers=headers)).json()
+    assert (data["weekly_hours"], data["daily_hours"], data["max_future_bookings"]) == (3, 2, 0)
+
+
+async def test_user_list_accepts_only_known_statuses(client, session, make_user):
+    admin = await make_user(role="admin", group_slug=None)
+    headers = tg(admin.telegram_id)
+
+    assert (await client.get(f"{API}/users", params={"status": "pending"}, headers=headers)).status_code == 200
+    assert (await client.get(f"{API}/users", params={"status": "nonsense"}, headers=headers)).status_code == 422
+
+
 async def test_personal_rehearsals_can_be_switched_off_for_everyone(client, make_user):
     admin = await make_user(role="admin", group_slug=None)
     member = await make_user()

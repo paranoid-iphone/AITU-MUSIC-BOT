@@ -67,7 +67,7 @@ async def get_weekly_booking_limit(session: AsyncSession, telegram_id: int) -> d
     return {"weekly_booking_limit_minutes": minutes, "weekly_booking_limit_hours": minutes / 60}
 
 
-async def update_weekly_booking_limit(session: AsyncSession, telegram_id: int, hours: float) -> dict:
+async def update_weekly_booking_limit(session: AsyncSession, telegram_id: int, hours: float, commit: bool = True) -> dict:
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -90,7 +90,8 @@ async def update_weekly_booking_limit(session: AsyncSession, telegram_id: int, h
         "weekly_booking_limit_minutes",
         f"Обновил недельный лимит: {minutes / 60:g} ч",
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return {"weekly_booking_limit_minutes": minutes, "weekly_booking_limit_hours": minutes / 60}
 
 
@@ -105,7 +106,7 @@ async def get_daily_booking_limit(session: AsyncSession, telegram_id: int) -> di
     return {"daily_booking_limit_minutes": minutes, "daily_booking_limit_hours": minutes / 60}
 
 
-async def update_daily_booking_limit(session: AsyncSession, telegram_id: int, hours: float) -> dict:
+async def update_daily_booking_limit(session: AsyncSession, telegram_id: int, hours: float, commit: bool = True) -> dict:
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -128,7 +129,8 @@ async def update_daily_booking_limit(session: AsyncSession, telegram_id: int, ho
         "daily_booking_limit_minutes",
         f"Обновил дневной лимит: {'выключен' if minutes == 0 else f'{minutes / 60:g} ч'}",
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return {"daily_booking_limit_minutes": minutes, "daily_booking_limit_hours": minutes / 60}
 
 
@@ -142,7 +144,7 @@ async def get_max_future_bookings(session: AsyncSession, telegram_id: int) -> di
     return {"max_future_bookings_per_band": await get_max_future_bookings_per_band(session)}
 
 
-async def update_max_future_bookings(session: AsyncSession, telegram_id: int, count: int) -> dict:
+async def update_max_future_bookings(session: AsyncSession, telegram_id: int, count: int, commit: bool = True) -> dict:
     from app.services.audit import log_action
 
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -165,8 +167,34 @@ async def update_max_future_bookings(session: AsyncSession, telegram_id: int, co
         "max_future_bookings_per_band",
         f"Обновил лимит будущих броней на номер: {'выключен' if count == 0 else count}",
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return {"max_future_bookings_per_band": count}
+
+
+async def update_limits(
+    session: AsyncSession,
+    telegram_id: int,
+    weekly_hours: float | None = None,
+    daily_hours: float | None = None,
+    max_future_bookings: int | None = None,
+) -> None:
+    """Change the given limits together: all of them are stored or none, and a day may not be longer than a week."""
+    weekly = (await get_weekly_booking_limit(session, telegram_id))["weekly_booking_limit_minutes"]
+    daily = (await get_daily_booking_limit(session, telegram_id))["daily_booking_limit_minutes"]
+    if weekly_hours is not None:
+        weekly = int(weekly_hours * 60)
+    if daily_hours is not None:
+        daily = int(daily_hours * 60)
+    if daily and daily > weekly:
+        raise ConflictError("Daily limit cannot be longer than the weekly limit")
+    if weekly_hours is not None:
+        await update_weekly_booking_limit(session, telegram_id, weekly_hours, commit=False)
+    if daily_hours is not None:
+        await update_daily_booking_limit(session, telegram_id, daily_hours, commit=False)
+    if max_future_bookings is not None:
+        await update_max_future_bookings(session, telegram_id, max_future_bookings, commit=False)
+    await session.commit()
 
 
 async def get_booking_window(session: AsyncSession, telegram_id: int) -> dict:
@@ -199,6 +227,8 @@ async def update_booking_window(session: AsyncSession, telegram_id: int, start_t
     end = _time_to_minutes(end_time)
     if start >= end:
         raise ConflictError("Start time must be earlier than end time")
+    if start % 30 or end % 30:
+        raise ConflictError("Room hours must start and end on the half hour")
     for key, value in {
         "booking_window_start_minutes": start,
         "booking_window_end_minutes": end,

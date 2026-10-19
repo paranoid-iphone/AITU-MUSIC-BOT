@@ -90,12 +90,12 @@ async def _people(session: AsyncSession, users: list[User]) -> list[dict]:
 
 @router.get("/users")
 async def list_users(
-    status: str | None = None,
+    status: UserStatus | None = None,
     q: str | None = None,
     admin: User = Depends(admin_reader),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    users, counts = await user_service.search_users(session, admin.telegram_id, status, q)
+    users, counts = await user_service.search_users(session, admin.telegram_id, status.value if status else None, q)
     return {"users": await _people(session, users), "counts": counts}
 
 
@@ -225,12 +225,9 @@ async def set_limits(
     payload: WebAppLimitsUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     """Only the limits present in the body change."""
-    if payload.weekly_hours is not None:
-        await admin_service.update_weekly_booking_limit(session, admin.telegram_id, payload.weekly_hours)
-    if payload.daily_hours is not None:
-        await admin_service.update_daily_booking_limit(session, admin.telegram_id, payload.daily_hours)
-    if payload.max_future_bookings is not None:
-        await admin_service.update_max_future_bookings(session, admin.telegram_id, payload.max_future_bookings)
+    await admin_service.update_limits(
+        session, admin.telegram_id, payload.weekly_hours, payload.daily_hours, payload.max_future_bookings
+    )
     settings = await admin_service.get_settings(session, admin.telegram_id)
     return {key: settings[key] for key in ("weekly_hours", "daily_hours", "max_future_bookings")}
 
