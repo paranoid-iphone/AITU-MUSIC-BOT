@@ -49,10 +49,21 @@ group-admin roles, settings and the schedule history are managed in the Mini App
 (*Заявки / Пользователи / Роли / Настройки / История*); the bot's admin menu only opens it. A user whose DSVR role is
 granted or removed gets a bot message. Group admins see only their own group and have no *Роли* tab.
 
+**How admins hear about a new registration request** is a setting of the main admin (*Админ → Настройки → Уведомления о
+заявках*): buttons «Одобрить / Отклонить» in the bot chat (default), a single button that opens *Админ → Заявки*, or no
+message at all (the *Заявки* tab and its counter are always there).
+
+**Banning or deleting a member** frees what only they held: their future *personal* rehearsals are cancelled (the time is
+offered to the waiting list), they leave every waiting list and their open move requests are closed. Band bookings and
+band membership stay as they are; an admin changes those on purpose.
+
 ## Schedule history and notifications
 
 Every create / edit / cancel / DSVR takeover / automatic assignment is stored with who did it and before/after values
-(the Mini App's *Админ → История* tab, filterable by group; the bot's *Админ → История* keeps the action journal).
+(the Mini App's *Админ → История* tab). The tab has a switch **Брони | Действия**: *Брони* is the schedule history, with
+free-text search (band or the person who made the change), filters by action and by rehearsal date, and a group filter;
+*Действия* (main admins only) is the action journal (settings, roles, moderation, concerts…) with a text search and a
+category filter. The bot's *Админ → История* menu has a button that opens it and still keeps a short text list (*Последние действия*) as a fallback.
 Deleting a booking cancels it, so it stays in the history. The backend stores notifications in the database (`outbox_events`) and pushes them to a Redis list (`bot:outbox`); events that missed Redis
 are re-sent by a background job, the bot delivers them (at least once) and refreshes the schedule menus.
 
@@ -157,15 +168,27 @@ Users listed in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and canno
 
 ## Configuration
 
-| Variable | Meaning |
-|----------|---------|
-| `BOT_TOKEN`, `INTERNAL_API_TOKEN` | Telegram bot token; shared secret between bot and backend |
-| `TIMEZONE` (`Asia/Almaty`) | club clock used for bookings, deadlines and the Sunday job |
-| `WEEKLY_PLANNING_ENABLED`, `ALLOCATION_TIME` | weekly planning switch (default `false` = sliding 7-day window); Sunday allocation time `HH:MM` |
-| `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE` | enable the Sheets backup |
-| `NGROK_DOMAIN` | reserved ngrok domain (`my-club.ngrok-free.app`): the tunnel and the Mini App link stay the same after restarts; empty = random address, found through the ngrok API. `WEBAPP_BASE_URL` overrides both |
-| `LOG_LEVEL` (`INFO`), `SQL_ECHO` (`false`) | log level of backend and bot; log every SQL statement |
-| `REGISTRATION_RETRY_HOURS` | cooldown before a rejected registration may be resubmitted |
+Everything is read from `.env` (see `.env.example`); `app/core/config.py` has the defaults.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `BOT_TOKEN` | – | Telegram bot token (also signs and checks the Mini App's `initData`) |
+| `INTERNAL_API_TOKEN` | – | shared secret between bot and backend; required, and with `ENVIRONMENT` other than `local` at least 32 characters |
+| `ENVIRONMENT` | `local` (`.env.example`: `production`) | `local` accepts a weak internal token (dev/tests only) |
+| `APP_NAME` | `AITU Music Club` | title of the API docs |
+| `DATABASE_URL` | local Postgres | SQLAlchemy URL; the password must match `POSTGRES_PASSWORD` (compose only, default `aitu`) |
+| `REDIS_URL` | `redis://localhost:6379/0` | bot FSM state and the notification list |
+| `BACKEND_BASE_URL` | `http://localhost:8000` | where the bot finds the backend (`http://backend:8000` in compose) |
+| `WEBAPP_BASE_URL` | – | public https URL of the Mini App; overrides `NGROK_DOMAIN` and the ngrok API |
+| `NGROK_AUTHTOKEN`, `NGROK_DOMAIN`, `NGROK_API_URL` | – | the tunnel. With a reserved `NGROK_DOMAIN` (`my-club.ngrok-free.app`) the Mini App link survives restarts; empty = random address, found through the ngrok API |
+| `INITIAL_ADMIN_TELEGRAM_IDS` | – | comma-separated Telegram ids that become admins on `/start` and cannot be demoted or banned |
+| `REGISTRATION_RETRY_HOURS` | `24` | cooldown before a rejected registration may be resubmitted (shown in club time) |
+| `DEFAULT_LANGUAGE` | `ru` | language of users who have not chosen one (`ru`, `en`, `kz`) |
+| `TIMEZONE` | `Asia/Almaty` | club clock used for bookings, deadlines and the Sunday job |
+| `WEEKLY_PLANNING_ENABLED`, `ALLOCATION_TIME` | `false`, `18:00` | weekly planning switch (`false` = sliding 7-day window); Sunday allocation time `HH:MM` |
+| `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE` | – | enable the Sheets backup (both needed) |
+| `BACKUP_INTERVAL_HOURS`, `BACKUP_KEEP_DAYS` | `24`, `14` | the `backup` compose service (read by `ops/pg_backup.sh`, not by the app) |
+| `LOG_LEVEL`, `SQL_ECHO` | `INFO`, `false` | log level of backend and bot; log every SQL statement |
 
 Booking limits, room hours and closed weekdays are changed by the main admin in the Mini App (*Админ → Настройки*).
 Taking the room with priority (DSVR) or for staff events, and changing or cancelling any booking, happen on the Mini App
@@ -188,14 +211,17 @@ alembic revision --autogenerate -m "describe change"     # developers: after edi
 
 ```text
 app/
-  api/routes/   FastAPI routes: internal ones (users, groups, bands, bookings, move_requests, waitlist, planning, history,
-                events, admin) and the Mini App API (webapp.py, webapp_admin.py, signed initData instead of the internal token)
+  api/routes/   FastAPI routes: internal ones, called only by the bot (users, groups, bands, bookings, move_requests,
+                waitlist, planning, events, admin) and the Mini App API (webapp.py, webapp_admin.py, signed initData
+                instead of the internal token)
+  schemas/      Pydantic request/response models of those routes
   bot/          aiogram handlers (handlers*.py), keyboards, states, API client, outbox delivery, schedule image, Mini App menu button
-  core/         settings, timezone, logging, internal-token and Telegram initData validation
+  core/         settings, timezone (now_local / utcnow), logging, internal-token and Telegram initData validation
   db/           engine, models, startup (migrations run by Alembic, see alembic/)
   locales/      ru / en / kz strings for the bot and the Mini App
-  services/     business logic: bookings, bands, users, groups, permissions, schedule_history, outbox, sheets_sync,
-                move_requests, waitlist, repeat_offers, planning + weeks + allocator (weekly mode; allocator is pure)
+  services/     business logic: bookings, bands, users, groups, permissions, schedule_history, audit (action journal),
+                admin (club settings), events (concerts), errors (error codes), search, outbox, sheets_sync, move_requests,
+                waitlist, repeat_offers, planning + weeks + allocator (weekly mode; allocator is pure)
   tools/        one-off commands, e.g. restore_from_sheets
   webapp/       Telegram Mini App: vanilla-JS static files served at /webapp/static
 alembic/        migration revisions (applied on backend start)
@@ -213,4 +239,11 @@ pytest
 ## Known limitations
 
 - The Sheets sync is one-way; Telegram messages are best-effort (a blocked bot is skipped).
-- Excel export of concert lists is available through `GET /events/{id}/export.xlsx?telegram_id=<admin>`.
+- Concerts (creating them, band applications, personal event history) and weekly planning are still managed in the bot, not
+  in the Mini App.
+- Excel export of concert lists is `GET /events/{id}/export.xlsx?telegram_id=<admin>` with the internal token. It is not
+  reachable through the ngrok tunnel, so call it from the host (`localhost:8001`).
+- Profile editing and registration are bot flows; the Mini App only shows the profile.
+- The public schedule (`/webapp/api/schedule` without `initData`) is read-only and open on purpose; booking needs a signed session.
+- The test suite runs on SQLite. Postgres-only code (the legacy branch of the baseline migration and the advisory locks
+  around booking) is not covered by tests; try such changes against a real Postgres.

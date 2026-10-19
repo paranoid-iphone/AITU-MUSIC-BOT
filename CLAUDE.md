@@ -35,10 +35,17 @@ Two processes share one codebase and talk over HTTP + Redis:
 - **Backend** (`app/main.py`, `app/api/routes/`, `app/services/`): all business rules live in `app/services/`; routes are
   thin. Every route except `/health` and `/webapp/*` requires `X-Internal-Token`. The Telegram Mini App is vanilla-JS
   static files in `app/webapp/static/` (served at `/webapp/static`, entry `/webapp/schedule`) talking to
-  `app/api/routes/webapp.py` (`/webapp/api/*`: `schedule`, `me`, `locales/{lang}`, bookings and `bands` for the signed-in member). Those routes authenticate with the
+  `app/api/routes/webapp.py` (`/webapp/api/*`: `schedule` (public read), `me`, `locales/{lang}`, `limits`, `my-bands`, `bookings` + `my-bookings` + `priority`, `move-requests*`,
+  `waitlist*`, `bands*` for the signed-in member). Those routes authenticate with the
   signed `X-Telegram-Init-Data` header via `api/webapp_auth.py` (`core/telegram_auth.py` validates it; use
   `fresh_webapp_user`, 1 h max age, for anything that mutates) and take their strings from the `webapp.*` keys of
-  `app/locales/*.json`. The bot sets the chat menu button to the Mini App on startup (`bot/menu_button.py`). A middleware hides everything but
+  `app/locales/*.json`. Data the client shows is language-neutral: the API sends `owner_kind` (`band|personal|staff`) / `owner_person`,
+  `actor_is_system` and structured history reasons (`reason_code`, `reason_by`, `reason_title`) next to the Russian text (which the bot and
+  Sheets use), and `app.js` builds the label from `webapp.label.*`. Errors carry a code: `services/errors.describe_error` maps the English
+  message of a `ServiceError` to `{"detail", "code", "params"}` (`main.py` handler); the client shows `webapp.error.code.<code>`. A new
+  user-facing error message needs an entry in `_FIXED_MESSAGES` / `_NUMBERED_MESSAGES` and the three locale keys, or it stays English
+  (`tests/test_error_codes.py` catches reworded messages and missing translations). `app.js` shows a thin loading bar for slow calls, sends
+  identical in-flight writes once (double tap) and turns a 401 into "session expired" (`loadFailureText`). The bot sets the chat menu button to the Mini App on startup (`bot/menu_button.py`). A middleware hides everything but
   `/webapp/*` and `/health` from requests carrying `X-Forwarded-Host` (i.e. coming through the ngrok tunnel).
 - **Bot** (`app/bot/`): never touches the DB. It calls the backend through `BackendClient` (`api_client.py`), which turns
   HTTP errors into `RuntimeError(detail)`. Feature routers (`handlers_planning/repeat/move/waitlist`) are included
@@ -49,7 +56,8 @@ Two processes share one codebase and talk over HTTP + Redis:
   which `app.js` reads). Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
   Registration requests, user moderation and admin/DSVR/group-admin roles also live only in the Mini App ("Админ" tab,
   `app/api/routes/webapp_admin.py` → `/webapp/api/admin/*`, `?screen=admin&tab=requests|users|roles`); the bot's admin
-  menu has `web_app` buttons for them. The user-facing notifications for approve / reject / role changes (admin, DSVR,
+  menu has `web_app` buttons for them. `webapp_admin.py` also serves `settings*` (days, window, limits, personal, `registration-notify`), `history` and `actions`.
+  The user-facing notifications for approve / reject / role changes (admin, DSVR,
   group admin) are queued by the services (`services/users.py`, `services/groups.py`), so every caller must publish with
   `outbox.commit_and_publish`. Taking the room (DSVR priority, staff booking), editing or cancelling any booking, the days /
   room hours / limits / personal-rehearsal settings and the schedule history are Mini App only too (grid modes and the
@@ -105,6 +113,22 @@ A cron job (APScheduler, started in `on_startup`) runs the allocation on Sunday 
 `catch_up_allocations` runs on startup for missed weeks. `WEEKLY_PLANNING_ENABLED=false` skips that job and the
 closing of future days (the scheduler itself still runs for the repeat-offer job).
 
+### Moderation side effects, registration notices, journals
+
+`ban_user` and `soft_delete_user` call `users._release_holdings`: future personal bookings are cancelled through `record_change`
+(reason «Пользователь заблокирован/удалён»), the member's `WaitlistEntry` rows are deleted, their pending `MoveRequest`s are cancelled and
+the freed time goes through `_offer_freed`. Band bookings and memberships stay. Renaming something the schedule image prints
+(`bands.update_band_name`, `users.update_profile`, a changed username, a deleted user) queues `schedule_changed`.
+
+Registration notices: the club setting `registration_notify_mode` (`chat` default | `mini_app` | `off`, `admin.get/update_registration_notify_mode`, changed in
+the Settings tab) is read by the bot (`BackendClient.registration_notify_mode`) in `notify_admins_about_registration`; unreachable backend = `chat`.
+
+Journals: `AuditLog` is written with `audit.log_action` (action = `category.verb`; `AUDIT_CATEGORIES` lists the categories) and read with
+`audit.list_actions` (cursor, text search, category); `/webapp/api/admin/actions` is for main admins only. The booking history is
+`schedule_history.list_changes` (`q`, `action`, `date`, group, cursor); `ScheduleChange.booking_date` is what the date filter uses. Text
+search always goes through `services/search.contains` (a literal substring: `%` and `_` are escaped). Concerts, applications and the
+members' event history are `services/events.py` behind the internal `/events` routes (the bot still owns that UI).
+
 ### Schedule history and Sheets backup
 
 Every booking mutation (create/edit/cancel/DSVR takeover/auto-assign) must go through `services/schedule_history.py` so
@@ -134,7 +158,12 @@ their own group, DSVR, admin). Users in `INITIAL_ADMIN_TELEGRAM_IDS` become admi
   depend on the weekday; planning tests opt in via the `planning_on` fixture.
 - The Mini App base URL (`bot/webapp_url.py`) is `WEBAPP_BASE_URL`, else `https://<NGROK_DOMAIN>`, else the ngrok API. Logging is set up
   by `core/logging_setup.setup_logging()` (backend import and bot start; `LOG_LEVEL`); SQL echo is the separate `SQL_ECHO` flag.
-- Time is club-local (`TIMEZONE`, default `Asia/Almaty`); use `core/timezone.now_local()` rather than naive `datetime.now()`.
+- Time is club-local (`TIMEZONE`, default `Asia/Almaty`); use `core/timezone.now_local()` rather than naive `datetime.now()`. Columns such as
+  `created_at` / `published_at` are naive UTC: use `core/timezone.utcnow()` (never `datetime.utcnow()`, it is deprecated). The pytest run is
+  warning-free; keep it that way.
+- `main.py` has no `on_event` hooks: `lifespan` calls `on_startup` / `on_shutdown` (migrations, `seed_default_schedule`, the scheduler, the Sheets
+  worker). `seed_default_schedule` opens Monday–Saturday and closes Sunday, only while the `available_days` table is empty. HTTP tests do not run
+  the lifespan.
 - The backend refuses to start with an empty `INTERNAL_API_TOKEN`; with `ENVIRONMENT` other than `local` it must also be
   non-default and at least 32 chars (`core/config.py`). `.env.example` ships `ENVIRONMENT=production` and an empty token.
 - On this Windows/Git-Bash setup the Bash tool mangles backslashes in heredocs (e.g. `\\n` becomes a real newline). For

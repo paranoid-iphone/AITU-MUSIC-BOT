@@ -6,7 +6,10 @@ If the server goes down, the sheet still holds the current and next week's sched
   The ID columns (booking, band, author) let `app.tools.restore_from_sheets` put the bookings back.
 - Sheet "История": every schedule change is appended exactly once (marked with `sheets_synced_at`).
 
-Writes are debounced (a burst of changes becomes one write) and retried every minute if Google was unreachable.
+Writes are debounced (DEBOUNCE_SECONDS: a burst of changes becomes one write). History goes out in batches of
+HISTORY_BATCH rows, oldest first, so a long backlog takes several rounds. If Google is unreachable the worker waits
+RETRY_SECONDS and tries again; unsynced rows stay unsynced. Besides the wake-up from `request_sync` it also runs every
+POLL_SECONDS as a safety net.
 Without GOOGLE_SHEETS_ID / GOOGLE_SERVICE_ACCOUNT_FILE the whole feature is off.
 """
 import asyncio
