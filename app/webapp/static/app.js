@@ -25,6 +25,9 @@ const state = {
   adminStatus: "",
   adminSearchToken: 0,
   historyGroup: "", // club group id filtering the history tab, "" = every group
+  historyQuery: "", // free text over the band and the person who made the change
+  historyAction: "",
+  historyDate: "", // rehearsal date, YYYY-MM-DD
 };
 
 if (tg) {
@@ -1717,6 +1720,9 @@ async function renderAdmin(screen, token) {
 function historyPath(beforeId) {
   const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
   if (state.historyGroup) params.set("group_id", state.historyGroup);
+  if (state.historyQuery.trim()) params.set("q", state.historyQuery.trim());
+  if (state.historyAction) params.set("action", state.historyAction);
+  if (state.historyDate) params.set("date", state.historyDate);
   if (beforeId) params.set("before_id", String(beforeId));
   return `/admin/history?${params}`;
 }
@@ -1769,18 +1775,53 @@ function historyView(first) {
   };
   more.addEventListener("click", () => load(cursor));
   paint();
-  if (first.groups.length < 2) return [body];
   if (state.historyGroup && !first.groups.some((group) => String(group.id) === state.historyGroup)) {
     state.historyGroup = "";
     load(null);
   }
-  const filter = el("select", {}, [
-    el("option", { value: "", text: t("webapp.admin.history.all_groups") }),
-    ...first.groups.map((group) => el("option", { value: String(group.id), text: group.title })),
+  return [historyFilters(first.groups, load), body];
+}
+
+const HISTORY_ACTIONS = ["created", "updated", "cancelled", "preempted", "auto_assigned", "restored"];
+
+// Text, action, rehearsal date and (for staff who see several) group; every change reloads the first page.
+function historyFilters(groups, load) {
+  const search = el("input", { type: "search", maxlength: "100", autocomplete: "off", placeholder: t("webapp.admin.history.search") });
+  search.value = state.historyQuery;
+  const action = el("select", {}, [
+    el("option", { value: "", text: t("webapp.admin.history.all_actions") }),
+    ...HISTORY_ACTIONS.map((value) => el("option", { value, text: t(`webapp.admin.history.action_filter.${value}`) })),
   ]);
-  filter.value = state.historyGroup;
-  filter.addEventListener("change", () => { state.historyGroup = filter.value; load(null); });
-  return [el("div", { className: "form admin-filters" }, [filter]), body];
+  action.value = state.historyAction;
+  const day = el("input", { type: "date", "aria-label": t("webapp.admin.history.date") });
+  day.value = state.historyDate;
+  const controls = [search, action, day];
+  let group = null;
+  if (groups.length > 1) {
+    group = el("select", {}, [
+      el("option", { value: "", text: t("webapp.admin.history.all_groups") }),
+      ...groups.map((item) => el("option", { value: String(item.id), text: item.title })),
+    ]);
+    group.value = state.historyGroup;
+    group.addEventListener("change", () => { state.historyGroup = group.value; load(null); });
+    controls.push(group);
+  }
+  const reset = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.history.reset") });
+  reset.addEventListener("click", () => {
+    state.historyQuery = state.historyAction = state.historyDate = state.historyGroup = "";
+    search.value = action.value = day.value = "";
+    if (group) group.value = "";
+    load(null);
+  });
+  let timer = null;
+  search.addEventListener("input", () => {
+    state.historyQuery = search.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => load(null), SEARCH_DEBOUNCE_MS);
+  });
+  action.addEventListener("change", () => { state.historyAction = action.value; load(null); });
+  day.addEventListener("change", () => { state.historyDate = day.value; load(null); });
+  return el("div", { className: "form admin-filters" }, [...controls, reset]);
 }
 
 /* ---------- profile ---------- */

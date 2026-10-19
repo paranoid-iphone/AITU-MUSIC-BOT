@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -82,6 +82,7 @@ async def record_change(
         band_id=booking.band_id,
         group_id=band.group_id if band is not None else None,
         band_name=label,
+        booking_date=booking.booking_date,
         actor_id=actor.id if actor is not None else None,
         action=action,
         before=before,
@@ -106,6 +107,12 @@ async def record_change(
     return change
 
 
+def _contains(column, needle: str):
+    """Case-insensitive literal substring match (`!` escapes LIKE wildcards)."""
+    escaped = needle.lower().replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return func.lower(column).like(f"%{escaped}%", escape="!")
+
+
 async def list_changes(
     session: AsyncSession,
     telegram_id: int,
@@ -113,8 +120,14 @@ async def list_changes(
     group_id: int | None = None,
     limit: int = 20,
     before_id: int | None = None,
+    search: str | None = None,
+    action: str | None = None,
+    on_date: date | None = None,
 ) -> list[dict]:
-    """Newest first; pass the last id you got as `before_id` to fetch the next page."""
+    """Newest first; pass the last id you got as `before_id` to fetch the next page.
+
+    `search` matches the band label or the name/username of whoever made the change, `on_date` the rehearsal date.
+    """
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
@@ -130,6 +143,20 @@ async def list_changes(
         stmt = stmt.where(ScheduleChange.band_id == band_id)
     if group_id is not None:
         stmt = stmt.where(ScheduleChange.group_id == group_id)
+    if action is not None:
+        stmt = stmt.where(ScheduleChange.action == action)
+    if on_date is not None:
+        stmt = stmt.where(ScheduleChange.booking_date == on_date)
+    needle = (search or "").strip().lstrip("@")
+    if needle:
+        stmt = stmt.outerjoin(User, User.id == ScheduleChange.actor_id).where(
+            or_(
+                _contains(ScheduleChange.band_name, needle),
+                _contains(User.first_name, needle),
+                _contains(User.last_name, needle),
+                _contains(User.telegram_username, needle),
+            )
+        )
     if not (is_global_admin(user) or is_dsvr(user)):
         conditions = []
         group_ids = await administered_group_ids(session, user)
@@ -150,6 +177,7 @@ async def list_changes(
             "band_id": item.band_id,
             "band_name": item.band_name,
             "group_id": item.group_id,
+            "booking_date": item.booking_date.isoformat() if item.booking_date is not None else None,
             "action": item.action,
             "actor_name": person_name(item.actor),
             "before": item.before,

@@ -300,6 +300,7 @@ class ScheduleChange(Base):
     band_id: Mapped[int | None] = mapped_column(ForeignKey("bands.id", ondelete="SET NULL"), nullable=True, index=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True, index=True)
     band_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    booking_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(30))
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)

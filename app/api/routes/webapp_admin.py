@@ -3,7 +3,8 @@
 Permission rules live in `services/users.py` and `services/groups.py`; these routes only check who may open the
 screen at all and translate the services' results into JSON.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
@@ -32,6 +33,8 @@ from app.services import schedule_history
 from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
 
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
+
+HistoryAction = Literal["created", "updated", "cancelled", "preempted", "auto_assigned", "restored"]
 
 
 async def _require_staff(session: AsyncSession, user: User) -> User:
@@ -259,6 +262,9 @@ def _club_local(iso_utc: str) -> str:
 @router.get("/history")
 async def history(
     group_id: int | None = None,
+    q: str | None = Query(default=None, max_length=100),
+    action: HistoryAction | None = None,
+    on_date: date | None = Query(default=None, alias="date"),
     before_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=20, ge=1, le=50),
     viewer: User = Depends(history_reader),
@@ -266,7 +272,14 @@ async def history(
 ) -> dict:
     """Schedule changes the viewer may see, newest first; `next_before_id` is the cursor for the next page."""
     rows = await schedule_history.list_changes(
-        session, viewer.telegram_id, group_id=group_id, limit=limit + 1, before_id=before_id
+        session,
+        viewer.telegram_id,
+        group_id=group_id,
+        limit=limit + 1,
+        before_id=before_id,
+        search=q,
+        action=action,
+        on_date=on_date,
     )
     page = rows[:limit]
     if is_global_admin(viewer) or is_dsvr(viewer):
