@@ -251,6 +251,21 @@ async def test_deleting_the_band_drops_its_entries(session, world):
     assert await _entries(session) == []
 
 
+async def test_deleting_the_band_offers_its_time_to_other_waiters(session, world, published):
+    entry = await _join(session, world)
+    published.clear()
+    await bands.delete_band(session, world.band.id, world.leader.telegram_id)
+    [offer] = _offers(published)
+    assert offer["telegram_id"] == world.waiter.telegram_id and offer["entry_id"] == entry.id
+
+
+async def test_deleting_the_waiting_band_offers_it_nothing(session, world, published):
+    await _join(session, world)
+    published.clear()
+    await bands.delete_band(session, world.waiter_band.id, world.waiter.telegram_id)
+    assert _offers(published) == []
+
+
 # ---- HTTP: Mini App routes and the bot's internal route ----
 
 import httpx  # noqa: E402

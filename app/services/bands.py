@@ -273,7 +273,7 @@ async def remove_band_member(session: AsyncSession, band_id: int, member_id: int
 async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id: int) -> dict:
     from app.services.audit import log_action
 
-    from app.services.bookings import _lock_bookings
+    from app.services.bookings import _lock_bookings, _offer_freed
 
     requester = await _require_band_manager(session, band_id, requester_telegram_id)
     await _lock_bookings(session)
@@ -281,6 +281,7 @@ async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id
     deleted = {"id": band.id, "name": band.name}
 
     now = now_local()
+    freed = []
     bookings_result = await session.execute(select(Booking).where(Booking.band_id == band_id))
     for booking in bookings_result.scalars():
         if booking.status == BookingStatus.CONFIRMED.value and datetime.combine(booking.booking_date, booking.end_time) > now:
@@ -289,6 +290,7 @@ async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id
             booking.cancelled_by_id = requester.id
             booking.cancel_reason = "Коллектив удалён"
             await record_change(session, booking, "cancelled", requester, before=before, reason=booking.cancel_reason)
+            freed.append((booking.booking_date, booking.start_time, booking.end_time))
         # Past and cancelled bookings stay as history; ScheduleChange keeps the band name.
         booking.band_id = None
 
@@ -315,5 +317,8 @@ async def delete_band(session: AsyncSession, band_id: int, requester_telegram_id
         f"Удалил коллектив: {band.name}",
     )
     await session.delete(band)
+    await session.flush()
+    # The band's own waiting entries are gone above, so only other bands' waiters are told.
+    await _offer_freed(session, freed)
     await commit_and_publish(session)
     return deleted
