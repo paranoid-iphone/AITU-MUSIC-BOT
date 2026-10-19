@@ -15,4 +15,4 @@ async def registration_notify_mode(session: AsyncSession = Depends(get_session))
 
 @router.get("/actions/history")
 async def action_history(telegram_id: int, limit: int = 30, session: AsyncSession = Depends(get_session)):
-    return await audit.list_recent_actions(session, telegram_id, limit)
+    return await audit.list_actions(session, telegram_id, limit)

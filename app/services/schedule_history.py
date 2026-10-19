@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -8,6 +8,7 @@ from app.db.models import Band, BandMember, Booking, ScheduleChange, User
 from app.services.errors import ForbiddenError, NotFoundError
 from app.services.outbox import queue_notification, queue_schedule_changed
 from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
+from app.services.search import contains
 from app.services.users import get_user_by_telegram_id
 
 # Actions: created | updated | cancelled | preempted | auto_assigned | restored
@@ -107,12 +108,6 @@ async def record_change(
     return change
 
 
-def _contains(column, needle: str):
-    """Case-insensitive literal substring match (`!` escapes LIKE wildcards)."""
-    escaped = needle.lower().replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    return func.lower(column).like(f"%{escaped}%", escape="!")
-
-
 async def list_changes(
     session: AsyncSession,
     telegram_id: int,
@@ -151,10 +146,10 @@ async def list_changes(
     if needle:
         stmt = stmt.outerjoin(User, User.id == ScheduleChange.actor_id).where(
             or_(
-                _contains(ScheduleChange.band_name, needle),
-                _contains(User.first_name, needle),
-                _contains(User.last_name, needle),
-                _contains(User.telegram_username, needle),
+                contains(ScheduleChange.band_name, needle),
+                contains(User.first_name, needle),
+                contains(User.last_name, needle),
+                contains(User.telegram_username, needle),
             )
         )
     if not (is_global_admin(user) or is_dsvr(user)):

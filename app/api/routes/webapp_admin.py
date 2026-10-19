@@ -25,6 +25,7 @@ from app.schemas.webapp_admin import (
     WebAppWindowUpdate,
 )
 from app.services import admin as admin_service
+from app.services import audit
 from app.services import groups as group_service
 from app.services import outbox
 from app.services import users as user_service
@@ -35,6 +36,7 @@ from app.services.permissions import administered_group_ids, is_dsvr, is_global_
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
 
 HistoryAction = Literal["created", "updated", "cancelled", "preempted", "auto_assigned", "restored"]
+ActionCategory = Literal["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"]
 
 
 async def _require_staff(session: AsyncSession, user: User) -> User:
@@ -291,4 +293,24 @@ async def history(
         "items": [{**row, "created_local": _club_local(row["created_at"])} for row in page],
         "next_before_id": page[-1]["id"] if len(rows) > limit else None,
         "groups": [_group_payload(group) for group in groups],
+    }
+
+
+@router.get("/actions")
+async def actions(
+    q: str | None = Query(default=None, max_length=100),
+    category: ActionCategory | None = None,
+    before_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+    viewer: User = Depends(main_admin_reader),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The action journal (who approved, banned, renamed, ...), newest first, for the main admin only."""
+    rows = await audit.list_actions(
+        session, viewer.telegram_id, limit=limit + 1, before_id=before_id, search=q, category=category
+    )
+    page = rows[:limit]
+    return {
+        "items": [{**row, "created_local": _club_local(row["created_at"])} for row in page],
+        "next_before_id": page[-1]["id"] if len(rows) > limit else None,
     }

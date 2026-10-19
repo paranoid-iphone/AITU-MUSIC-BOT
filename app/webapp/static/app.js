@@ -28,6 +28,9 @@ const state = {
   historyQuery: "", // free text over the band and the person who made the change
   historyAction: "",
   historyDate: "", // rehearsal date, YYYY-MM-DD
+  historyView: "bookings", // "bookings" | "actions" (the action journal, main admin only)
+  actionsQuery: "",
+  actionsCategory: "",
 };
 
 if (tg) {
@@ -1692,9 +1695,10 @@ async function renderAdmin(screen, token) {
   const tabs = adminTabs();
   if (!tabs.includes(state.adminTab)) state.adminTab = tabs[0];
   if (state.adminTab === "history") {
-    const [page, pending] = await Promise.all([api(historyPath()), pendingRequests()]);
+    const actionsMode = state.historyView === "actions" && state.me.is_admin;
+    const [page, pending] = await Promise.all([api(actionsMode ? actionsPath() : historyPath()), pendingRequests()]);
     if (token !== state.renderToken) return;
-    screen.replaceChildren(...adminHead(tabs, pending), ...historyView(page));
+    screen.replaceChildren(...adminHead(tabs, pending), ...historySwitch(), ...(actionsMode ? actionsView(page) : historyView(page)));
   } else if (state.adminTab === "settings") {
     const [settings, pending] = await Promise.all([api("/admin/settings"), pendingRequests()]);
     if (token !== state.renderToken) return;
@@ -1748,21 +1752,21 @@ function historyRow(item) {
   ]);
 }
 
-// `first` is the already fetched first page; the filter and "show more" fetch the rest.
-function historyView(first) {
+// A cursor-paged list: `first` is the already fetched first page; `load(null)` refetches it, "show more" appends.
+function pagedFeed(first, pathFor, rowFor, emptyKey) {
   const body = el("div", {});
   let items = first.items;
   let cursor = first.next_before_id;
   let latest = 0;
   const more = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.history.more") });
   const paint = () => body.replaceChildren(...[
-    items.length ? el("div", { className: "card" }, items.map(historyRow)) : notice(t("webapp.admin.history.empty")),
+    items.length ? el("div", { className: "card" }, items.map(rowFor)) : notice(t(emptyKey)),
     cursor ? el("div", { className: "actions" }, [more]) : null,
   ].filter(Boolean));
   const load = async (beforeId) => {
     const mine = ++latest;
     try {
-      const data = await api(historyPath(beforeId));
+      const data = await api(pathFor(beforeId));
       if (mine !== latest) return;
       items = beforeId ? items.concat(data.items) : data.items;
       cursor = data.next_before_id;
@@ -1775,11 +1779,78 @@ function historyView(first) {
   };
   more.addEventListener("click", () => load(cursor));
   paint();
+  return { body, load };
+}
+
+function historyView(first) {
+  const feed = pagedFeed(first, historyPath, historyRow, "webapp.admin.history.empty");
   if (state.historyGroup && !first.groups.some((group) => String(group.id) === state.historyGroup)) {
     state.historyGroup = "";
-    load(null);
+    feed.load(null);
   }
-  return [historyFilters(first.groups, load), body];
+  return [historyFilters(first.groups, feed.load), feed.body];
+}
+
+/* ---------- admin: action journal (a view of the history tab, main admin only) ---------- */
+
+const ACTION_CATEGORIES = ["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"];
+
+function actionsPath(beforeId) {
+  const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
+  if (state.actionsQuery.trim()) params.set("q", state.actionsQuery.trim());
+  if (state.actionsCategory) params.set("category", state.actionsCategory);
+  if (beforeId) params.set("before_id", String(beforeId));
+  return `/admin/actions?${params}`;
+}
+
+function actionRow(item) {
+  const stamp = `${shortDate(item.created_local.slice(0, 10))} ${item.created_local.slice(11, 16)}`;
+  return el("div", { className: "member static" }, [
+    el("div", {}, [
+      el("div", { className: "member-name", text: item.actor_name }),
+      el("div", { className: "meta", text: item.description || item.action }),
+      el("div", { className: "meta", text: stamp }),
+    ]),
+  ]);
+}
+
+function actionsFilters(load) {
+  const search = el("input", { type: "search", maxlength: "100", autocomplete: "off", placeholder: t("webapp.admin.actions.search") });
+  search.value = state.actionsQuery;
+  const category = el("select", {}, [
+    el("option", { value: "", text: t("webapp.admin.actions.all_categories") }),
+    ...ACTION_CATEGORIES.map((value) => el("option", { value, text: t(`webapp.admin.actions.category.${value}`) })),
+  ]);
+  category.value = state.actionsCategory;
+  const reset = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.history.reset") });
+  reset.addEventListener("click", () => {
+    state.actionsQuery = state.actionsCategory = "";
+    search.value = category.value = "";
+    load(null);
+  });
+  let timer = null;
+  search.addEventListener("input", () => {
+    state.actionsQuery = search.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => load(null), SEARCH_DEBOUNCE_MS);
+  });
+  category.addEventListener("change", () => { state.actionsCategory = category.value; load(null); });
+  return el("div", { className: "form admin-filters" }, [search, category, reset]);
+}
+
+function actionsView(first) {
+  const feed = pagedFeed(first, actionsPath, actionRow, "webapp.admin.actions.empty");
+  return [actionsFilters(feed.load), feed.body];
+}
+
+// Bookings | Actions: the journal is for the main admin, everyone else sees the booking history only.
+function historySwitch() {
+  if (!state.me.is_admin) return [];
+  return [el("div", { className: "segments" }, ["bookings", "actions"].map((view) => {
+    const button = el("button", { className: `segment${view === state.historyView ? " active" : ""}`, type: "button", text: t(`webapp.admin.history.view.${view}`) });
+    button.addEventListener("click", () => { state.historyView = view; render(); });
+    return button;
+  }))];
 }
 
 const HISTORY_ACTIONS = ["created", "updated", "cancelled", "preempted", "auto_assigned", "restored"];
@@ -1914,6 +1985,7 @@ async function main() {
   const startParam = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
   const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || (query.has("join") ? `join_${query.get("join")}` : "")) : null;
   if (ADMIN_TABS.includes(query.get("tab"))) state.adminTab = query.get("tab");
+  if (query.get("view") === "actions" && state.me && state.me.is_admin) state.historyView = "actions";
   if (joinMatch) location.hash = "#/bands";
   else if (ROUTES.includes(query.get("screen")) && !ROUTES.includes(location.hash.replace(/^#\/?/, "").split("/")[0])) {
     location.hash = `#/${query.get("screen")}`; // Telegram fills the hash with its own launch data, so only a route counts

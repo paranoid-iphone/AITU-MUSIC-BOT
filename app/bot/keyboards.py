@@ -39,7 +39,9 @@ def main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def mini_app_url(base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None) -> str:
+def mini_app_url(
+    base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None, view: str | None = None
+) -> str:
     """The Mini App entry. web_app buttons cannot carry a start_param, so the target screen goes in the query."""
     url = f"{base_url.rstrip('/')}/webapp/schedule"
     params = {}
@@ -49,13 +51,15 @@ def mini_app_url(base_url: str, screen: str = "schedule", join_code: str | None 
         params["join"] = join_code
     if tab:
         params["tab"] = tab
+    if view:
+        params["view"] = view
     return f"{url}?{urlencode(params)}" if params else url
 
 
 def mini_app_button(
-    text: str, base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None
+    text: str, base_url: str, screen: str = "schedule", join_code: str | None = None, tab: str | None = None, view: str | None = None
 ) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code, tab)))
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=mini_app_url(base_url, screen, join_code, tab, view)))
 
 
 def mini_app_keyboard(text: str, base_url: str | None, screen: str = "schedule", join_code: str | None = None) -> InlineKeyboardMarkup:
@@ -260,6 +264,7 @@ def admin_actions_keyboard(webapp_base_url: str | None = None) -> InlineKeyboard
     rows = []
     if webapp_base_url:
         rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
+        rows.append([mini_app_button("Журнал действий: поиск", webapp_base_url, "admin", tab="history", view="actions")])
     rows.append([InlineKeyboardButton(text="Последние действия", callback_data="admin:action_history")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="admin:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

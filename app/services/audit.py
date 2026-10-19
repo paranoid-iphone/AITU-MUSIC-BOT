@@ -1,10 +1,27 @@
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import AuditLog
-from app.services.errors import NotFoundError
+from app.db.models import AuditLog, User
+from app.services.errors import ConflictError, NotFoundError
+from app.services.schedule_history import person_name
+from app.services.search import contains
 from app.services.users import get_user_by_telegram_id, require_admin
+
+# The first segment of `AuditLog.action` ("user.ban" -> "user"); the journal filters by it.
+AUDIT_CATEGORIES = (
+    "user",
+    "admin",
+    "dsvr",
+    "group",
+    "band",
+    "booking",
+    "move_request",
+    "event",
+    "planning",
+    "schedule",
+    "settings",
+)
 
 
 async def log_action(
@@ -26,35 +43,54 @@ async def log_action(
     )
 
 
-async def list_recent_actions(session: AsyncSession, telegram_id: int, limit: int = 30) -> list[dict]:
+async def list_actions(
+    session: AsyncSession,
+    telegram_id: int,
+    limit: int = 30,
+    before_id: int | None = None,
+    search: str | None = None,
+    category: str | None = None,
+) -> list[dict]:
+    """Newest first; pass the last id you got as `before_id` for the next page.
+
+    `search` matches the description or the name/username of the actor, `category` the action prefix.
+    """
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
     require_admin(user)
-    result = await session.execute(
+    if category is not None and category not in AUDIT_CATEGORIES:
+        raise ConflictError("Unknown action category")
+    stmt = (
         select(AuditLog)
         .options(selectinload(AuditLog.actor))
-        .order_by(AuditLog.created_at.desc())
+        .order_by(AuditLog.id.desc())
         .limit(max(1, min(limit, 100)))
     )
+    if before_id is not None:
+        stmt = stmt.where(AuditLog.id < before_id)
+    if category is not None:
+        stmt = stmt.where(AuditLog.action.like(f"{category}.%"))
+    needle = (search or "").strip().lstrip("@")
+    if needle:
+        stmt = stmt.outerjoin(User, User.id == AuditLog.actor_id).where(
+            or_(
+                contains(AuditLog.description, needle),
+                contains(User.first_name, needle),
+                contains(User.last_name, needle),
+                contains(User.telegram_username, needle),
+            )
+        )
+    result = await session.execute(stmt)
     rows = []
     for item in result.scalars():
         actor = item.actor
-        actor_name = "system"
-        actor_telegram_id = None
-        if actor is not None:
-            actor_name = (
-                f"{actor.last_name or ''} {actor.first_name or ''}".strip()
-                or actor.telegram_username
-                or str(actor.telegram_id)
-            )
-            actor_telegram_id = actor.telegram_id
         rows.append(
             {
                 "id": item.id,
                 "actor_id": item.actor_id,
-                "actor_telegram_id": actor_telegram_id,
-                "actor_name": actor_name,
+                "actor_telegram_id": actor.telegram_id if actor is not None else None,
+                "actor_name": person_name(actor),
                 "action": item.action,
                 "entity_type": item.entity_type,
                 "entity_id": item.entity_id,
