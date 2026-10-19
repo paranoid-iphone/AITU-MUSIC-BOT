@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import admin, bands, bookings, events, groups, history, move_requests, planning, users, waitlist, webapp, webapp_admin
 from app.core.config import settings
-from app.db.session import create_db_and_tables
+from app.db.session import prepare_database
 from app.services.bookings import seed_default_schedule
 from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
@@ -95,7 +95,7 @@ async def catch_up_missed_allocations() -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    await create_db_and_tables()
+    await prepare_database()
     async with AsyncSessionLocal() as session:
         await seed_default_schedule(session)
     scheduler.add_job(run_repeat_offers, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="repeat_offers")

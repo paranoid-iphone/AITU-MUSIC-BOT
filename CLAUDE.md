@@ -12,6 +12,7 @@ pip install -r requirements-dev.txt     # runtime + pytest, pytest-asyncio, aios
 pytest                                  # whole suite (asyncio_mode=auto, tests/ only)
 pytest tests/test_allocator.py -k name  # single file / single test
 python -m compileall -q app             # quick syntax check after bulk edits
+alembic upgrade head                    # manual migration run (the backend does it on start); alembic check = drift
 
 cp .env.example .env && docker compose up --build   # db(postgres) + redis + backend + ngrok + bot + backup
 ```
@@ -74,7 +75,7 @@ that started in the last 2 h with a free slot +7 days it sets `bookings.repeat_o
 (`repeat_offers.repeat_booking` → `create_booking`, the date is derived server-side).
 
 "Ask to move": a member who needs a slot held by someone else's booking proposes a free slot of the same length
-(`services/move_requests.py`, table `move_requests`, created by `create_all`). The band's responsible person gets a
+(`services/move_requests.py`, table `move_requests`). The band's responsible person gets a
 `move_request` outbox event (buttons `move:accept|decline:<id>`, handled by `handlers_move.py` → internal
 `/move-requests/{id}/accept|decline`); the Mini App has the card button and a "requests" section on "Мои брони"
 (`/webapp/api/move-requests*`). Whoever may manage the booking, or is the band's responsible person, can answer. Accepting
@@ -83,7 +84,7 @@ any edit, and the request status commits in the same transaction; nothing is boo
 after 24 h or at the booking's start (APScheduler job `expire_move_requests`, plus a lazy check on every answer).
 
 Waiting list: a member can queue for the exact range of an occupied, non-staff booking, for one of their bands or as a
-personal rehearsal (`services/waitlist.py`, table `waitlist_entries`, created by `create_all`; max 5 per person).
+personal rehearsal (`services/waitlist.py`, table `waitlist_entries`; max 5 per person).
 `bookings.delete_booking`, `update_booking` (old slot) and `create_priority_booking` (leftovers of a preempted booking)
 call `_offer_freed` → `waitlist.notify_freed` before committing: every waiter whose range is now entirely free gets a
 `waitlist_offer` outbox event (button `waitlist:take:<id>`, `handlers_waitlist.py` → internal `/waitlist/{id}/take`; the
@@ -115,10 +116,13 @@ their own group, DSVR, admin). Users in `INITIAL_ADMIN_TELEGRAM_IDS` become admi
 
 ## Gotchas
 
-- **No real migrations.** Schema changes are `Base.metadata.create_all` plus hand-written idempotent
-  `ALTER TABLE ... IF NOT EXISTS` statements in `create_db_and_tables()` (`app/db/session.py`). New columns on existing
-  tables need an ALTER there; `alembic/versions/` is empty. These statements are Postgres-only.
-- **Postgres vs SQLite.** Tests run on in-memory SQLite, so Postgres-specific code (the startup ALTERs and the advisory
+- **Schema = Alembic.** `prepare_database()` (`app/db/session.py`) runs `alembic upgrade head` (`app/db/migrate.py`) on
+  every backend start, then `seed_reference_data()` (default `club_settings`, groups, initial admins: rows, not schema).
+  To change the schema edit `app/db/models.py`, then `alembic revision --autogenerate -m "..."` against a database at
+  `head`, and review the file. `tests/test_migrations.py` fails when the models and the revisions drift apart.
+  `0001_baseline` is frozen (no model imports) and also adopts databases made by the old `create_all` + `ALTER` startup
+  code; its Postgres-only legacy branch is not covered by tests.
+- **Postgres vs SQLite.** Tests run on in-memory SQLite, so Postgres-specific code (the legacy branch of `0001_baseline` and the advisory
   lock `_lock_bookings` in `services/bookings.py` and `services/planning.py`) is not exercised by tests; the `session`
   fixture monkeypatches the locks away. Verify such changes against a real Postgres.
 - Tests force `weekly_planning_enabled=False` because planning closes next-week days and would make date-relative tests

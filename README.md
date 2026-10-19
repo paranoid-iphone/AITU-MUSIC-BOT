@@ -149,6 +149,19 @@ Booking limits, room hours and closed weekdays are changed by the main admin in 
 Taking the room with priority (DSVR) or for staff events, and changing or cancelling any booking, happen on the Mini App
 schedule grid; the bot's admin menu only opens those screens.
 
+## Migrations
+
+The database schema is managed by Alembic (`alembic/versions/`). The backend applies pending migrations (`alembic
+upgrade head`) every time it starts, so `docker compose up --build` is the whole upgrade procedure. A database created by
+an older version (before Alembic) is adopted by the baseline revision `0001_baseline` in place: missing tables and
+columns are added, data is kept. Take a dump first, `docker compose exec backup sh /ops/pg_backup.sh once`.
+
+```bash
+docker compose run --rm backend alembic upgrade head     # apply by hand
+docker compose run --rm backend alembic current          # which revision the database is at
+alembic revision --autogenerate -m "describe change"     # developers: after editing app/db/models.py, then review it
+```
+
 ## Project layout
 
 ```text
@@ -156,7 +169,7 @@ app/
   api/routes/   FastAPI routes (users, groups, bands, bookings, planning, history, events, admin)
   bot/          aiogram handlers (handlers*.py), keyboards, states, API client, schedule image
   core/         settings, timezone, internal-token and Telegram initData validation
-  db/           engine, models, startup migrations
+  db/           engine, models, startup (migrations run by Alembic, see alembic/)
   services/     business logic: bookings, planning, allocator (pure), schedule_history, outbox, sheets_sync, permissions
 tests/          pytest suite (SQLite in memory)
 ```
@@ -170,7 +183,5 @@ pytest
 
 ## Known limitations
 
-- The schema is created with `create_all` plus idempotent `ALTER TABLE` statements at startup (Alembic is set up but has
-  no migrations yet).
 - The Sheets sync is one-way; Telegram messages are best-effort (a blocked bot is skipped).
 - Excel export of concert lists is available through `GET /events/{id}/export.xlsx?telegram_id=<admin>`.

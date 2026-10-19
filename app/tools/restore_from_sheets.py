@@ -294,11 +294,11 @@ def format_report(results: list[RowResult], errors: list[str], extra: list[Booki
 
 
 async def run(values: list[list[str]], apply: bool) -> str:
-    from app.db.session import AsyncSessionLocal, create_db_and_tables, engine
+    from app.db.session import AsyncSessionLocal, engine, prepare_database
 
     rows, errors = parse_rows(values)
     now = now_local()
-    await create_db_and_tables()
+    await prepare_database()
     try:
         async with AsyncSessionLocal() as session:
             if apply:
