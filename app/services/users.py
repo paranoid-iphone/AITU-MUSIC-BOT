@@ -79,6 +79,8 @@ async def upsert_telegram_user(
         )
         session.add(user)
     else:
+        if user.telegram_username != telegram_username and user.status == UserStatus.APPROVED.value:
+            outbox.queue_schedule_changed(session)  # responsible persons are shown with their username
         user.telegram_username = telegram_username
         user.telegram_full_name = telegram_full_name
         if user.status == UserStatus.DELETED.value and not is_initial_admin:
@@ -96,7 +98,7 @@ async def upsert_telegram_user(
         if user.telegram_id in settings.initial_admin_ids:
             user.role = UserRole.ADMIN.value
             user.status = UserStatus.APPROVED.value
-    await session.commit()
+    await outbox.commit_and_publish(session)
     await session.refresh(user)
     return await annotate_group_admin(session, user)
 
@@ -114,10 +116,15 @@ async def update_profile(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
+    renamed = (first_name is not None and first_name != user.first_name) or (
+        last_name is not None and last_name != user.last_name
+    )
     if first_name is not None:
         user.first_name = first_name
     if last_name is not None:
         user.last_name = last_name
+    if renamed and user.status == UserStatus.APPROVED.value:
+        outbox.queue_schedule_changed(session)  # names are printed on the schedule
     if study_group is not None:
         user.study_group = study_group
     if language is not None:
@@ -128,7 +135,7 @@ async def update_profile(
         if user.status == UserStatus.APPROVED.value and user.group_id not in (None, group_id):
             raise ForbiddenError("Group can be changed only by an admin")
         user.group_id = group_id
-    await session.commit()
+    await outbox.commit_and_publish(session)
     await session.refresh(user)
     return user
 
@@ -471,6 +478,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     target.telegram_full_name = None
     target.moderation_reason = reason
     target.registration_retry_after = None
+    outbox.queue_schedule_changed(session)  # their name leaves the schedule
     await log_action(
         session,
         admin.id,

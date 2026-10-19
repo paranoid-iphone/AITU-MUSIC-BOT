@@ -181,7 +181,9 @@ async def update_band_name(session: AsyncSession, band_id: int, requester_telegr
         band.id,
         f"Переименовал коллектив: {old_name} -> {name}",
     )
-    await session.commit()
+    if name != old_name:
+        queue_schedule_changed(session)  # the schedule image prints band names
+    await commit_and_publish(session)
     return await get_band_detail(session, band_id)
 
 
