@@ -1,7 +1,9 @@
-from datetime import datetime, time, timedelta
+import asyncio
+from datetime import time, timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.timezone import now_local
@@ -14,8 +16,10 @@ class FakeBackend:
         self.schedules: list[list[list]] = []
         self.history: list[list[list]] = []
         self.fail = False
+        self.attempts = 0
 
     def replace_schedule(self, rows):
+        self.attempts += 1
         if self.fail:
             raise ConnectionError("google is down")
         self.schedules.append(rows)
@@ -29,8 +33,10 @@ class FakeBackend:
 @pytest.fixture(autouse=True)
 def _reset_state():
     sheets_sync._state.schedule_digest = None
+    sheets_sync._state.wakeup = None  # an asyncio.Event belongs to the loop of the test that created it
     yield
     sheets_sync._state.schedule_digest = None
+    sheets_sync._state.wakeup = None
 
 
 async def _book(session, make_user, make_band, hour=15, days=1):
@@ -205,3 +211,90 @@ async def test_request_sync_wakes_worker_only_when_configured(monkeypatch):
     sheets_sync.request_sync()
     assert sheets_sync._state.wakeup is not None and sheets_sync._state.wakeup.is_set()
     sheets_sync._state.wakeup = None
+
+
+async def test_a_long_backlog_goes_out_in_batches_in_order(session):
+    total = sheets_sync.HISTORY_BATCH * 2 + 7
+    session.add_all(
+        models.ScheduleChange(
+            band_name="Rockers",
+            action="created",
+            after={"date": "2026-01-05", "start": "18:00", "end": "19:00", "purpose": "band", "song_title": None, "status": "confirmed"},
+        )
+        for _ in range(total)
+    )
+    await session.commit()
+    backend = FakeBackend()
+
+    summaries = [await sheets_sync.sync_once(session, backend) for _ in range(4)]
+
+    assert [len(batch) for batch in backend.history] == [sheets_sync.HISTORY_BATCH, sheets_sync.HISTORY_BATCH, 7]
+    assert [summary["history_rows"] for summary in summaries] == [sheets_sync.HISTORY_BATCH, sheets_sync.HISTORY_BATCH, 7, 0]
+    ids = [row[-1] for batch in backend.history for row in batch]
+    assert ids == sorted(ids) and len(set(ids)) == total  # nothing skipped, nothing sent twice
+
+
+def _fast_worker(monkeypatch, poll=0.01) -> list[dict]:
+    """Shrink the worker's waits; returns the summaries of the rounds that sent history.
+
+    After such a round the worker parks, idle, so that the test cancels it between two rounds and not in the middle
+    of a query on the shared in-memory connection.
+    """
+    monkeypatch.setattr(sheets_sync, "POLL_SECONDS", poll)
+    monkeypatch.setattr(sheets_sync, "DEBOUNCE_SECONDS", 0)
+    monkeypatch.setattr(sheets_sync, "RETRY_SECONDS", 0.01)
+    finished: list[dict] = []
+    real = sheets_sync.sync_once
+
+    async def counting(session, backend):
+        summary = await real(session, backend)
+        if summary["history_rows"]:
+            finished.append(summary)
+            await asyncio.Event().wait()
+        return summary
+
+    monkeypatch.setattr(sheets_sync, "sync_once", counting)
+    return finished
+
+
+async def _until(condition, timeout=3.0):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        assert asyncio.get_running_loop().time() < deadline, "timed out waiting for the sync worker"
+        await asyncio.sleep(0.01)
+
+
+async def test_the_worker_keeps_retrying_through_an_outage_and_catches_up(session, make_user, make_band, monkeypatch):
+    await _book(session, make_user, make_band)
+    finished = _fast_worker(monkeypatch)
+    backend = FakeBackend()
+    backend.fail = True
+    task = asyncio.create_task(sheets_sync.sync_worker(async_sessionmaker(session.bind, expire_on_commit=False), backend))
+    try:
+        await _until(lambda: backend.attempts >= 3)  # it failed, waited and tried again, without dying
+        assert not task.done() and backend.history == []
+        backend.fail = False
+        await _until(lambda: any(summary["history_rows"] == 1 for summary in finished))
+    finally:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    change = (await session.execute(select(models.ScheduleChange))).scalar_one()
+    assert change.sheets_synced_at is not None
+
+
+async def test_a_change_request_wakes_the_worker_before_the_next_poll(session, make_user, make_band, monkeypatch):
+    monkeypatch.setattr(settings, "google_sheets_id", "abc")
+    monkeypatch.setattr(settings, "google_service_account_file", "secrets/key.json")
+    finished = _fast_worker(monkeypatch, poll=60)
+    backend = FakeBackend()
+    task = asyncio.create_task(sheets_sync.sync_worker(async_sessionmaker(session.bind, expire_on_commit=False), backend))
+    try:
+        await asyncio.sleep(0.05)  # the worker is now waiting for a wake-up
+        await _book(session, make_user, make_band)
+        sheets_sync.request_sync()
+        await _until(lambda: any(summary["history_rows"] == 1 for summary in finished))
+    finally:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
