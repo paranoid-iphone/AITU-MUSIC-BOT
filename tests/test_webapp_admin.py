@@ -113,7 +113,7 @@ async def test_reject_ban_delete_store_reason_and_only_reject_notifies(client, s
     sent = notifications(published)
     assert len(sent) == 1 and sent[0]["telegram_id"] == pending_music.telegram_id
     assert sent[0]["text"].startswith("Ваша регистрация отклонена, но это не бан.")
-    assert "Повторно подать заявку можно после: 20" in sent[0]["text"]  # the retry date, not the placeholder
+    assert "{retry_after}" not in sent[0]["text"]
 
     banned = await client.post(f"{API}/users/{pending_other.telegram_id}/ban", json={"reason": "спам"}, headers=headers)
     assert banned.json()["status"] == "banned"
@@ -123,6 +123,21 @@ async def test_reject_ban_delete_store_reason_and_only_reject_notifies(client, s
 
     too_long = await client.post(f"{API}/users/{victim.telegram_id}/ban", json={"reason": "x" * 256}, headers=headers)
     assert too_long.status_code == 422
+
+
+async def test_reject_shows_the_retry_moment_in_club_time(client, session, make_user, published, freeze_now):
+    main_admin, _, pending_music, _ = await staff(make_user, session)
+    freeze_now(datetime(2026, 10, 20, 12, 0))
+
+    rejected = await client.post(
+        f"{API}/users/{pending_music.telegram_id}/reject", json={"reason": "x"}, headers=tg(main_admin.telegram_id)
+    )
+
+    assert rejected.status_code == 200, rejected.text
+    expected = (datetime(2026, 10, 20, 12, 0) + timedelta(hours=settings.registration_retry_hours)).strftime("%d.%m %H:%M")
+    assert notifications(published)[0]["text"] == REJECTED_TEXT.format(retry_after=expected)
+    stored = (await session.execute(select(models.User.registration_retry_after).where(models.User.id == pending_music.id))).scalar_one()
+    assert stored == datetime(2026, 10, 20, 12, 0) + timedelta(hours=settings.registration_retry_hours)
 
 
 async def test_group_admin_cannot_touch_staff_other_groups_or_themselves(client, session, make_user):

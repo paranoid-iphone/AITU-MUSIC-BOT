@@ -53,6 +53,7 @@ from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, EventFlow, Onboarding, ProfileFlow
 from app.bot.webapp_url import get_webapp_base_url
 from app.core.config import settings
+from app.core.timezone import format_moment
 
 router = Router()
 api = BackendClient()
@@ -1397,6 +1398,12 @@ async def inline_event_create_start(callback: CallbackQuery, state: FSMContext) 
     await answer_callback(callback)
 
 
+def retry_after_text(user: dict) -> str | None:
+    """`registration_retry_after` arrives as an ISO club-local string; show it the way notifications do."""
+    value = user.get("registration_retry_after")
+    return format_moment(datetime.fromisoformat(value)) if value else None
+
+
 async def registration_still_pending(callback: CallbackQuery, target: str) -> bool:
     """The buttons sit in old notices; once the request was handled (here or in the Mini App) they must do nothing."""
     try:
@@ -1444,7 +1451,7 @@ async def inline_registration_reject(callback: CallbackQuery) -> None:
     except RuntimeError:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
-    retry_after = user.get("registration_retry_after")
+    retry_after = retry_after_text(user)
     text = (
         "Регистрация отклонена:\n"
         f"{user['last_name'] or '-'} {user['first_name'] or '-'} | {user['study_group'] or '-'}\n"
@@ -1494,7 +1501,7 @@ async def start(message: Message, state: FSMContext) -> None:
         try:
             user = await api.resubmit_registration(message.from_user.id)
         except RuntimeError:
-            retry_after = user.get("registration_retry_after")
+            retry_after = retry_after_text(user)
             reason = user.get("moderation_reason") or "без причины"
             if retry_after:
                 await message.answer(
@@ -2004,7 +2011,7 @@ async def fallback(message: Message, state: FSMContext) -> None:
         try:
             user = await api.resubmit_registration(message.from_user.id)
         except RuntimeError:
-            retry_after = user.get("registration_retry_after")
+            retry_after = retry_after_text(user)
             reason = user.get("moderation_reason") or "без причины"
             if retry_after:
                 await message.answer(

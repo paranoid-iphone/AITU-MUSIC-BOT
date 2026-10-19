@@ -4,6 +4,7 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.timezone import format_moment, now_local
 from app.db.models import User, UserRole, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
@@ -361,7 +362,7 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
     _guard_banned_or_deleted(admin, target)
     target.status = UserStatus.REJECTED.value
     target.moderation_reason = reason
-    target.registration_retry_after = datetime.utcnow() + timedelta(hours=settings.registration_retry_hours)
+    target.registration_retry_after = now_local() + timedelta(hours=settings.registration_retry_hours)
     await log_action(
         session,
         admin.id,
@@ -370,7 +371,7 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
         target.telegram_id,
         f"Отклонил заявку: @{target.telegram_username or target.telegram_id}. Причина: {reason or '-'}",
     )
-    retry_after = target.registration_retry_after.strftime("%Y-%m-%d %H:%M")
+    retry_after = format_moment(target.registration_retry_after)
     _notify(
         session,
         target,
@@ -451,9 +452,8 @@ async def resubmit_registration(session: AsyncSession, telegram_id: int) -> User
         return user
     if not user.profile_completed:
         raise ConflictError("Profile is incomplete")
-    now = datetime.utcnow()
-    if user.status == UserStatus.REJECTED.value and user.registration_retry_after and user.registration_retry_after > now:
-        raise ConflictError(f"You can submit again after {user.registration_retry_after.isoformat()}")
+    if user.status == UserStatus.REJECTED.value and user.registration_retry_after and user.registration_retry_after > now_local():
+        raise ConflictError(f"You can submit again after {format_moment(user.registration_retry_after)}")
     user.status = UserStatus.PENDING.value
     user.moderation_reason = None
     user.registration_retry_after = None
