@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.timezone import format_moment, now_local
@@ -384,6 +385,45 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
     return target
 
 
+async def _release_holdings(session: AsyncSession, target: User, actor: User, reason: str) -> None:
+    """A banned or deleted member stops holding the room: cancel their future personal rehearsals, drop their waiting
+    entries and close their open move requests. Band bookings and band membership stay with the band."""
+    from app.db.models import Booking, BookingStatus, MoveRequest, MoveRequestStatus, WaitlistEntry
+    from app.services.bookings import _lock_bookings, _offer_freed
+    from app.services.schedule_history import record_change, snapshot
+
+    await _lock_bookings(session)
+    now = now_local()
+    rows = await session.execute(
+        select(Booking).where(
+            Booking.created_by_id == target.id,
+            Booking.band_id.is_(None),
+            Booking.purpose == "personal",
+            Booking.status == BookingStatus.CONFIRMED.value,
+        )
+        .options(selectinload(Booking.band), selectinload(Booking.created_by))
+    )
+    freed = []
+    for booking in rows.scalars():
+        if datetime.combine(booking.booking_date, booking.end_time) <= now:
+            continue
+        before = snapshot(booking)
+        booking.status = BookingStatus.CANCELLED.value
+        booking.cancelled_by_id = actor.id
+        booking.cancel_reason = reason
+        await record_change(session, booking, "cancelled", actor, before=before, reason=reason, notify=False)
+        freed.append((booking.booking_date, booking.start_time, booking.end_time))
+
+    await session.execute(delete(WaitlistEntry).where(WaitlistEntry.user_id == target.id))
+    await session.execute(
+        update(MoveRequest)
+        .where(MoveRequest.requester_id == target.id, MoveRequest.status == MoveRequestStatus.PENDING.value)
+        .values(status=MoveRequestStatus.CANCELLED.value, resolved_at=now, resolved_by_id=actor.id)
+    )
+    await session.flush()
+    await _offer_freed(session, freed)
+
+
 async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identifier: str, reason: str | None) -> User:
     from app.services.audit import log_action
 
@@ -393,6 +433,7 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
+    await _release_holdings(session, target, admin, "Пользователь заблокирован")
     target.status = UserStatus.BANNED.value
     target.role = UserRole.USER.value
     target.moderation_reason = reason
@@ -405,7 +446,7 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
         target.telegram_id,
         f"Забанил пользователя: @{target.telegram_username or target.telegram_id}. Причина: {reason or '-'}",
     )
-    await session.commit()
+    await outbox.commit_and_publish(session)
     await session.refresh(target)
     return target
 
@@ -420,6 +461,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
     _guard_banned_or_deleted(admin, target)
+    await _release_holdings(session, target, admin, "Пользователь удалён")
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value
     target.first_name = None
@@ -437,7 +479,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
         target.telegram_id,
         f"Удалил пользователя: {target_identifier}. Причина: {reason or '-'}",
     )
-    await session.commit()
+    await outbox.commit_and_publish(session)
     await session.refresh(target)
     return target
 
