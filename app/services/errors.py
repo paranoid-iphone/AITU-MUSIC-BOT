@@ -88,6 +88,17 @@ _FIXED_MESSAGES = (
     ("own_admin_role", "You cannot remove your own admin role"),
     ("username_ambiguous", "Several users share this username: use the numeric Telegram ID"),
     ("group_not_found", "Group not found"),
+    # roles
+    ("role_not_found", "Role not found"),
+    ("role_name_invalid", "Role name must be 1-60 characters"),
+    ("role_name_taken", "A role with this name already exists"),
+    ("unknown_permission", "Unknown permission"),
+    ("system_role", "System role cannot be changed"),
+    ("assignment_not_found", "Assignment not found"),
+    ("role_already_assigned", "Role is already assigned"),
+    ("role_needs_approval", "User must be approved to receive a role"),
+    ("admin_role_club_wide", "The admin role applies to the whole club"),
+    ("admin_role_admins_only", "Only an admin can assign or revoke the admin role"),
 )
 
 # Messages that carry a number; `n` is passed to the client as a parameter.

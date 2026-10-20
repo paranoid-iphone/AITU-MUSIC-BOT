@@ -51,3 +51,8 @@ async def seed_reference_data() -> None:
                 text("UPDATE users SET role = 'admin', status = 'approved' WHERE telegram_id = :telegram_id"),
                 {"telegram_id": admin_id},
             )
+    from app.services.roles import ensure_admin_role
+
+    async with AsyncSessionLocal() as session:
+        await ensure_admin_role(session)
+        await session.commit()

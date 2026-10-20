@@ -13,6 +13,7 @@ AUDIT_CATEGORIES = (
     "user",
     "admin",
     "dsvr",
+    "role",
     "group",
     "band",
     "booking",
