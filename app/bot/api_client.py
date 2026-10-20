@@ -75,6 +75,9 @@ class BackendClient:
     async def list_groups(self) -> list[dict[str, Any]]:
         return await self.request("GET", "/groups")
 
+    async def club_reviewer_ids(self) -> list[int]:
+        return await self.request("GET", "/groups/reviewers")
+
     async def group_reviewer_ids(self, group_id: int) -> list[int]:
         return await self.request("GET", f"/groups/{group_id}/reviewers")
 

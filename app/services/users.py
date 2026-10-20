@@ -14,6 +14,7 @@ from app.services.permissions import (
     can_view_user,
     has_any_role,
     holds_admin_role,
+    permission_summary,
     permitted_group_ids,
     require_permission,
 )
@@ -24,8 +25,12 @@ async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Us
     return result.scalar_one_or_none()
 
 
-async def annotate_group_admin(session: AsyncSession, user: User) -> User:
-    """Attach a transient `is_group_admin` flag so API responses can drive the bot menus."""
+async def annotate_access(session: AsyncSession, user: User) -> User:
+    """Attach transient `is_admin` and `permissions` (keys held for any group) so API responses can drive the bot menus.
+
+    `is_group_admin` is the old flag, kept until the clients stop reading it."""
+    user.is_admin = await holds_admin_role(session, user)
+    user.permissions = sorted(await permission_summary(session, user))
     user.is_group_admin = bool(await administered_group_ids(session, user)) and user.status == UserStatus.APPROVED.value
     return user
 
@@ -39,7 +44,7 @@ async def get_user_for_requester(session: AsyncSession, telegram_id: int, reques
         raise NotFoundError("User not found")
     if not await can_view_user(session, requester, target):
         raise ForbiddenError("You do not have access to this user")
-    return await annotate_group_admin(session, target)
+    return await annotate_access(session, target)
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
@@ -107,7 +112,7 @@ async def upsert_telegram_user(
             user.status = UserStatus.APPROVED.value
     await outbox.commit_and_publish(session)
     await session.refresh(user)
-    return await annotate_group_admin(session, user)
+    return await annotate_access(session, user)
 
 
 async def update_profile(

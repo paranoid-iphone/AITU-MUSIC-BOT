@@ -104,15 +104,19 @@ MERTAI_PRAISES = [
 ]
 
 
+# The admin sections a non-admin may open from the staff menu, by the permission that unlocks each.
+ADMIN_SECTION_PERMISSIONS = {"bands": "bands.manage", "events": "events.manage"}
+
+
 def has_admin_menu(user: dict) -> bool:
-    return user.get("role") in {"admin", "dsvr"} or bool(user.get("is_group_admin"))
+    return bool(user.get("is_admin") or user.get("permissions"))
 
 
 async def admin_menu_keyboard_for(user: dict):
     base_url = await get_webapp_base_url()
-    if user.get("role") == "admin":
+    if user.get("is_admin"):
         return admin_inline_keyboard(base_url)
-    return staff_inline_keyboard(bool(user.get("is_group_admin")), user.get("role") == "dsvr", base_url)
+    return staff_inline_keyboard(user.get("permissions") or [], False, base_url)
 
 
 async def show_menu(message: Message, user: dict) -> None:
@@ -485,15 +489,10 @@ async def get_registration_admin_ids(group_id: int | None = None) -> set[int]:
             return admin_ids
         except Exception as exc:
             logger.warning("Could not load reviewers for group %s: %s", group_id, exc)
-    for seed_admin_id in settings.initial_admin_ids:
-        try:
-            users = await api.list_users(seed_admin_id, "approved")
-        except Exception as exc:
-            logger.warning("Could not load admins for registration notification: %s", exc)
-            continue
-        for item in users:
-            if item.get("role") == "admin" and item.get("status") == "approved":
-                admin_ids.add(item["telegram_id"])
+    try:
+        admin_ids.update(await api.club_reviewer_ids())
+    except Exception as exc:
+        logger.warning("Could not load admins for registration notification: %s", exc)
     return admin_ids
 
 
@@ -624,7 +623,7 @@ async def prompt_next_profile_step(message: Message, state: FSMContext, user: di
 
 async def has_full_access(message: Message) -> bool:
     user = await api.get_user(message.from_user.id)
-    if user["role"] == "admin" or user["status"] == "approved":
+    if user["status"] == "approved":
         return True
     await send_pending_notice(message)
     return False
@@ -632,7 +631,7 @@ async def has_full_access(message: Message) -> bool:
 
 async def has_full_access_for_callback(callback: CallbackQuery) -> bool:
     user = await api.get_user(callback.from_user.id)
-    if user["role"] == "admin" or user["status"] == "approved":
+    if user["status"] == "approved":
         return True
     await send_pending_notice(callback.message)
     await answer_callback(callback)
@@ -1235,7 +1234,8 @@ async def inline_admin_back(callback: CallbackQuery) -> None:
 async def inline_admin_section(callback: CallbackQuery) -> None:
     section = callback.data.split(":", maxsplit=1)[1]
     viewer = await api.get_user(callback.from_user.id)
-    if viewer["role"] != "admin" and section != "bands":
+    allowed = viewer.get("is_admin") or ADMIN_SECTION_PERMISSIONS.get(section) in (viewer.get("permissions") or [])
+    if not allowed:
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return
     if section == "actions":
@@ -1474,7 +1474,7 @@ async def mertai(message: Message) -> None:
 @router.message(Command("help"))
 async def help_command(message: Message) -> None:
     user = await api.upsert_user(message.from_user)
-    is_approved = user["role"] == "admin" or user["status"] == "approved"
+    is_approved = user["status"] == "approved"
     await message.answer(user_help_text(is_approved))
 
 

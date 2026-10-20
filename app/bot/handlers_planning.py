@@ -294,7 +294,7 @@ def _result_text(summary: dict, title: str) -> str:
 
 async def _require_admin(callback: CallbackQuery) -> bool:
     user = await api.get_user(callback.from_user.id)
-    if user.get("role") != "admin":
+    if "settings.manage" not in (user.get("permissions") or []):
         await answer_callback(callback, "Нет доступа", show_alert=True)
         return False
     return True

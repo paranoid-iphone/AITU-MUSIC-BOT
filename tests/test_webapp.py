@@ -585,6 +585,11 @@ ADMIN_SETTINGS_URL = "https://club.example/webapp/schedule?screen=admin&tab=sett
 ADMIN_HISTORY_URL = "https://club.example/webapp/schedule?screen=admin&tab=history"
 SCHEDULE_URL = "https://club.example/webapp/schedule"
 
+from app.services.permission_catalog import DEFAULT_ROLES  # noqa: E402
+
+GROUP_ADMIN_PERMISSIONS = list(DEFAULT_ROLES["Админ группы"])
+DSVR_PERMISSIONS = list(DEFAULT_ROLES["ДСВР"])
+
 
 def test_mini_app_url_can_target_an_admin_tab():
     from app.bot.keyboards import mini_app_url
@@ -599,12 +604,25 @@ def test_admin_menus_open_the_mini_app():
     admin_urls = _web_app_urls(keyboards.admin_inline_keyboard(ADMIN_BASE))
     assert ADMIN_REQUESTS_URL in admin_urls and ADMIN_ROLES_URL in admin_urls
     assert ADMIN_SETTINGS_URL in admin_urls
-    group_admin_urls = _web_app_urls(keyboards.staff_inline_keyboard(True, False, ADMIN_BASE))
+    group_admin_urls = _web_app_urls(keyboards.staff_inline_keyboard(GROUP_ADMIN_PERMISSIONS, False, ADMIN_BASE))
     assert ADMIN_REQUESTS_URL in group_admin_urls and ADMIN_ROLES_URL not in group_admin_urls
     assert ADMIN_HISTORY_URL in group_admin_urls and SCHEDULE_URL not in group_admin_urls
-    dsvr_urls = _web_app_urls(keyboards.staff_inline_keyboard(False, True, ADMIN_BASE))
+    dsvr_urls = _web_app_urls(keyboards.staff_inline_keyboard(DSVR_PERMISSIONS, False, ADMIN_BASE))
     assert f"{SCHEDULE_URL}?mode=takeover" in dsvr_urls and ADMIN_HISTORY_URL in dsvr_urls  # take the room on the grid, read the history
     assert [url for url in dsvr_urls if "screen=admin" in url and "tab=history" not in url] == []
+
+
+def test_staff_menu_offers_what_the_permissions_allow():
+    from app.bot import keyboards
+
+    custom = keyboards.staff_inline_keyboard(["roles.manage", "settings.manage", "audit.view", "events.manage"], False, ADMIN_BASE)
+    urls = _web_app_urls(custom)
+    assert {ADMIN_ROLES_URL, ADMIN_SETTINGS_URL, f"{ADMIN_HISTORY_URL}&view=actions"} <= set(urls)
+    assert ADMIN_REQUESTS_URL not in urls and ADMIN_HISTORY_URL not in urls
+    assert "admin_section:events" in _callbacks(custom) and "admin_section:bands" not in _callbacks(custom)
+    assert "admin_section:bands" in _callbacks(keyboards.staff_inline_keyboard(["bands.manage"], False, ADMIN_BASE))
+    # the admin role holds everything even when the list is empty
+    assert ADMIN_ROLES_URL in _web_app_urls(keyboards.staff_inline_keyboard([], True, ADMIN_BASE))
 
 
 def test_admin_screens_open_the_mini_app_for_what_moved_out_of_the_bot():
@@ -616,7 +634,7 @@ def test_admin_screens_open_the_mini_app_for_what_moved_out_of_the_bot():
     assert _web_app_urls(keyboards.admin_actions_keyboard()) == []
     assert "admin:action_history" in _callbacks(keyboards.admin_actions_keyboard())
     assert _web_app_urls(keyboards.admin_schedule_keyboard()) == []
-    assert _web_app_urls(keyboards.staff_inline_keyboard(True, True)) == []
+    assert _web_app_urls(keyboards.staff_inline_keyboard(GROUP_ADMIN_PERMISSIONS + DSVR_PERMISSIONS, True)) == []
 
 
 def test_admin_menus_drop_the_moderation_callbacks():
@@ -625,8 +643,8 @@ def test_admin_menus_drop_the_moderation_callbacks():
     for markup in (
         keyboards.admin_inline_keyboard(ADMIN_BASE),
         keyboards.admin_inline_keyboard(),
-        keyboards.staff_inline_keyboard(True, False, ADMIN_BASE),
-        keyboards.staff_inline_keyboard(True, False),
+        keyboards.staff_inline_keyboard(GROUP_ADMIN_PERMISSIONS, False, ADMIN_BASE),
+        keyboards.staff_inline_keyboard(GROUP_ADMIN_PERMISSIONS, False),
     ):
         callbacks = _callbacks(markup)
         assert "admin_section:users" not in callbacks and "admin_section:admins" not in callbacks

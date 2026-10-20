@@ -194,18 +194,33 @@ def admin_inline_keyboard(webapp_base_url: str | None = None) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def staff_inline_keyboard(is_group_admin: bool, is_dsvr: bool, webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
-    """Admin menu for people who are not main admins: group admins and/or DSVR."""
+def staff_inline_keyboard(permissions: list[str], is_admin: bool, webapp_base_url: str | None = None) -> InlineKeyboardMarkup:
+    """Admin menu for people who are not main admins: one entry per permission they hold (the admin role holds all)."""
+
+    def holds(key: str) -> bool:
+        return is_admin or key in permissions
+
     rows = []
-    if is_group_admin:
-        row = [InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands")]
-        if webapp_base_url:
-            row.insert(0, mini_app_button("Заявки", webapp_base_url, "admin", tab="requests"))
+    if holds("bands.manage") or holds("events.manage"):
+        row = []
+        if holds("bands.manage"):
+            row.append(InlineKeyboardButton(text="Коллективы", callback_data="admin_section:bands"))
+        if holds("events.manage"):
+            row.append(InlineKeyboardButton(text="Концерты", callback_data="admin_section:events"))
         rows.append(row)
     if webapp_base_url:
-        if is_dsvr:
+        if holds("users.moderate"):
+            rows.append([mini_app_button("Заявки", webapp_base_url, "admin", tab="requests")])
+        if holds("bookings.priority"):
             rows.append([mini_app_button("Занять время (приоритет ДСВР)", webapp_base_url, "schedule", mode="takeover")])
-        rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
+        if holds("schedule.history"):
+            rows.append([mini_app_button("История расписания", webapp_base_url, "admin", tab="history")])
+        if holds("audit.view"):
+            rows.append([mini_app_button("Журнал действий: поиск", webapp_base_url, "admin", tab="history", view="actions")])
+        if holds("settings.manage"):
+            rows.append([mini_app_button("Настройки", webapp_base_url, "admin", tab="settings")])
+        if holds("roles.manage"):
+            rows.append([mini_app_button("Роли", webapp_base_url, "admin", tab="roles")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

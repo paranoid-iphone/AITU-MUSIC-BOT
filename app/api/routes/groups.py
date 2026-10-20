@@ -14,6 +14,11 @@ async def list_groups(session: AsyncSession = Depends(get_session)):
     return await groups.list_groups(session)
 
 
+@router.get("/reviewers")
+async def club_registration_reviewers(session: AsyncSession = Depends(get_session)):
+    return await groups.registration_reviewer_ids(session, None)
+
+
 @router.get("/{group_id}/reviewers")
 async def registration_reviewers(group_id: int, session: AsyncSession = Depends(get_session)):
     return await groups.registration_reviewer_ids(session, group_id)

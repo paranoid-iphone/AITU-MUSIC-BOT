@@ -142,3 +142,27 @@ async def test_an_unreachable_backend_falls_back_to_the_chat_buttons(bot_env):
     assert await handlers.notify_admins_about_registration(bot_env.message, PENDING) is True
     [sent] = bot_env.bot.sent
     assert _buttons(sent["reply_markup"])[0].callback_data == "registration:approve:77"
+
+
+async def test_club_wide_reviewers_come_from_roles(client, make_user, grant, role_holder):
+    admin = await make_user(group_slug=None)
+    await grant(admin, "Админ")
+    moderator = await role_holder("Модератор", ["users.moderate"])
+    group_only = await role_holder("Модератор группы", ["users.moderate"], "dance")
+    bands_only = await role_holder("Без модерации", ["bands.manage"])
+
+    reply = await client.get("/groups/reviewers", headers=AUTH)
+
+    assert reply.status_code == 200
+    assert {admin.telegram_id, moderator.telegram_id} <= set(reply.json())
+    assert not {group_only.telegram_id, bands_only.telegram_id} & set(reply.json())
+
+
+async def test_reviewers_without_a_group_are_asked_from_the_backend(monkeypatch):
+    async def club_reviewers():
+        return [701, 702]
+
+    monkeypatch.setattr(handlers, "api", SimpleNamespace(club_reviewer_ids=club_reviewers))
+    monkeypatch.setattr(app_settings, "initial_admin_telegram_ids", "700")
+
+    assert await handlers.get_registration_admin_ids(None) == {700, 701, 702}

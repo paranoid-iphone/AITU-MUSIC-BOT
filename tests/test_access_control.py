@@ -229,3 +229,44 @@ async def test_banned_creator_cannot_cancel_or_edit_booking(session, make_user, 
         await bookings.delete_booking(session, owner.telegram_id, booking.id)
     with pytest.raises(ForbiddenError):
         await bookings.update_booking(session, owner.telegram_id, booking.id, song_title="Changed")
+
+
+# --- the bot reads `is_admin` and `permissions` from the user payload -------------------------------------------------
+
+
+async def test_annotate_access_reports_the_admin_role_and_permissions(session, make_user, grant):
+    from app.services.permission_catalog import DEFAULT_ROLES, PERMISSIONS
+
+    admin, dsvr, group_admin, plain = [await make_user() for _ in range(4)]
+    await grant(admin, "Админ")
+    await grant(dsvr, "ДСВР")
+    await grant(group_admin, "Админ группы", "music")
+
+    reports = {
+        name: await users.annotate_access(session, person)
+        for name, person in {"admin": admin, "dsvr": dsvr, "group_admin": group_admin, "plain": plain}.items()
+    }
+
+    assert (reports["admin"].is_admin, reports["admin"].permissions) == (True, sorted(PERMISSIONS))
+    assert (reports["dsvr"].is_admin, reports["dsvr"].permissions) == (False, sorted(DEFAULT_ROLES["ДСВР"]))
+    assert (reports["group_admin"].is_admin, reports["group_admin"].permissions) == (False, sorted(DEFAULT_ROLES["Админ группы"]))
+    assert (reports["plain"].is_admin, reports["plain"].permissions) == (False, [])
+
+
+async def test_annotate_access_gives_nothing_to_an_unapproved_holder(session, make_user, grant):
+    pending = await make_user(status="pending")
+    await grant(pending, "Админ")
+
+    annotated = await users.annotate_access(session, pending)
+
+    assert (annotated.is_admin, annotated.permissions) == (False, [])
+
+
+async def test_http_user_payload_carries_is_admin_and_permissions(client, make_user, role_holder):
+    moderator = await role_holder("Модератор", ["users.moderate"])
+
+    body = (
+        await client.get(f"/users/{moderator.telegram_id}", params={"requester_telegram_id": moderator.telegram_id}, headers=AUTH)
+    ).json()
+
+    assert body["is_admin"] is False and body["permissions"] == ["users.moderate"]
