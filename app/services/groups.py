@@ -2,9 +2,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Group, GroupAdmin, User, UserRole, UserStatus
+from app.db.models import Group, GroupAdmin, User, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, NotFoundError
+from app.services.permissions import holders_of
 from app.services.users import get_user_by_identifier, get_user_by_telegram_id, require_admin
 
 
@@ -94,16 +95,6 @@ async def remove_group_admin(session: AsyncSession, telegram_id: int, group_id: 
 
 
 async def registration_reviewer_ids(session: AsyncSession, group_id: int | None) -> list[int]:
-    """Telegram ids who should be asked to approve a registration: main admins plus admins of that group."""
-    result = await session.execute(
-        select(User.telegram_id).where(User.role == UserRole.ADMIN.value, User.status == UserStatus.APPROVED.value)
-    )
-    ids = {row[0] for row in result.all()}
-    if group_id is not None:
-        group_result = await session.execute(
-            select(User.telegram_id)
-            .join(GroupAdmin, GroupAdmin.user_id == User.id)
-            .where(GroupAdmin.group_id == group_id, User.status == UserStatus.APPROVED.value)
-        )
-        ids.update(row[0] for row in group_result.all())
-    return sorted(ids)
+    """Telegram ids who should be asked to approve a registration: holders of `users.moderate` for the whole club and,
+    when the group is known, for that group."""
+    return sorted(user.telegram_id for user in await holders_of(session, "users.moderate", group_id))

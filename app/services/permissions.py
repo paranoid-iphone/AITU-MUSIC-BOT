@@ -179,7 +179,7 @@ async def is_band_member(session: AsyncSession, user: User, band_id: int) -> boo
 async def can_manage_band(session: AsyncSession, user: User, band: Band) -> bool:
     if not is_approved(user):
         return False
-    if await is_group_admin(session, user, band.group_id):
+    if await has_permission(session, user, "bands.manage", band.group_id):
         return True
     return await is_band_owner(session, user, band.id)
 
@@ -208,7 +208,7 @@ async def can_view_user(session: AsyncSession, viewer: User, target: User) -> bo
         return True
     if not is_approved(viewer):
         return False
-    return await is_group_admin(session, viewer, target.group_id)
+    return await has_permission(session, viewer, "users.moderate", target.group_id)
 
 
 async def can_manage_schedule(session: AsyncSession, user: User, booking: Booking) -> bool:

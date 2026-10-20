@@ -13,18 +13,11 @@ from app.db.models import (
     BookingStatus,
     EventApplication,
     EventApplicationMember,
-    UserStatus,
     WaitlistEntry,
 )
 from app.services.errors import ForbiddenError, NotFoundError
 from app.services.outbox import commit_and_publish, queue_schedule_changed
-from app.services.permissions import (
-    administered_group_ids,
-    can_manage_band,
-    can_view_band,
-    can_view_invite_code,
-    is_global_admin,
-)
+from app.services.permissions import can_manage_band, can_view_band, can_view_invite_code, permitted_group_ids
 from app.services.schedule_history import person_name, record_change, snapshot
 from app.services.users import get_user_by_telegram_id, require_approved
 
@@ -82,9 +75,9 @@ async def list_all_bands(session: AsyncSession, admin_telegram_id: int) -> list[
     if admin is None:
         raise NotFoundError("Admin not found")
     stmt = select(Band).options(*band_load_options()).order_by(Band.created_at.desc())
-    if not is_global_admin(admin):
-        group_ids = await administered_group_ids(session, admin)
-        if not group_ids or admin.status != UserStatus.APPROVED.value:
+    group_ids = await permitted_group_ids(session, admin, "bands.manage")
+    if group_ids is not None:
+        if not group_ids:
             raise ForbiddenError("Admin access required")
         stmt = stmt.where(Band.group_id.in_(group_ids))
     result = await session.execute(stmt)

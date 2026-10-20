@@ -56,7 +56,7 @@ def _notify(session: AsyncSession, user: User | None, text: str) -> None:
 
 
 async def _can_answer(session: AsyncSession, user: User, booking: Booking) -> bool:
-    if not (user.status == "approved" or user.role == "admin"):
+    if user.status != "approved":
         return False
     if await can_manage_schedule(session, user, booking):
         return True

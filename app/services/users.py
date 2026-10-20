@@ -9,7 +9,14 @@ from app.core.timezone import format_moment, now_local, utcnow
 from app.db.models import User, UserRole, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
-from app.services.permissions import administered_group_ids, can_view_user, is_global_admin, require_group_admin
+from app.services.permissions import (
+    administered_group_ids,
+    can_view_user,
+    has_any_role,
+    holds_admin_role,
+    permitted_group_ids,
+    require_permission,
+)
 
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
@@ -145,9 +152,9 @@ def require_admin(user: User) -> None:
         raise ForbiddenError("Admin access required")
 
 
-def _guard_banned_or_deleted(admin: User, target: User) -> None:
-    """Group admins must not lift a ban by rejecting or deleting a banned/deleted user (see `approve_user`)."""
-    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not is_global_admin(admin):
+async def _guard_banned_or_deleted(session: AsyncSession, admin: User, target: User) -> None:
+    """Moderators must not lift a ban by rejecting or deleting a banned/deleted user (see `approve_user`)."""
+    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not await holds_admin_role(session, admin):
         raise ForbiddenError("Only a main admin can change a banned or deleted user")
 
 
@@ -159,11 +166,13 @@ def _guard_moderation_target(admin: User, target: User) -> None:
 
 
 async def _require_moderation_rights(session: AsyncSession, admin: User, target: User) -> None:
-    """Group admins moderate regular members of their own group; staff (admin/DSVR) only main admins."""
-    if target.role in (UserRole.ADMIN.value, UserRole.DSVR.value):
-        require_admin(admin)
+    """Moderators handle regular members of the groups they hold `users.moderate` for; anyone who holds a role
+    (admin, DSVR, custom) only the admin role can moderate."""
+    if await has_any_role(session, target):
+        if not await holds_admin_role(session, admin):
+            raise ForbiddenError("Admin access required")
         return
-    await require_group_admin(session, admin, target.group_id)
+    await require_permission(session, admin, "users.moderate", target.group_id)
 
 
 def _notify(session: AsyncSession, target: User, text: str) -> None:
@@ -172,21 +181,19 @@ def _notify(session: AsyncSession, target: User, text: str) -> None:
 
 
 def require_approved(user: User) -> None:
-    if user.role == UserRole.ADMIN.value:
-        return
     if user.status != UserStatus.APPROVED.value:
         raise ForbiddenError("User is not approved")
 
 
 async def _scoped_users(session: AsyncSession, admin_telegram_id: int) -> Select:
-    """Users the admin may moderate: everyone for a main admin, members of their own groups for a group admin."""
+    """Users the admin may moderate: everyone for a club-wide `users.moderate`, members of the permitted groups otherwise."""
     admin = await get_user_by_telegram_id(session, admin_telegram_id)
     if admin is None:
         raise NotFoundError("Admin not found")
     stmt = select(User).order_by(User.created_at.desc())
-    if not is_global_admin(admin):
-        group_ids = await administered_group_ids(session, admin)
-        if not group_ids or admin.status != UserStatus.APPROVED.value:
+    group_ids = await permitted_group_ids(session, admin, "users.moderate")
+    if group_ids is not None:
+        if not group_ids:
             raise ForbiddenError("Admin access required")
         stmt = stmt.where(User.group_id.in_(group_ids))
     return stmt
@@ -232,7 +239,7 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     if admin is None or target is None:
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
-    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not is_global_admin(admin):
+    if target.status in (UserStatus.BANNED.value, UserStatus.DELETED.value) and not await holds_admin_role(session, admin):
         raise ForbiddenError("Only a main admin can restore a banned or deleted user")
     already_approved = target.status == UserStatus.APPROVED.value
     target.status = UserStatus.APPROVED.value
@@ -367,7 +374,7 @@ async def reject_user(session: AsyncSession, admin_telegram_id: int, target_iden
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
-    _guard_banned_or_deleted(admin, target)
+    await _guard_banned_or_deleted(session, admin, target)
     target.status = UserStatus.REJECTED.value
     target.moderation_reason = reason
     target.registration_retry_after = now_local() + timedelta(hours=settings.registration_retry_hours)
@@ -467,7 +474,7 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
-    _guard_banned_or_deleted(admin, target)
+    await _guard_banned_or_deleted(session, admin, target)
     await _release_holdings(session, target, admin, "Пользователь удалён")
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value
