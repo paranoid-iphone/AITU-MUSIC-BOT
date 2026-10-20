@@ -13,6 +13,7 @@ from app.services.permissions import (
     administered_group_ids,
     can_view_user,
     has_any_role,
+    holders_anywhere,
     holds_admin_role,
     permission_summary,
     permitted_group_ids,
@@ -202,6 +203,21 @@ async def _scoped_users(session: AsyncSession, admin_telegram_id: int) -> Select
             raise ForbiddenError("Admin access required")
         stmt = stmt.where(User.group_id.in_(group_ids))
     return stmt
+
+
+async def pending_registration_counts(session: AsyncSession) -> dict[int, int]:
+    """Per moderator (Telegram id), how many requests wait in the groups they moderate; moderators with none are left out."""
+    result = await session.execute(select(User.group_id).where(User.status == UserStatus.PENDING.value))
+    waiting = list(result.scalars())
+    if not waiting:
+        return {}
+    counts: dict[int, int] = {}
+    for moderator in await holders_anywhere(session, "users.moderate"):
+        group_ids = await permitted_group_ids(session, moderator, "users.moderate")
+        visible = sum(1 for group_id in waiting if group_ids is None or group_id in group_ids)
+        if visible:
+            counts[moderator.telegram_id] = visible
+    return counts
 
 
 async def list_users_by_status(session: AsyncSession, admin_telegram_id: int, status: str | None = None) -> list[User]:

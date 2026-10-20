@@ -6,7 +6,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 from app.bot.errors import on_error
-from app.bot.handlers import refresh_all_schedule_menus, router
+from app.bot.handlers import api, refresh_all_schedule_menus, router
 from app.bot.handlers_planning import router as planning_router
 from app.bot.handlers_move import router as move_router
 from app.bot.handlers_repeat import router as repeat_router
@@ -14,6 +14,7 @@ from app.bot.handlers_waitlist import router as waitlist_router
 from app.bot.menu_button import setup_menu_button
 from app.bot.menu_refresh import MenuRefresher
 from app.bot.outbox_delivery import process_next, recover_processing
+from app.bot.registration_digest import send_registration_digest_on_start
 from app.core.config import settings
 from app.core.logging_setup import setup_logging
 
@@ -67,11 +68,13 @@ async def main() -> None:
     await bot.delete_webhook(drop_pending_updates=True)
     worker = asyncio.create_task(outbox_worker(bot))
     menu_task = asyncio.create_task(setup_menu_button(bot))  # waits for the tunnel without delaying polling
+    digest_task = asyncio.create_task(send_registration_digest_on_start(bot, api))  # requests that came in while the bot was down
     try:
         await dispatcher.start_polling(bot)
     finally:
         worker.cancel()
         menu_task.cancel()
+        digest_task.cancel()
 
 
 if __name__ == "__main__":

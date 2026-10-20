@@ -38,6 +38,12 @@ async def reject_user(payload: UserModerationUpdate, session: AsyncSession = Dep
     return user
 
 
+@router.get("/registration-digest")
+async def registration_digest(session: AsyncSession = Depends(get_session)):
+    counts = await users.pending_registration_counts(session)
+    return [{"telegram_id": telegram_id, "pending": pending} for telegram_id, pending in sorted(counts.items())]
+
+
 @router.get("/{telegram_id}", response_model=UserRead)
 async def get_user(telegram_id: int, requester_telegram_id: int, session: AsyncSession = Depends(get_session)):
     return await users.get_user_for_requester(session, telegram_id, requester_telegram_id)

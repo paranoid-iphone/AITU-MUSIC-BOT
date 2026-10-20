@@ -125,8 +125,8 @@ async def has_any_role(session: AsyncSession, user: User) -> bool:
     return False
 
 
-async def holders_of(session: AsyncSession, perm: str, group_id: int | None = None) -> list[User]:
-    """Approved users who hold `perm` for the whole club or, when `group_id` is given, for that group."""
+async def _role_holders(session: AsyncSession) -> list[User]:
+    """Approved users who hold any role at all: the only ones that can hold a permission."""
     candidates = await session.execute(
         select(User)
         .where(
@@ -137,7 +137,17 @@ async def holders_of(session: AsyncSession, perm: str, group_id: int | None = No
         )
         .order_by(User.id)
     )
-    return [user for user in candidates.scalars() if await has_permission(session, user, perm, group_id)]
+    return list(candidates.scalars())
+
+
+async def holders_of(session: AsyncSession, perm: str, group_id: int | None = None) -> list[User]:
+    """Approved users who hold `perm` for the whole club or, when `group_id` is given, for that group."""
+    return [user for user in await _role_holders(session) if await has_permission(session, user, perm, group_id)]
+
+
+async def holders_anywhere(session: AsyncSession, perm: str) -> list[User]:
+    """Approved users who hold `perm` for the whole club or for at least one group."""
+    return [user for user in await _role_holders(session) if await has_permission_anywhere(session, user, perm)]
 
 
 def is_global_admin(user: User) -> bool:

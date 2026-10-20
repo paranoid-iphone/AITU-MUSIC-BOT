@@ -122,6 +122,9 @@ the freed time goes through `_offer_freed`. Band bookings and memberships stay. 
 
 Registration notices: the club setting `registration_notify_mode` (`chat` default | `mini_app` | `off`, `admin.get/update_registration_notify_mode`, changed in
 the Settings tab) is read by the bot (`BackendClient.registration_notify_mode`) in `notify_admins_about_registration`; unreachable backend = `chat`.
+On start the bot also sends each moderator one digest ("requests waiting: N" plus a Mini App button, `bot/registration_digest.py`) from
+`GET /users/registration-digest` (`users.pending_registration_counts`, per moderator and scope), so requests that arrived while it was down are not lost;
+the mode `off` silences it.
 
 Journals: `AuditLog` is written with `audit.log_action` (action = `category.verb`; `AUDIT_CATEGORIES` lists the categories) and read with
 `audit.list_actions` (cursor, text search, category); `/webapp/api/admin/actions` is for main admins only. The booking history is
