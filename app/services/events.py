@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 from app.core.timezone import now_local
 from app.db.models import BandMember, Event, EventApplication, EventApplicationMember, EventStatus, PersonalEventHistory
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
-from app.services.users import get_user_by_telegram_id, require_admin, require_approved
+from app.services.permissions import require_permission
+from app.services.users import get_user_by_telegram_id, require_approved
 
 
 def _request_sheet_sync() -> None:
@@ -25,7 +26,7 @@ async def create_event(session: AsyncSession, telegram_id: int, **data) -> Event
     if user is None:
         raise NotFoundError("User not found")
     require_approved(user)
-    require_admin(user)
+    await require_permission(session, user, "events.manage")
     event = Event(created_by_id=user.id, **data)
     session.add(event)
     await session.flush()
@@ -49,7 +50,7 @@ async def update_event(session: AsyncSession, event_id: int, telegram_id: int, *
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "events.manage")
     result = await session.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
     if event is None:
@@ -150,7 +151,7 @@ async def list_event_applications(session: AsyncSession, telegram_id: int, event
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "events.manage")
     result = await session.execute(
         select(EventApplication)
         .where(EventApplication.event_id == event_id)
@@ -517,7 +518,7 @@ async def export_event_applications(session: AsyncSession, telegram_id: int, eve
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "events.manage")
     result = await session.execute(
         select(EventApplication)
         .where(EventApplication.event_id == event_id)

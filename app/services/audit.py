@@ -6,7 +6,8 @@ from app.db.models import AuditLog, User
 from app.services.errors import ConflictError, NotFoundError
 from app.services.schedule_history import person_name
 from app.services.search import contains
-from app.services.users import get_user_by_telegram_id, require_admin
+from app.services.permissions import require_permission
+from app.services.users import get_user_by_telegram_id
 
 # The first segment of `AuditLog.action` ("user.ban" -> "user"); the journal filters by it.
 AUDIT_CATEGORIES = (
@@ -59,7 +60,7 @@ async def list_actions(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "audit.view")
     if category is not None and category not in AUDIT_CATEGORIES:
         raise ConflictError("Unknown action category")
     stmt = (

@@ -31,7 +31,7 @@ from app.services import outbox
 from app.services import users as user_service
 from app.services.errors import ForbiddenError
 from app.services import schedule_history
-from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
+from app.services.permissions import has_permission_anywhere, permitted_group_ids
 
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
 
@@ -39,33 +39,40 @@ HistoryAction = Literal["created", "updated", "cancelled", "preempted", "auto_as
 ActionCategory = Literal["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"]
 
 
-async def _require_staff(session: AsyncSession, user: User) -> User:
-    if not is_global_admin(user) and not await administered_group_ids(session, user):
+def _guard(user_dependency, permissions: tuple[str, ...]):
+    async def dependency(user: User = Depends(user_dependency), session: AsyncSession = Depends(get_session)) -> User:
+        for permission in permissions:
+            if await has_permission_anywhere(session, user, permission):
+                return user
         raise ForbiddenError("Admin access required")
-    return user
+
+    return dependency
 
 
-async def admin_reader(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> User:
-    return await _require_staff(session, user)
+def reader_with(*permissions: str):
+    """Opens a read route to anyone who holds one of the permissions, for the club or for some group; the services
+    narrow the rows to the groups they hold it for."""
+    return _guard(current_webapp_user, permissions)
 
 
-async def admin_writer(user: User = Depends(fresh_webapp_user), session: AsyncSession = Depends(get_session)) -> User:
-    return await _require_staff(session, user)
+def writer_with(*permissions: str):
+    """Same as `reader_with` for routes that change something: needs a fresh `initData`."""
+    return _guard(fresh_webapp_user, permissions)
 
 
-async def history_reader(user: User = Depends(current_webapp_user), session: AsyncSession = Depends(get_session)) -> User:
-    """The history is also open to DSVR, who have no other admin screen; `list_changes` scopes the rows."""
-    if is_dsvr(user):
-        return user
-    return await _require_staff(session, user)
+users_reader, users_writer = reader_with("users.moderate"), writer_with("users.moderate")
+settings_reader, settings_writer = reader_with("settings.manage"), writer_with("settings.manage")
+history_reader = reader_with("schedule.history")
+audit_reader = reader_with("audit.view")
 
 
-async def main_admin_reader(user: User = Depends(current_webapp_user)) -> User:
+# The role screens of the old model; they go away with `users.role` and `group_admins`.
+async def legacy_admin_reader(user: User = Depends(current_webapp_user)) -> User:
     user_service.require_admin(user)
     return user
 
 
-async def main_admin_writer(user: User = Depends(fresh_webapp_user)) -> User:
+async def legacy_admin_writer(user: User = Depends(fresh_webapp_user)) -> User:
     user_service.require_admin(user)
     return user
 
@@ -98,7 +105,7 @@ async def _people(session: AsyncSession, users: list[User]) -> list[dict]:
 async def list_users(
     status: UserStatus | None = None,
     q: str | None = None,
-    admin: User = Depends(admin_reader),
+    admin: User = Depends(users_reader),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     users, counts = await user_service.search_users(session, admin.telegram_id, status.value if status else None, q)
@@ -106,12 +113,12 @@ async def list_users(
 
 
 @router.get("/users/{telegram_id}")
-async def get_user(telegram_id: int, admin: User = Depends(admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
+async def get_user(telegram_id: int, admin: User = Depends(users_reader), session: AsyncSession = Depends(get_session)) -> dict:
     return await person(session, await user_service.get_user_for_requester(session, telegram_id, admin.telegram_id))
 
 
 @router.post("/users/{telegram_id}/approve")
-async def approve(telegram_id: int, admin: User = Depends(admin_writer), session: AsyncSession = Depends(get_session)) -> dict:
+async def approve(telegram_id: int, admin: User = Depends(users_writer), session: AsyncSession = Depends(get_session)) -> dict:
     target = await user_service.approve_user(session, admin.telegram_id, str(telegram_id))
     await outbox.commit_and_publish(session)
     return await person(session, target)
@@ -121,7 +128,7 @@ async def approve(telegram_id: int, admin: User = Depends(admin_writer), session
 async def reject(
     telegram_id: int,
     payload: WebAppModerate,
-    admin: User = Depends(admin_writer),
+    admin: User = Depends(users_writer),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     target = await user_service.reject_user(session, admin.telegram_id, str(telegram_id), payload.reason)
@@ -133,7 +140,7 @@ async def reject(
 async def ban(
     telegram_id: int,
     payload: WebAppModerate,
-    admin: User = Depends(admin_writer),
+    admin: User = Depends(users_writer),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return await person(session, await user_service.ban_user(session, admin.telegram_id, str(telegram_id), payload.reason))
@@ -143,7 +150,7 @@ async def ban(
 async def delete(
     telegram_id: int,
     payload: WebAppModerate,
-    admin: User = Depends(admin_writer),
+    admin: User = Depends(users_writer),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     target = await user_service.soft_delete_user(session, admin.telegram_id, str(telegram_id), payload.reason)
@@ -151,7 +158,7 @@ async def delete(
 
 
 @router.get("/staff")
-async def staff(admin: User = Depends(main_admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
+async def staff(admin: User = Depends(legacy_admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
     admins = await user_service.list_admins(session, admin.telegram_id)
     dsvr_rows = await session.execute(
         select(User)
@@ -171,7 +178,7 @@ async def staff(admin: User = Depends(main_admin_reader), session: AsyncSession 
 
 @router.post("/staff/admin")
 async def set_admin(
-    payload: WebAppRoleChange, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppRoleChange, admin: User = Depends(legacy_admin_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     change = user_service.promote_to_admin if payload.enabled else user_service.demote_admin
     target = await change(session, admin.telegram_id, payload.target)
@@ -181,7 +188,7 @@ async def set_admin(
 
 @router.post("/staff/dsvr")
 async def set_dsvr(
-    payload: WebAppRoleChange, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppRoleChange, admin: User = Depends(legacy_admin_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     target = await user_service.set_dsvr_role(session, admin.telegram_id, payload.target, payload.enabled)
     await outbox.commit_and_publish(session)
@@ -192,7 +199,7 @@ async def set_dsvr(
 async def set_group_admin(
     group_id: int,
     payload: WebAppRoleChange,
-    admin: User = Depends(main_admin_writer),
+    admin: User = Depends(legacy_admin_writer),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     change = group_service.add_group_admin if payload.enabled else group_service.remove_group_admin
@@ -202,13 +209,13 @@ async def set_group_admin(
 
 
 @router.get("/settings")
-async def get_settings(admin: User = Depends(main_admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
+async def get_settings(admin: User = Depends(settings_reader), session: AsyncSession = Depends(get_session)) -> dict:
     return await admin_service.get_settings(session, admin.telegram_id)
 
 
 @router.put("/settings/days")
 async def set_day(
-    payload: WebAppDayUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppDayUpdate, admin: User = Depends(settings_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     day = await admin_service.update_available_day(
         session, admin.telegram_id, payload.day_of_week, payload.is_enabled, payload.occupied_by
@@ -219,7 +226,7 @@ async def set_day(
 
 @router.put("/settings/window")
 async def set_window(
-    payload: WebAppWindowUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppWindowUpdate, admin: User = Depends(settings_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     window = await admin_service.update_booking_window(session, admin.telegram_id, payload.start_time, payload.end_time)
     await outbox.commit_and_publish(session)
@@ -228,7 +235,7 @@ async def set_window(
 
 @router.put("/settings/limits")
 async def set_limits(
-    payload: WebAppLimitsUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppLimitsUpdate, admin: User = Depends(settings_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     """Only the limits present in the body change."""
     await admin_service.update_limits(
@@ -240,7 +247,7 @@ async def set_limits(
 
 @router.put("/settings/personal")
 async def set_personal(
-    payload: WebAppPersonalUpdate, admin: User = Depends(main_admin_writer), session: AsyncSession = Depends(get_session)
+    payload: WebAppPersonalUpdate, admin: User = Depends(settings_writer), session: AsyncSession = Depends(get_session)
 ) -> dict:
     result = await admin_service.update_personal_bookings_enabled(session, admin.telegram_id, payload.enabled)
     return {"personal_enabled": result["personal_bookings_enabled"]}
@@ -249,7 +256,7 @@ async def set_personal(
 @router.put("/settings/registration-notify")
 async def set_registration_notify(
     payload: WebAppRegistrationNotifyUpdate,
-    admin: User = Depends(main_admin_writer),
+    admin: User = Depends(settings_writer),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return {"registration_notify": await admin_service.update_registration_notify_mode(session, admin.telegram_id, payload.mode)}
@@ -284,11 +291,11 @@ async def history(
         on_date=on_date,
     )
     page = rows[:limit]
-    if is_global_admin(viewer) or is_dsvr(viewer):
-        groups = (await session.execute(select(Group).order_by(Group.title))).scalars().all()
-    else:
-        ids = await administered_group_ids(session, viewer)
-        groups = (await session.execute(select(Group).where(Group.id.in_(ids)).order_by(Group.title))).scalars().all()
+    ids = await permitted_group_ids(session, viewer, "schedule.history")
+    stmt = select(Group).order_by(Group.title)
+    if ids is not None:
+        stmt = stmt.where(Group.id.in_(ids))
+    groups = (await session.execute(stmt)).scalars().all()
     return {
         "items": [{**row, "created_local": _club_local(row["created_at"])} for row in page],
         "next_before_id": page[-1]["id"] if len(rows) > limit else None,
@@ -302,10 +309,10 @@ async def actions(
     category: ActionCategory | None = None,
     before_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=20, ge=1, le=50),
-    viewer: User = Depends(main_admin_reader),
+    viewer: User = Depends(audit_reader),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """The action journal (who approved, banned, renamed, ...), newest first, for the main admin only."""
+    """The action journal (who approved, banned, renamed, ...), newest first, for holders of `audit.view`."""
     rows = await audit.list_actions(
         session, viewer.telegram_id, limit=limit + 1, before_id=before_id, search=q, category=category
     )

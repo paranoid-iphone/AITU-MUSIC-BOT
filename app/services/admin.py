@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AvailableDay, ClubSetting
 from app.services.errors import ConflictError, NotFoundError
 from app.services.outbox import queue_schedule_changed
-from app.services.users import get_user_by_telegram_id, require_admin
+from app.services.permissions import require_permission
+from app.services.users import get_user_by_telegram_id
 
 
 def _time_to_minutes(value: time) -> int:
@@ -29,7 +30,7 @@ async def update_available_day(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     result = await session.execute(select(AvailableDay).where(AvailableDay.day_of_week == day_of_week))
     day = result.scalar_one_or_none()
     note = None if is_enabled else ((occupied_by or "").strip()[:150] or None)
@@ -58,7 +59,7 @@ async def get_weekly_booking_limit(session: AsyncSession, telegram_id: int) -> d
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "weekly_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
     minutes = int(setting.value) if setting is not None else 240
@@ -71,7 +72,7 @@ async def update_weekly_booking_limit(session: AsyncSession, telegram_id: int, h
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     minutes = int(hours * 60)
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "weekly_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
@@ -97,7 +98,7 @@ async def get_daily_booking_limit(session: AsyncSession, telegram_id: int) -> di
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "daily_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
     minutes = int(setting.value) if setting is not None else 0
@@ -110,7 +111,7 @@ async def update_daily_booking_limit(session: AsyncSession, telegram_id: int, ho
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     minutes = int(hours * 60)
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "daily_booking_limit_minutes"))
     setting = result.scalar_one_or_none()
@@ -136,7 +137,7 @@ async def get_max_future_bookings(session: AsyncSession, telegram_id: int) -> di
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     from app.services.bookings import get_max_future_bookings_per_band
 
     return {"max_future_bookings_per_band": await get_max_future_bookings_per_band(session)}
@@ -148,7 +149,7 @@ async def update_max_future_bookings(session: AsyncSession, telegram_id: int, co
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     if count < 0:
         raise ConflictError("Limit must not be negative")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "max_future_bookings_per_band"))
@@ -199,7 +200,7 @@ async def get_booking_window(session: AsyncSession, telegram_id: int) -> dict:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     result = await session.execute(
         select(ClubSetting).where(ClubSetting.key.in_(["booking_window_start_minutes", "booking_window_end_minutes"]))
     )
@@ -220,7 +221,7 @@ async def update_booking_window(session: AsyncSession, telegram_id: int, start_t
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     start = _time_to_minutes(start_time)
     end = _time_to_minutes(end_time)
     if start >= end:
@@ -262,7 +263,7 @@ async def get_personal_bookings_enabled(session: AsyncSession, telegram_id: int 
         user = await get_user_by_telegram_id(session, telegram_id)
         if user is None:
             raise NotFoundError("Admin not found")
-        require_admin(user)
+        await require_permission(session, user, "settings.manage")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "personal_bookings_enabled"))
     setting = result.scalar_one_or_none()
     is_enabled = setting is None or setting.value == "1"
@@ -275,7 +276,7 @@ async def update_personal_bookings_enabled(session: AsyncSession, telegram_id: i
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "personal_bookings_enabled"))
     setting = result.scalar_one_or_none()
     value = "1" if is_enabled else "0"
@@ -311,7 +312,7 @@ async def update_registration_notify_mode(session: AsyncSession, telegram_id: in
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     if mode not in REGISTRATION_NOTIFY_MODES:
         raise ConflictError("Unknown notification mode")
     result = await session.execute(select(ClubSetting).where(ClubSetting.key == "registration_notify_mode"))
@@ -337,7 +338,7 @@ async def get_settings(session: AsyncSession, telegram_id: int) -> dict:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "settings.manage")
     rows = {item.day_of_week: item for item in (await session.execute(select(AvailableDay))).scalars()}
     days = [
         {
