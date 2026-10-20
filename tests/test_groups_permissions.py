@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.db import models
 from app.services import bands, bookings, groups, roles, users
 from app.services.errors import ConflictError, ForbiddenError
-from app.services.permissions import holds_admin_role
+from app.services.permissions import has_any_role, holds_admin_role
 
 
 async def _group_id(session, slug: str) -> int:
@@ -103,7 +103,6 @@ async def test_banned_admin_loses_access_and_role(session, make_user):
     other_admin = await make_user(role="admin")
     await users.ban_user(session, main_admin.telegram_id, str(other_admin.telegram_id), "test")
     await session.refresh(other_admin)
-    assert other_admin.role == "user"
     assert not await holds_admin_role(session, other_admin)
     with pytest.raises(ForbiddenError):
         await roles.list_roles(session, other_admin.telegram_id)
@@ -136,7 +135,7 @@ async def test_group_admin_cannot_moderate_staff(session, make_user, grant, targ
     with pytest.raises(ForbiddenError):
         await calls[action]()
     await session.refresh(target)
-    assert target.role == target_role
+    assert await has_any_role(session, target)
     assert target.status == "approved"
 
 
@@ -166,7 +165,7 @@ async def test_main_admin_can_moderate_dsvr(session, make_user):
 
     banned = await users.ban_user(session, main_admin.telegram_id, str(dsvr.telegram_id), "x")
     assert banned.status == "banned"
-    assert banned.role == "user"
+    assert not await has_any_role(session, banned)
 
 
 async def test_admin_cannot_reject_self_or_initial_admin(session, make_user, monkeypatch):

@@ -39,7 +39,7 @@ from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
 from app.services.errors import NotFoundError
 from app.services import roles as role_service
-from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin, permission_summary
+from app.services.permissions import can_manage_band, holds_admin_role, permission_summary
 from app.services.schedule_history import person_name
 
 router = APIRouter(prefix="/webapp/api", tags=["webapp"])
@@ -457,17 +457,10 @@ async def me(
             "telegram_username": identity.telegram_user.get("username"),
             "group": None,
             "is_admin": False,
-            "is_dsvr": False,
-            "administered_groups": [],
             "roles": [],
             "permissions": {},
         }
     group = await session.get(Group, user.group_id) if user.group_id else None
-    administered = []
-    for group_id in await administered_group_ids(session, user):
-        item = await session.get(Group, group_id)
-        if item is not None:
-            administered.append({"id": item.id, "slug": item.slug, "title": item.title})
     return {
         "registered": True,
         "status": user.status,
@@ -479,9 +472,7 @@ async def me(
         "telegram_username": user.telegram_username,
         "profile_completed": user.profile_completed,
         "group": {"id": group.id, "slug": group.slug, "title": group.title} if group else None,
-        "is_admin": is_global_admin(user),
-        "is_dsvr": is_dsvr(user),
-        "administered_groups": administered,
+        "is_admin": await holds_admin_role(session, user),
         "roles": [
             {
                 "name": item.role.name,

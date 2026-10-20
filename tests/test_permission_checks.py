@@ -96,48 +96,11 @@ async def test_two_assignments_combine(session, make_user, grant):
     assert await permissions.permitted_group_ids(session, user, "bands.manage") == {music, dance}
 
 
-async def test_legacy_columns_still_grant(session, make_user):
-    admin = await make_user(role="admin")
-    assert await permissions.holds_admin_role(session, admin)
-    assert all((await _matrix(session, admin)).values())
-
-    dsvr = await make_user(role="dsvr")
-    assert not await permissions.holds_admin_role(session, dsvr)
-    assert await permissions.has_permission(session, dsvr, "bookings.priority")
-    assert not await permissions.has_permission(session, dsvr, "users.moderate")
-
-    music = await _group_id(session, "music")
-    group_admin = await make_user()
-    session.add(models.GroupAdmin(group_id=music, user_id=group_admin.id))
-    await session.commit()
-    assert await permissions.has_permission(session, group_admin, "users.moderate", music)
-    assert not await permissions.has_permission(session, group_admin, "users.moderate", await _group_id(session, "dance"))
-
-
-async def test_assignments_and_legacy_columns_agree(session, make_user, grant):
-    """The bridge must give exactly what the default roles give."""
-    music = await _group_id(session, "music")
-    legacy_dsvr, new_dsvr = await make_user(role="dsvr"), await make_user()
-    await grant(new_dsvr, "ДСВР")
-    assert await _matrix(session, legacy_dsvr) == await _matrix(session, new_dsvr)
-
-    legacy_admin, new_admin = await make_user(role="admin"), await make_user()
-    await grant(new_admin, "Админ")
-    assert await _matrix(session, legacy_admin) == await _matrix(session, new_admin)
-
-    legacy_group, new_group = await make_user(), await make_user()
-    session.add(models.GroupAdmin(group_id=music, user_id=legacy_group.id))
-    await session.commit()
-    await grant(new_group, "Админ группы", "music")
-    assert await _matrix(session, legacy_group) == await _matrix(session, new_group)
-
-
 async def test_has_any_role(session, make_user, grant):
-    plain, assigned, legacy = await make_user(), await make_user(), await make_user(role="dsvr")
+    plain, assigned = await make_user(), await make_user()
     await grant(assigned, "ДСВР", "music")
     assert not await permissions.has_any_role(session, plain)
     assert await permissions.has_any_role(session, assigned)
-    assert await permissions.has_any_role(session, legacy)
 
 
 async def test_holders_of_lists_club_and_group_holders_and_skips_unapproved(session, make_user, grant):

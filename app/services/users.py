@@ -10,7 +10,6 @@ from app.db.models import User, UserRole, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.permissions import (
-    administered_group_ids,
     can_view_user,
     has_any_role,
     holders_anywhere,
@@ -27,12 +26,9 @@ async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Us
 
 
 async def annotate_access(session: AsyncSession, user: User) -> User:
-    """Attach transient `is_admin` and `permissions` (keys held for any group) so API responses can drive the bot menus.
-
-    `is_group_admin` is the old flag, kept until the clients stop reading it."""
+    """Attach transient `is_admin` and `permissions` (keys held for any group) so API responses can drive the bot menus."""
     user.is_admin = await holds_admin_role(session, user)
     user.permissions = sorted(await permission_summary(session, user))
-    user.is_group_admin = bool(await administered_group_ids(session, user)) and user.status == UserStatus.APPROVED.value
     return user
 
 

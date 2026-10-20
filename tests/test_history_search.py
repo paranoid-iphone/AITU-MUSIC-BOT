@@ -24,8 +24,8 @@ async def _history(client, user, query: str = "") -> dict:
     return response.json()
 
 
-async def test_search_matches_the_band_or_who_made_the_change_and_treats_wildcards_literally(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_search_matches_the_band_or_who_made_the_change_and_treats_wildcards_literally(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     actor = await make_user(last_name="Ivanov", first_name="Oleg", telegram_username="olegi")
     rockers = (await add_changes(session, "music", 1, "Rockers"))[0]
     percent = (await add_changes(session, "music", 1, "100% Jazz"))[0]
@@ -45,8 +45,8 @@ async def test_search_matches_the_band_or_who_made_the_change_and_treats_wildcar
     assert (await client.get(f"{API}/history?q={'x' * 101}", headers=tg(main_admin.telegram_id))).status_code == 422
 
 
-async def test_filter_by_action_and_rehearsal_date_and_combine_them_with_paging(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_filter_by_action_and_rehearsal_date_and_combine_them_with_paging(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     created = await add_changes(session, "music", 3, "Rockers")
     cancelled = (await add_changes(session, "music", 1, "Rockers"))[0]
     cancelled.action = "cancelled"
@@ -70,8 +70,8 @@ async def test_filter_by_action_and_rehearsal_date_and_combine_them_with_paging(
     assert (await client.get(f"{API}/history?date=tomorrow", headers=tg(main_admin.telegram_id))).status_code == 422
 
 
-async def test_searching_never_widens_what_a_group_admin_may_see(client, session, make_user):
-    _, group_admin, _, _ = await staff(make_user, session)
+async def test_searching_never_widens_what_a_group_admin_may_see(client, session, make_user, make_group_admin):
+    _, group_admin, _, _ = await staff(make_user, make_group_admin)
     mine = (await add_changes(session, "music", 1, "Rockers"))[0]
     await add_changes(session, "dance", 1, "Rockers Dance")
     mine_id = mine.id

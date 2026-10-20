@@ -55,7 +55,6 @@ _FIXED_MESSAGES = (
     ("takeover_only", "Only DSVR or admins can take over time"),
     ("cannot_repeat", "You cannot repeat this booking"),
     ("admin_required", "Admin access required"),
-    ("group_admin_required", "Group admin access required"),
     ("user_banned", "User is banned"),
     ("not_approved", "Your registration is not approved"),
     ("not_approved", "User is not approved"),

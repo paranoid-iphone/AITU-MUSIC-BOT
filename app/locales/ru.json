@@ -120,7 +120,6 @@
   "webapp.error.code.takeover_only": "Занимать время могут только ДСВР и админы.",
   "webapp.error.code.cannot_repeat": "Вы не можете повторить эту бронь.",
   "webapp.error.code.admin_required": "Нужны права админа.",
-  "webapp.error.code.group_admin_required": "Нужны права админа группы.",
   "webapp.error.code.user_banned": "Пользователь заблокирован.",
   "webapp.error.code.not_approved": "Регистрация ещё не одобрена.",
   "webapp.error.code.booking_not_found": "Бронь не найдена.",

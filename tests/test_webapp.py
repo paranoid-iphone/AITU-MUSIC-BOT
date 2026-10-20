@@ -87,32 +87,32 @@ async def test_me_for_an_approved_member(client, make_user):
     assert payload["registered"] is True and payload["status"] == "approved"
     assert payload["language"] == "kz"
     assert payload["group"]["slug"] == "music"
-    assert (payload["is_admin"], payload["is_dsvr"], payload["administered_groups"]) == (False, False, [])
+    assert payload["is_admin"] is False
+    assert (payload["roles"], payload["permissions"]) == ([], {})
 
 
-async def test_me_reports_roles(client, make_user, session):
-    from sqlalchemy import select
-
-    from app.db import models
-
+async def test_me_reports_roles(client, make_user, make_group_admin):
     admin = await make_user(role="admin")
     dsvr = await make_user(role="dsvr")
     group_admin = await make_user()
-    dance = (await session.execute(select(models.Group).where(models.Group.slug == "dance"))).scalar_one()
-    session.add(models.GroupAdmin(group_id=dance.id, user_id=group_admin.id))
-    await session.commit()
+    await make_group_admin(group_admin, "dance")
 
-    assert (await client.get("/webapp/api/me", headers=tg(admin.telegram_id))).json()["is_admin"] is True
-    assert (await client.get("/webapp/api/me", headers=tg(dsvr.telegram_id))).json()["is_dsvr"] is True
-    groups = (await client.get("/webapp/api/me", headers=tg(group_admin.telegram_id))).json()["administered_groups"]
-    assert [group["slug"] for group in groups] == ["dance"]
+    admin_me = (await client.get("/webapp/api/me", headers=tg(admin.telegram_id))).json()
+    assert admin_me["is_admin"] is True
+    assert [item["name"] for item in admin_me["roles"]] == ["Админ"]
+    dsvr_me = (await client.get("/webapp/api/me", headers=tg(dsvr.telegram_id))).json()
+    assert dsvr_me["is_admin"] is False and dsvr_me["permissions"]["bookings.priority"] == {"all": True, "group_ids": []}
+    group_me = (await client.get("/webapp/api/me", headers=tg(group_admin.telegram_id))).json()
+    assert [(item["name"], item["group"]["slug"]) for item in group_me["roles"]] == [("Админ группы", "dance")]
+    assert group_me["permissions"]["users.moderate"]["all"] is False
+    assert "is_dsvr" not in group_me and "administered_groups" not in group_me
 
 
 async def test_me_for_a_pending_member_reports_the_status(client, make_user):
     user = await make_user(status="pending")
     payload = (await client.get("/webapp/api/me", headers=tg(user.telegram_id))).json()
     assert payload["registered"] is True and payload["status"] == "pending"
-    assert (payload["is_admin"], payload["is_dsvr"]) == (False, False)
+    assert payload["is_admin"] is False
 
 
 async def test_me_for_an_unregistered_telegram_user(client):
@@ -730,7 +730,7 @@ def test_the_removed_feature_routers_are_gone():
 # ---------- step 11.1: change any booking from its card on the grid ----------
 
 
-async def test_schedule_says_who_may_change_each_booking(client, session, make_user, make_band, freeze_now):
+async def test_schedule_says_who_may_change_each_booking(client, session, make_user, make_group_admin, make_band, freeze_now):
     from sqlalchemy import select
 
     from app.db import models
@@ -741,8 +741,8 @@ async def test_schedule_says_who_may_change_each_booking(client, session, make_u
     stranger = await make_user()
     group_admin = await make_user()
     band_group = (await session.execute(select(models.Band.group_id))).scalar_one()
-    session.add(models.GroupAdmin(group_id=band_group, user_id=group_admin.id))
-    await session.commit()
+    band_group_slug = (await session.execute(select(models.Group.slug).where(models.Group.id == band_group))).scalar_one()
+    await make_group_admin(group_admin, band_group_slug)
 
     async def can_manage(user):
         payload = (await client.get("/webapp/api/schedule", headers=tg(user.telegram_id))).json()

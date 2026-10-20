@@ -37,8 +37,8 @@ async def _get(client, user, query: str = "") -> dict:
     return response.json()
 
 
-async def test_only_the_main_admin_reads_the_journal(client, session, make_user):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_only_the_main_admin_reads_the_journal(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     dsvr = await make_user(role="dsvr")
     plain = await make_user()
 
@@ -48,8 +48,8 @@ async def test_only_the_main_admin_reads_the_journal(client, session, make_user)
     assert (await client.get(JOURNAL)).status_code == 401
 
 
-async def test_rows_carry_the_actor_and_club_time_and_system_rows_are_named(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_rows_carry_the_actor_and_club_time_and_system_rows_are_named(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     actor = await make_user(last_name="Ivanov", first_name="Oleg")
     actor_id = actor.id
     [by_actor, by_system] = await add_actions(session, [("user.ban", "Забанил пользователя", actor_id), ("planning.allocate", "Авто", None)])
@@ -62,8 +62,8 @@ async def test_rows_carry_the_actor_and_club_time_and_system_rows_are_named(clie
     assert person["created_local"] == "2026-01-02T01:00"  # 20:00 UTC in Asia/Almaty (+5)
 
 
-async def test_search_category_and_paging(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_search_category_and_paging(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     actor = await make_user(last_name="Ivanov", first_name="Oleg", telegram_username="olegi")
     actor_id = actor.id
     ids = await add_actions(
@@ -93,8 +93,8 @@ async def test_search_category_and_paging(client, session, make_user):
     assert _ids(last) == [ids[0]] and last["next_before_id"] is None
 
 
-async def test_unknown_categories_and_oversized_queries_are_rejected(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_unknown_categories_and_oversized_queries_are_rejected(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     headers = tg(main_admin.telegram_id)
 
     assert (await client.get(f"{JOURNAL}?category=nonsense", headers=headers)).status_code == 422
@@ -102,8 +102,8 @@ async def test_unknown_categories_and_oversized_queries_are_rejected(client, ses
     assert (await client.get(f"{JOURNAL}?limit=51", headers=headers)).status_code == 422
 
 
-async def test_the_bots_quick_view_still_reads_the_same_journal(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_the_bots_quick_view_still_reads_the_same_journal(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     admin_tg = main_admin.telegram_id
     await add_actions(session, [("user.approve", "Одобрил заявку: @anna", None)])
 

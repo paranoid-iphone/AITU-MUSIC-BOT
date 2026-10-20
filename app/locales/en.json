@@ -120,7 +120,6 @@
   "webapp.error.code.takeover_only": "Only DSVR and admins can take over time.",
   "webapp.error.code.cannot_repeat": "You cannot repeat this booking.",
   "webapp.error.code.admin_required": "Admin rights are required.",
-  "webapp.error.code.group_admin_required": "Group admin rights are required.",
   "webapp.error.code.user_banned": "This user is banned.",
   "webapp.error.code.not_approved": "Your registration is not approved yet.",
   "webapp.error.code.booking_not_found": "Booking not found.",

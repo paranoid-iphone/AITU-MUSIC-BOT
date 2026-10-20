@@ -23,12 +23,11 @@ async def group_id(session, slug: str) -> int:
     return (await session.execute(select(models.Group.id).where(models.Group.slug == slug))).scalar_one()
 
 
-async def staff(make_user, session):
+async def staff(make_user, make_group_admin):
     """A main admin, a group admin of `music`, a pending `music` user and a pending user of another group."""
     main_admin = await make_user(role="admin", group_slug=None)
     group_admin = await make_user(group_slug="music")
-    session.add(models.GroupAdmin(group_id=await group_id(session, "music"), user_id=group_admin.id))
-    await session.commit()
+    await make_group_admin(group_admin, "music")
     pending_music = await make_user(status="pending", group_slug="music")
     pending_other = await make_user(status="pending", group_slug="dance")
     return main_admin, group_admin, pending_music, pending_other
@@ -47,8 +46,8 @@ async def test_admin_endpoints_reject_everyone_but_admins(client, make_user):
     assert (await client.get(f"{API}/users")).status_code == 401
 
 
-async def test_group_admin_sees_only_their_group_and_counts_match(client, session, make_user):
-    main_admin, group_admin, pending_music, pending_other = await staff(make_user, session)
+async def test_group_admin_sees_only_their_group_and_counts_match(client, session, make_user, make_group_admin):
+    main_admin, group_admin, pending_music, pending_other = await staff(make_user, make_group_admin)
 
     scoped = (await client.get(f"{API}/users", headers=tg(group_admin.telegram_id))).json()
     ids = {item["telegram_id"] for item in scoped["users"]}
@@ -61,8 +60,8 @@ async def test_group_admin_sees_only_their_group_and_counts_match(client, sessio
     assert everything["counts"]["pending"] == 2
 
 
-async def test_users_filter_by_status_and_search(client, session, make_user):
-    main_admin, _, pending_music, pending_other = await staff(make_user, session)
+async def test_users_filter_by_status_and_search(client, session, make_user, make_group_admin):
+    main_admin, _, pending_music, pending_other = await staff(make_user, make_group_admin)
     named = await make_user(last_name="Уникальный", telegram_username="needle_guy")
     headers = tg(main_admin.telegram_id)
 
@@ -81,8 +80,8 @@ async def test_users_filter_by_status_and_search(client, session, make_user):
     assert len(blank) == len(unfiltered) > 1
 
 
-async def test_approve_notifies_once_and_is_idempotent(client, session, make_user, published):
-    main_admin, _, pending_music, _ = await staff(make_user, session)
+async def test_approve_notifies_once_and_is_idempotent(client, session, make_user, make_group_admin, published):
+    main_admin, _, pending_music, _ = await staff(make_user, make_group_admin)
     url = f"{API}/users/{pending_music.telegram_id}/approve"
 
     first = await client.post(url, headers=tg(main_admin.telegram_id))
@@ -95,8 +94,8 @@ async def test_approve_notifies_once_and_is_idempotent(client, session, make_use
     assert len(notifications(published)) == 1
 
 
-async def test_reject_ban_delete_store_reason_and_only_reject_notifies(client, session, make_user, published):
-    main_admin, _, pending_music, pending_other = await staff(make_user, session)
+async def test_reject_ban_delete_store_reason_and_only_reject_notifies(client, session, make_user, make_group_admin, published):
+    main_admin, _, pending_music, pending_other = await staff(make_user, make_group_admin)
     victim = await make_user()
     headers = tg(main_admin.telegram_id)
 
@@ -120,8 +119,8 @@ async def test_reject_ban_delete_store_reason_and_only_reject_notifies(client, s
     assert too_long.status_code == 422
 
 
-async def test_reject_shows_the_retry_moment_in_club_time(client, session, make_user, published, freeze_now):
-    main_admin, _, pending_music, _ = await staff(make_user, session)
+async def test_reject_shows_the_retry_moment_in_club_time(client, session, make_user, make_group_admin, published, freeze_now):
+    main_admin, _, pending_music, _ = await staff(make_user, make_group_admin)
     freeze_now(datetime(2026, 10, 20, 12, 0))
 
     rejected = await client.post(
@@ -135,8 +134,8 @@ async def test_reject_shows_the_retry_moment_in_club_time(client, session, make_
     assert stored == datetime(2026, 10, 20, 12, 0) + timedelta(hours=settings.registration_retry_hours)
 
 
-async def test_group_admin_cannot_touch_staff_other_groups_or_themselves(client, session, make_user):
-    main_admin, group_admin, _, pending_other = await staff(make_user, session)
+async def test_group_admin_cannot_touch_staff_other_groups_or_themselves(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, pending_other = await staff(make_user, make_group_admin)
     headers = tg(group_admin.telegram_id)
     for target in (main_admin, pending_other, group_admin):
         assert (await client.post(f"{API}/users/{target.telegram_id}/ban", json={}, headers=headers)).status_code == 403
@@ -147,8 +146,8 @@ async def test_group_admin_cannot_touch_staff_other_groups_or_themselves(client,
     assert (await client.post(f"{API}/role-assignments", json=body, headers=headers)).status_code == 403
 
 
-async def test_group_admin_cannot_restore_a_banned_user_but_main_admin_can(client, session, make_user):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_group_admin_cannot_restore_a_banned_user_but_main_admin_can(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     banned = await make_user(status="banned", group_slug="music")
     url = f"{API}/users/{banned.telegram_id}/approve"
     assert (await client.post(url, headers=tg(group_admin.telegram_id))).status_code == 403
@@ -156,8 +155,8 @@ async def test_group_admin_cannot_restore_a_banned_user_but_main_admin_can(clien
     assert restored.status_code == 200 and restored.json()["status"] == "approved"
 
 
-async def test_users_without_a_group_are_invisible_to_group_admins(client, session, make_user):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_users_without_a_group_are_invisible_to_group_admins(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     loner = await make_user(status="pending", group_slug=None)
 
     listed = (await client.get(f"{API}/users", headers=tg(group_admin.telegram_id))).json()["users"]
@@ -170,8 +169,8 @@ async def test_users_without_a_group_are_invisible_to_group_admins(client, sessi
     assert (await client.get(f"{API}/users/{loner.telegram_id}", headers=tg(main_admin.telegram_id))).status_code == 200
 
 
-async def test_initial_admin_and_self_are_protected(client, session, make_user, monkeypatch):
-    main_admin, _, pending_music, _ = await staff(make_user, session)
+async def test_initial_admin_and_self_are_protected(client, session, make_user, make_group_admin, monkeypatch):
+    main_admin, _, pending_music, _ = await staff(make_user, make_group_admin)
     headers = tg(main_admin.telegram_id)
     monkeypatch.setattr(type(settings), "initial_admin_ids", property(lambda self: {pending_music.telegram_id}))
 
@@ -179,15 +178,15 @@ async def test_initial_admin_and_self_are_protected(client, session, make_user, 
     assert (await client.post(f"{API}/users/{main_admin.telegram_id}/ban", json={}, headers=headers)).status_code == 403
 
 
-async def test_stale_init_data_reads_but_cannot_change(client, session, make_user):
-    main_admin, _, pending_music, _ = await staff(make_user, session)
+async def test_stale_init_data_reads_but_cannot_change(client, session, make_user, make_group_admin):
+    main_admin, _, pending_music, _ = await staff(make_user, make_group_admin)
     stale = {"X-Telegram-Init-Data": init_data(main_admin.telegram_id, age=2 * 60 * 60)}
     assert (await client.get(f"{API}/users", headers=stale)).status_code == 200
     assert (await client.post(f"{API}/users/{pending_music.telegram_id}/approve", headers=stale)).status_code == 401
 
 
-async def test_notifications_respect_the_opt_out(client, session, make_user, published):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_notifications_respect_the_opt_out(client, session, make_user, make_group_admin, published):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     quiet = await make_user(status="pending", notifications_enabled=False)
     audits_before = (await session.execute(select(func.count()).select_from(models.AuditLog))).scalar_one()
 
@@ -199,8 +198,8 @@ async def test_notifications_respect_the_opt_out(client, session, make_user, pub
 
 
 @pytest.mark.parametrize("action", ["reject", "delete"])
-async def test_group_admin_cannot_lift_a_ban_through_reject_or_delete(client, session, make_user, action):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_group_admin_cannot_lift_a_ban_through_reject_or_delete(client, session, make_user, make_group_admin, action):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     banned = await make_user(status="banned", group_slug="music")
     url = f"{API}/users/{banned.telegram_id}/{action}"
 
@@ -249,8 +248,8 @@ async def test_registration_buttons_only_act_on_pending_requests(monkeypatch, ac
 SETTINGS = f"{API}/settings"
 
 
-async def test_settings_are_for_the_main_admin_only(client, session, make_user):
-    _, group_admin, _, _ = await staff(make_user, session)
+async def test_settings_are_for_the_main_admin_only(client, session, make_user, make_group_admin):
+    _, group_admin, _, _ = await staff(make_user, make_group_admin)
     dsvr = await make_user(role="dsvr")
     plain = await make_user()
     bodies = {
@@ -389,8 +388,8 @@ async def add_changes(session, group_slug: str | None, count: int, name: str, st
     return rows
 
 
-async def test_history_is_open_to_admins_dsvr_and_group_admins_only(client, session, make_user):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_history_is_open_to_admins_dsvr_and_group_admins_only(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     dsvr = await make_user(role="dsvr")
     plain = await make_user()
     for user in (main_admin, group_admin, dsvr):
@@ -401,8 +400,8 @@ async def test_history_is_open_to_admins_dsvr_and_group_admins_only(client, sess
     assert (await client.get(f"{API}/users", headers=tg(dsvr.telegram_id))).status_code == 403
 
 
-async def test_history_is_scoped_by_role_and_lists_visible_groups(client, session, make_user):
-    main_admin, group_admin, _, _ = await staff(make_user, session)
+async def test_history_is_scoped_by_role_and_lists_visible_groups(client, session, make_user, make_group_admin):
+    main_admin, group_admin, _, _ = await staff(make_user, make_group_admin)
     dsvr = await make_user(role="dsvr")
     await add_changes(session, "music", 1, "Music")
     await add_changes(session, "dance", 1, "Dance")
@@ -426,8 +425,8 @@ async def test_history_is_scoped_by_role_and_lists_visible_groups(client, sessio
     assert foreign["items"] == []
 
 
-async def test_history_pages_through_a_cursor_without_overlap(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_history_pages_through_a_cursor_without_overlap(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     created = await add_changes(session, "music", 5, "Music")
     headers = tg(main_admin.telegram_id)
 
@@ -445,8 +444,8 @@ async def test_history_pages_through_a_cursor_without_overlap(client, session, m
     assert (await client.get(f"{API}/history?limit=51", headers=headers)).status_code == 422
 
 
-async def test_history_times_are_shown_in_club_time(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_history_times_are_shown_in_club_time(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     await add_changes(session, "music", 1, "Music")  # stored as 2026-01-01 20:00 UTC
     item = (await client.get(f"{API}/history", headers=tg(main_admin.telegram_id))).json()["items"][0]
     expected = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc).astimezone(ZoneInfo(settings.timezone))

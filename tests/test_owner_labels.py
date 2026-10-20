@@ -79,8 +79,8 @@ async def test_my_bookings_name_the_person_of_a_personal_rehearsal(client, sessi
     assert [(item["owner_kind"], item["owner_person"]) for item in items] == [("personal", "Petrov Ivan")]
 
 
-async def test_history_rows_carry_owner_actor_and_reason_parts(client, session, make_user):
-    main_admin, _, _, _ = await staff(make_user, session)
+async def test_history_rows_carry_owner_actor_and_reason_parts(client, session, make_user, make_group_admin):
+    main_admin, _, _, _ = await staff(make_user, make_group_admin)
     session.add_all(
         [
             models.ScheduleChange(

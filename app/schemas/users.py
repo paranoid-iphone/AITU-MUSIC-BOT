@@ -27,13 +27,11 @@ class UserRead(BaseModel):
     last_name: str | None
     study_group: str | None
     language: str
-    role: str
     status: str
     notifications_enabled: bool
     group_id: int | None = None
     is_admin: bool = False
     permissions: list[str] = []
-    is_group_admin: bool = False
     registration_retry_after: datetime | None = None
     profile_completed: bool
 

@@ -88,7 +88,6 @@ async def person(session: AsyncSession, user: User) -> dict:
         "last_name": user.last_name,
         "study_group": user.study_group,
         "group": _group_payload(group),
-        "role": user.role,
         "status": user.status,
         "moderation_reason": user.moderation_reason,
         "created_at": user.created_at.isoformat(timespec="seconds"),

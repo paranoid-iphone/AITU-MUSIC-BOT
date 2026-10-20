@@ -62,33 +62,6 @@ async def session(monkeypatch) -> AsyncSession:
 
 
 @pytest_asyncio.fixture
-async def make_user(session):
-    async def factory(role: str = "user", status: str = "approved", group_slug: str | None = "music", **extra):
-        group_id = None
-        if group_slug is not None:
-            from sqlalchemy import select
-
-            group_id = (await session.execute(select(models.Group.id).where(models.Group.slug == group_slug))).scalar_one()
-        telegram_id = next(_telegram_ids)
-        user = models.User(
-            telegram_id=telegram_id,
-            telegram_username=extra.pop("telegram_username", f"user{telegram_id}"),
-            first_name=extra.pop("first_name", "Имя"),
-            last_name=extra.pop("last_name", f"Фамилия{telegram_id}"),
-            study_group="SE-2401",
-            role=role,
-            status=status,
-            group_id=group_id,
-            **extra,
-        )
-        session.add(user)
-        await session.commit()
-        return user
-
-    return factory
-
-
-@pytest_asyncio.fixture
 async def grant(session):
     """grant(user, "ДСВР") / grant(user, "Админ группы", "music"): give a user a role for the club or for one group."""
 
@@ -103,6 +76,47 @@ async def grant(session):
         session.add(assignment)
         await session.commit()
         return assignment
+
+    return factory
+
+
+@pytest_asyncio.fixture
+async def make_user(session, grant):
+    """make_user(role="admin"|"dsvr"): the user holds that starting role through an assignment for the whole club."""
+    starting_roles = {"admin": "Админ", "dsvr": "ДСВР"}
+
+    async def factory(role: str = "user", status: str = "approved", group_slug: str | None = "music", **extra):
+        group_id = None
+        if group_slug is not None:
+            from sqlalchemy import select
+
+            group_id = (await session.execute(select(models.Group.id).where(models.Group.slug == group_slug))).scalar_one()
+        telegram_id = next(_telegram_ids)
+        user = models.User(
+            telegram_id=telegram_id,
+            telegram_username=extra.pop("telegram_username", f"user{telegram_id}"),
+            first_name=extra.pop("first_name", "Имя"),
+            last_name=extra.pop("last_name", f"Фамилия{telegram_id}"),
+            study_group="SE-2401",
+            status=status,
+            group_id=group_id,
+            **extra,
+        )
+        session.add(user)
+        await session.commit()
+        if role != "user":
+            await grant(user, starting_roles[role])
+        return user
+
+    return factory
+
+
+@pytest_asyncio.fixture
+async def make_group_admin(grant):
+    """make_group_admin(user, "music"): the starting role «Админ группы» for one group."""
+
+    async def factory(user, group_slug: str):
+        return await grant(user, "Админ группы", group_slug)
 
     return factory
 

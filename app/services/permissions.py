@@ -4,27 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Band, BandMember, Booking, GroupAdmin, Role, RoleAssignment, User, UserRole, UserStatus
+from app.db.models import Band, BandMember, Booking, Role, RoleAssignment, User, UserStatus
 from app.services.errors import ForbiddenError
-from app.services.permission_catalog import DEFAULT_ROLES, PERMISSIONS
+from app.services.permission_catalog import PERMISSIONS
 
 
 class Grant(NamedTuple):
     permission: str
     group_id: int | None  # None = the whole club
-
-
-async def _legacy_grants(session: AsyncSession, user: User) -> list[Grant]:
-    """Bridge while the checks move over: the old `users.role` and `group_admins` give what the default roles give."""
-    grants: list[Grant] = []
-    if user.role == UserRole.ADMIN.value:
-        grants.extend(Grant(key, None) for key in PERMISSIONS)
-    elif user.role == UserRole.DSVR.value:
-        grants.extend(Grant(key, None) for key in DEFAULT_ROLES["ДСВР"])
-    group_ids = await session.execute(select(GroupAdmin.group_id).where(GroupAdmin.user_id == user.id))
-    for (group_id,) in group_ids.all():
-        grants.extend(Grant(key, group_id) for key in DEFAULT_ROLES["Админ группы"] if PERMISSIONS.get(key) == "group")
-    return grants
 
 
 async def user_grants(session: AsyncSession, user: User) -> list[Grant]:
@@ -49,7 +36,6 @@ async def user_grants(session: AsyncSession, user: User) -> list[Grant]:
                 grants.append(Grant(key, None))
             elif scope == "group":
                 grants.append(Grant(key, assignment.group_id))
-    grants.extend(await _legacy_grants(session, user))
     return grants
 
 
@@ -105,8 +91,6 @@ async def holds_admin_role(session: AsyncSession, user: User) -> bool:
     """The system admin role (the one that cannot be edited), held for the whole club."""
     if user.status != UserStatus.APPROVED.value:
         return False
-    if user.role == UserRole.ADMIN.value:
-        return True
     result = await session.execute(
         select(RoleAssignment.id)
         .join(Role, Role.id == RoleAssignment.role_id)
@@ -117,24 +101,15 @@ async def holds_admin_role(session: AsyncSession, user: User) -> bool:
 
 async def has_any_role(session: AsyncSession, user: User) -> bool:
     """Whether the user holds any role at all; unlike the checks above this ignores the account status."""
-    if user.role != UserRole.USER.value:
-        return True
-    for model in (RoleAssignment, GroupAdmin):
-        if (await session.execute(select(model.id).where(model.user_id == user.id).limit(1))).first() is not None:
-            return True
-    return False
+    result = await session.execute(select(RoleAssignment.id).where(RoleAssignment.user_id == user.id).limit(1))
+    return result.first() is not None
 
 
 async def _role_holders(session: AsyncSession) -> list[User]:
     """Approved users who hold any role at all: the only ones that can hold a permission."""
     candidates = await session.execute(
         select(User)
-        .where(
-            User.status == UserStatus.APPROVED.value,
-            (User.role != UserRole.USER.value)
-            | User.id.in_(select(RoleAssignment.user_id))
-            | User.id.in_(select(GroupAdmin.user_id)),
-        )
+        .where(User.status == UserStatus.APPROVED.value, User.id.in_(select(RoleAssignment.user_id)))
         .order_by(User.id)
     )
     return list(candidates.scalars())
@@ -148,36 +123,6 @@ async def holders_of(session: AsyncSession, perm: str, group_id: int | None = No
 async def holders_anywhere(session: AsyncSession, perm: str) -> list[User]:
     """Approved users who hold `perm` for the whole club or for at least one group."""
     return [user for user in await _role_holders(session) if await has_permission_anywhere(session, user, perm)]
-
-
-def is_global_admin(user: User) -> bool:
-    return user.role == UserRole.ADMIN.value and user.status == UserStatus.APPROVED.value
-
-
-def is_dsvr(user: User) -> bool:
-    return user.role == UserRole.DSVR.value and user.status == UserStatus.APPROVED.value
-
-
-async def is_group_admin(session: AsyncSession, user: User, group_id: int | None) -> bool:
-    """Main admins manage every group; group admins only their own."""
-    if is_global_admin(user):
-        return True
-    if group_id is None or user.status != UserStatus.APPROVED.value:
-        return False
-    result = await session.execute(
-        select(GroupAdmin.id).where(GroupAdmin.group_id == group_id, GroupAdmin.user_id == user.id)
-    )
-    return result.first() is not None
-
-
-async def require_group_admin(session: AsyncSession, user: User, group_id: int | None) -> None:
-    if not await is_group_admin(session, user, group_id):
-        raise ForbiddenError("Group admin access required")
-
-
-async def administered_group_ids(session: AsyncSession, user: User) -> list[int]:
-    result = await session.execute(select(GroupAdmin.group_id).where(GroupAdmin.user_id == user.id))
-    return [row[0] for row in result.all()]
 
 
 async def is_band_owner(session: AsyncSession, user: User, band_id: int | None) -> bool:

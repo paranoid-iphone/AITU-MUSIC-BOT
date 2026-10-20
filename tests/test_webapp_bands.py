@@ -130,12 +130,10 @@ async def test_plain_member_cannot_manage_the_band(client, session, make_user, m
     assert (await band_service.get_band_detail(session, band.id)).name == "Rockers"
 
 
-async def test_admin_of_another_group_cannot_manage_the_band(client, session, make_user, make_band):
+async def test_admin_of_another_group_cannot_manage_the_band(client, session, make_user, make_group_admin, make_band):
     leader, _, band, _ = await with_member(session, make_user, make_band)
     dance_admin = await make_user(group_slug="dance")
-    dance = (await session.execute(select(models.Group).where(models.Group.slug == "dance"))).scalar_one()
-    session.add(models.GroupAdmin(group_id=dance.id, user_id=dance_admin.id))
-    await session.commit()
+    await make_group_admin(dance_admin, "dance")
     headers = tg(dance_admin.telegram_id)
     assert (await client.patch(f"/webapp/api/bands/{band.id}", json={"name": "Hijack"}, headers=headers)).status_code == 403
     assert (await client.delete(f"/webapp/api/bands/{band.id}", headers=headers)).status_code == 403

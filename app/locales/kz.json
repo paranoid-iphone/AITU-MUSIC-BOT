@@ -120,7 +120,6 @@
   "webapp.error.code.takeover_only": "Уақытты тек ДСВР мен әкімшілер басып ала алады.",
   "webapp.error.code.cannot_repeat": "Бұл бронді қайталай алмайсыз.",
   "webapp.error.code.admin_required": "Әкімші құқығы қажет.",
-  "webapp.error.code.group_admin_required": "Топ әкімшісінің құқығы қажет.",
   "webapp.error.code.user_banned": "Пайдаланушы бұғатталған.",
   "webapp.error.code.not_approved": "Тіркелуіңіз әлі бекітілмеген.",
   "webapp.error.code.booking_not_found": "Бронь табылмады.",
