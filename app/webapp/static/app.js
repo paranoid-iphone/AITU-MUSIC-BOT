@@ -193,6 +193,21 @@ function canBook() {
   return Boolean(state.me && state.me.registered && state.me.status === "approved");
 }
 
+// /me.permissions maps a permission to {all, group_ids}: club-wide, or only for those groups. Absent = not held.
+function can(permission, groupId = null) {
+  const grant = ((state.me && state.me.permissions) || {})[permission];
+  if (!grant) return false;
+  return grant.all || (groupId !== null && grant.group_ids.includes(groupId));
+}
+
+function canAnywhere(permission) {
+  return Boolean(((state.me && state.me.permissions) || {})[permission]);
+}
+
+function roleLabel(item) {
+  return item.group ? `${item.name}: ${item.group.title}` : item.name;
+}
+
 function haptic(kind) {
   if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(kind);
 }
@@ -482,7 +497,7 @@ function bookingBlock(item) {
 /* ---------- takeover (DSVR / admin) ---------- */
 
 function canTakeOver() {
-  return Boolean(canBook() && (state.me.is_dsvr || state.me.is_admin));
+  return Boolean(canBook() && can("bookings.priority"));
 }
 
 function takeoverToggle() {
@@ -1400,26 +1415,33 @@ async function renderBands(screen, token) {
 /* ---------- admin ---------- */
 
 const ADMIN_TABS = ["requests", "users", "roles", "settings", "history"];
-const MAIN_ADMIN_TABS = ["roles", "settings"];
+const TAB_PERMISSIONS = {
+  requests: ["users.moderate"],
+  users: ["users.moderate"],
+  roles: ["roles.manage"],
+  settings: ["settings.manage"],
+  history: ["schedule.history", "audit.view"],
+};
 const HISTORY_PAGE_SIZE = 20;
 const USER_STATUSES = ["pending", "approved", "rejected", "banned", "deleted"];
 const REASON_ACTIONS = ["reject", "ban", "delete"];
 const SEARCH_DEBOUNCE_MS = 300;
 
-// DSVR get the admin screen for the history alone; moderation and settings need an admin or a group admin.
-function canAdmin() {
-  return Boolean(canBook() && (state.me.is_admin || state.me.is_dsvr || state.me.administered_groups.length));
-}
-
-function canModerate() {
-  return Boolean(state.me.is_admin || state.me.administered_groups.length);
-}
-
+// The admin screen shows the tabs whose permission the member holds, for any group (the backend scopes the data).
 function adminTabs() {
-  return ADMIN_TABS.filter((tab) => {
-    if (tab === "history") return true;
-    return MAIN_ADMIN_TABS.includes(tab) ? state.me.is_admin : canModerate();
-  });
+  return ADMIN_TABS.filter((tab) => TAB_PERMISSIONS[tab].some(canAnywhere));
+}
+
+function canAdmin() {
+  return Boolean(canBook() && adminTabs().length);
+}
+
+// Bookings history and the action journal are two views of the history tab; each needs its own permission.
+function historyViews() {
+  return [
+    ...(canAnywhere("schedule.history") ? ["bookings"] : []),
+    ...(canAnywhere("audit.view") ? ["actions"] : []),
+  ];
 }
 
 function personName(person) {
@@ -1430,7 +1452,7 @@ function personName(person) {
 // Only offer what the backend will accept; it still enforces the same rules.
 function personActions(person) {
   if (person.telegram_id === state.me.telegram_id) return [];
-  if (person.role !== "user" && !state.me.is_admin) return [];
+  if (person.roles.length && !state.me.is_admin) return [];
   if (person.status === "pending") return ["approve", "reject"];
   if (person.status === "approved") return ["ban", "delete"];
   if (person.status === "rejected") return ["approve", "ban"];
@@ -1491,7 +1513,7 @@ function openPersonSheet(person) {
     detailRow(t("webapp.profile.study_group"), person.study_group),
     detailRow(t("webapp.profile.club_group"), person.group ? person.group.title : ""),
     detailRow(t("webapp.profile.status"), t(`webapp.admin.status.${person.status}`)),
-    detailRow(t("webapp.profile.roles"), person.role === "user" ? "" : t(`webapp.admin.role.${person.role}`)),
+    detailRow(t("webapp.profile.roles"), person.roles.map(roleLabel).join(", ")),
     detailRow(t("webapp.admin.reason_label"), person.moderation_reason),
     detailRow(t("webapp.admin.created"), shortDate(person.created_at.slice(0, 10))),
     personActions(person).length ? null : el("div", { className: "meta", text: t("webapp.admin.no_actions") }),
@@ -1502,8 +1524,7 @@ function openPersonSheet(person) {
 function personRow(person) {
   const username = person.telegram_username ? `@${person.telegram_username}` : "";
   const groupTitle = person.group ? person.group.title : "";
-  const badges = [t(`webapp.admin.status.${person.status}`)];
-  if (person.role !== "user") badges.push(t(`webapp.admin.role.${person.role}`));
+  const badges = [t(`webapp.admin.status.${person.status}`), ...person.roles.map(roleLabel)];
   const row = el("div", { className: "member", role: "button", tabindex: "0" }, [
     el("div", {}, [
       el("div", { className: "member-name", text: personName(person) }),
@@ -1565,62 +1586,156 @@ function usersControls(list) {
   return el("div", { className: "form admin-filters" }, [search, status]);
 }
 
-function openRoleForm(target) {
-  const field = textField(t("webapp.admin.roles.target"), "role-target", "", 100);
-  field.required = true;
+/* ---------- admin: roles ---------- */
+
+function permissionLabel(key) {
+  return t(`webapp.admin.perm.${key}`);
+}
+
+// Checkbox list for the role editor; `input.value` is the checked keys joined by commas, so it plugs into openBandForm.
+function permissionsField(catalog, selected) {
+  const boxes = catalog.map((item) => {
+    const box = el("input", { type: "checkbox", value: item.key });
+    box.checked = selected.includes(item.key);
+    return el("label", { className: "check" }, [
+      box,
+      el("span", {}, [
+        permissionLabel(item.key),
+        item.scope === "club" ? el("span", { className: "meta", text: t("webapp.admin.perm.club_only") }) : null,
+      ]),
+    ]);
+  });
+  const checked = () => boxes.map((label) => label.querySelector("input")).filter((box) => box.checked).map((box) => box.value);
+  return {
+    input: { focus() {}, get value() { return checked().join(","); } },
+    field: el("fieldset", { className: "perms" }, [el("legend", { text: t("webapp.admin.roles.permissions") }), ...boxes]),
+  };
+}
+
+function openRoleForm(data, role) {
+  const name = textField(t("webapp.admin.roles.name"), "role-name", role ? role.name : "", 60);
+  name.required = true;
+  const permissions = permissionsField(data.catalog, role ? role.permissions : []);
   openBandForm({
-    title: t(target.addTitleKey),
-    fields: [field],
-    submitLabel: t("webapp.admin.roles.add"),
+    title: t(role ? "webapp.admin.roles.edit" : "webapp.admin.roles.new"),
+    fields: [name, permissions],
+    submitLabel: t(role ? "webapp.admin.settings.save" : "webapp.admin.roles.add"),
     errorKey: "webapp.admin.error.action",
-    doneKey: "webapp.admin.roles.added",
-    run: ([value]) => api(target.path, { method: "POST", body: { target: value, enabled: true } }),
+    doneKey: role ? "webapp.admin.roles.saved" : "webapp.admin.roles.created",
+    run: ([title, keys]) => api(role ? `/admin/roles/${role.id}` : "/admin/roles", {
+      method: role ? "PATCH" : "POST",
+      body: { name: title, permissions: keys ? keys.split(",") : [] },
+    }),
   });
 }
 
-function roleRow(person, path) {
-  const username = person.telegram_username ? `@${person.telegram_username}` : "";
+// The scope is chosen here, not in the role: club-wide, or one group (the Admin role is club-wide only).
+function openAssignForm(data, role) {
+  const target = textField(t("webapp.admin.roles.target"), "role-target", "", 100);
+  target.required = true;
+  const scope = el("select", { id: "role-scope" }, [
+    el("option", { value: "", text: t("webapp.admin.roles.scope_club") }),
+    ...(role.is_system ? [] : data.groups.map((group) => el("option", { value: String(group.id), text: group.title }))),
+  ]);
+  const scopeField = { input: scope, field: el("label", {}, [t("webapp.admin.roles.scope"), scope]) };
+  openBandForm({
+    title: `${t("webapp.admin.roles.assign")}: ${role.name}`,
+    fields: [target, scopeField],
+    submitLabel: t("webapp.admin.roles.assign"),
+    errorKey: "webapp.admin.error.action",
+    doneKey: "webapp.admin.roles.added",
+    run: ([who, group]) => api("/admin/role-assignments", {
+      method: "POST",
+      body: { target: who, role_id: role.id, group_id: group ? Number(group) : null },
+    }),
+  });
+}
+
+function holderRow(role, item) {
+  const username = item.person.telegram_username ? `@${item.person.telegram_username}` : "";
+  const where = item.group ? item.group.title : t("webapp.admin.roles.scope_club");
   const children = [
     el("div", {}, [
-      el("div", { className: "member-name", text: personName(person) }),
-      el("div", { className: "meta", text: username }),
+      el("div", { className: "member-name", text: personName(item.person) }),
+      el("div", { className: "meta", text: [username, where].filter(Boolean).join(" · ") }),
     ]),
   ];
-  if (person.telegram_id !== state.me.telegram_id) {
-    const remove = el("button", { className: "btn secondary small", type: "button", text: t("webapp.admin.roles.remove") });
-    remove.addEventListener("click", () => openConfirm({
+  if (!(role.is_system && item.person.telegram_id === state.me.telegram_id)) {
+    const revoke = el("button", { className: "btn secondary small", type: "button", text: t("webapp.admin.roles.remove") });
+    revoke.addEventListener("click", () => openConfirm({
       title: t("webapp.admin.roles.remove_title"),
-      text: fill("webapp.admin.roles.remove_text", { name: personName(person) }),
+      text: fill("webapp.admin.roles.remove_text", { name: personName(item.person) }),
       confirmLabel: t("webapp.admin.roles.remove"),
       errorKey: "webapp.admin.error.action",
       doneKey: "webapp.admin.roles.removed",
-      run: () => api(path, { method: "POST", body: { target: String(person.telegram_id), enabled: false } }),
+      run: () => api(`/admin/role-assignments/${item.id}`, { method: "DELETE" }),
     }));
-    children.push(remove);
+    children.push(revoke);
   }
-  return el("div", { className: "member" }, children);
+  return el("div", { className: "member static" }, children);
 }
 
-function roleSection(title, people, target) {
-  const rows = people.length
-    ? people.map((person) => roleRow(person, target.path))
-    : [el("div", { className: "meta", text: t("webapp.admin.empty.roles") })];
-  const add = el("button", { className: "btn secondary", type: "button", text: t("webapp.admin.roles.add") });
-  add.addEventListener("click", () => openRoleForm(target));
-  return el("div", { className: "card" }, [el("h2", { text: title }), ...rows, sheetActions(add)]);
+async function openHolders(role) {
+  let holders;
+  try {
+    holders = await api(`/admin/roles/${role.id}/assignments`);
+  } catch (failure) {
+    toast(loadFailureText(failure), true);
+    return;
+  }
+  const close = el("button", { className: "btn secondary", type: "button", text: t("webapp.card.close") });
+  close.addEventListener("click", closeSheet);
+  openSheet([
+    el("h2", { text: fill("webapp.admin.roles.holders_title", { name: role.name }) }),
+    holders.length
+      ? el("div", { className: "card" }, holders.map((item) => holderRow(role, item)))
+      : el("div", { className: "meta", text: t("webapp.admin.roles.no_holders") }),
+    sheetActions(close),
+  ]);
 }
 
-function roleSections(staff) {
-  return [
-    roleSection(t("webapp.admin.roles.admins"), staff.admins, { path: "/admin/staff/admin", addTitleKey: "webapp.admin.roles.add_admin" }),
-    roleSection(t("webapp.admin.roles.dsvr"), staff.dsvr, { path: "/admin/staff/dsvr", addTitleKey: "webapp.admin.roles.add_dsvr" }),
-    ...staff.group_admins.map((item) =>
-      roleSection(`${t("webapp.admin.roles.group_admins")}: ${item.group.title}`, item.admins, {
-        path: `/admin/groups/${item.group.id}/admins`,
-        addTitleKey: "webapp.admin.roles.add_group_admin",
-      })
-    ),
+function confirmRoleDelete(role) {
+  openConfirm({
+    title: t("webapp.admin.roles.delete_title"),
+    text: fill("webapp.admin.roles.delete_text", { name: role.name, n: role.holders }),
+    confirmLabel: t("webapp.admin.roles.delete"),
+    errorKey: "webapp.admin.error.action",
+    doneKey: "webapp.admin.roles.deleted",
+    run: () => api(`/admin/roles/${role.id}`, { method: "DELETE" }),
+  });
+}
+
+function roleCard(data, role) {
+  const what = role.is_system
+    ? t("webapp.admin.roles.all_permissions")
+    : role.permissions.length
+      ? role.permissions.map(permissionLabel).join(", ")
+      : t("webapp.admin.roles.no_permissions");
+  const button = (key, handler, secondary = true) => {
+    const node = el("button", { className: `btn${secondary ? " secondary" : ""} small`, type: "button", text: t(key) });
+    node.addEventListener("click", handler);
+    return node;
+  };
+  const buttons = [
+    button("webapp.admin.roles.assign", () => openAssignForm(data, role), false),
+    button("webapp.admin.roles.holders", () => openHolders(role)),
+    ...(role.is_system ? [] : [
+      button("webapp.admin.roles.edit", () => openRoleForm(data, role)),
+      button("webapp.admin.roles.delete", () => confirmRoleDelete(role)),
+    ]),
   ];
+  return el("div", { className: "card" }, [
+    el("h2", { text: role.is_system ? `${role.name} · ${t("webapp.admin.roles.system")}` : role.name }),
+    el("div", { className: "summary", text: what }),
+    el("div", { className: "meta", text: fill("webapp.admin.roles.holders_count", { n: role.holders }) }),
+    sheetActions(...buttons),
+  ]);
+}
+
+function roleCards(data) {
+  const create = el("button", { className: "btn", type: "button", text: t("webapp.admin.roles.new") });
+  create.addEventListener("click", () => openRoleForm(data, null));
+  return [sheetActions(create), ...data.roles.map((role) => roleCard(data, role))];
 }
 
 /* ---------- admin: settings ---------- */
@@ -1767,7 +1882,7 @@ function settingsCards(settings) {
 
 // The badge on the "Requests" tab; if it cannot be loaded the tab itself still opens.
 async function pendingRequests() {
-  if (!canModerate()) return 0;
+  if (!canAnywhere("users.moderate")) return 0;
   try {
     return (await api("/admin/users?status=pending")).counts.pending;
   } catch (_) {
@@ -1788,7 +1903,9 @@ async function renderAdmin(screen, token) {
   const tabs = adminTabs();
   if (!tabs.includes(state.adminTab)) state.adminTab = tabs[0];
   if (state.adminTab === "history") {
-    const actionsMode = state.historyView === "actions" && state.me.is_admin;
+    const views = historyViews();
+    if (!views.includes(state.historyView)) state.historyView = views[0];
+    const actionsMode = state.historyView === "actions";
     const [page, pending] = await Promise.all([api(actionsMode ? actionsPath() : historyPath()), pendingRequests()]);
     if (token !== state.renderToken) return;
     screen.replaceChildren(...adminHead(tabs, pending), ...historySwitch(), ...(actionsMode ? actionsView(page) : historyView(page)));
@@ -1797,9 +1914,9 @@ async function renderAdmin(screen, token) {
     if (token !== state.renderToken) return;
     screen.replaceChildren(...adminHead(tabs, pending), ...settingsCards(settings));
   } else if (state.adminTab === "roles") {
-    const [staff, pending] = await Promise.all([api("/admin/staff"), pendingRequests()]);
+    const [data, pending] = await Promise.all([api("/admin/roles"), pendingRequests()]);
     if (token !== state.renderToken) return;
-    screen.replaceChildren(...adminHead(tabs, pending), ...roleSections(staff));
+    screen.replaceChildren(...adminHead(tabs, pending), ...roleCards(data));
   } else if (state.adminTab === "requests") {
     const data = await api("/admin/users?status=pending");
     if (token !== state.renderToken) return;
@@ -1887,7 +2004,7 @@ function historyView(first) {
 
 /* ---------- admin: action journal (a view of the history tab, main admin only) ---------- */
 
-const ACTION_CATEGORIES = ["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"];
+const ACTION_CATEGORIES = ["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings", "role"];
 
 function actionsPath(beforeId) {
   const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
@@ -1937,10 +2054,11 @@ function actionsView(first) {
   return [actionsFilters(feed.load), feed.body];
 }
 
-// Bookings | Actions: the journal is for the main admin, everyone else sees the booking history only.
+// Bookings | Actions: shown only to someone who may see both.
 function historySwitch() {
-  if (!state.me.is_admin) return [];
-  return [el("div", { className: "segments" }, ["bookings", "actions"].map((view) => {
+  const views = historyViews();
+  if (views.length < 2) return [];
+  return [el("div", { className: "segments" }, views.map((view) => {
     const button = el("button", { className: `segment${view === state.historyView ? " active" : ""}`, type: "button", text: t(`webapp.admin.history.view.${view}`) });
     button.addEventListener("click", () => { state.historyView = view; render(); });
     return button;
@@ -2020,10 +2138,7 @@ function renderProfile(screen) {
   if (!me.registered) {
     cards.push(notice(t("webapp.profile.not_registered")));
   } else {
-    const badges = [];
-    if (me.is_admin) badges.push(t("webapp.role.admin"));
-    if (me.is_dsvr) badges.push(t("webapp.role.dsvr"));
-    for (const group of me.administered_groups) badges.push(`${t("webapp.role.group_admin")}: ${group.title}`);
+    const badges = me.roles.map(roleLabel);
     if (badges.length) {
       cards.push(el("div", { className: "card" }, [
         el("h2", { text: t("webapp.profile.roles") }),
@@ -2084,7 +2199,7 @@ async function main() {
   const startParam = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
   const joinMatch = canBook() ? JOIN_PARAM.exec(startParam || (query.has("join") ? `join_${query.get("join")}` : "")) : null;
   if (ADMIN_TABS.includes(query.get("tab"))) state.adminTab = query.get("tab");
-  if (query.get("view") === "actions" && state.me && state.me.is_admin) state.historyView = "actions";
+  if (query.get("view") === "actions" && state.me && canAnywhere("audit.view")) state.historyView = "actions";
   if (query.get("mode") === "takeover" && canTakeOver()) state.takeover = true; // the DSVR button of the bot
   if (joinMatch) location.hash = "#/bands";
   else if (ROUTES.includes(query.get("screen")) && !ROUTES.includes(location.hash.replace(/^#\/?/, "").split("/")[0])) {

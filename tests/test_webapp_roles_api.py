@@ -44,6 +44,7 @@ async def test_create_list_edit_and_delete_a_role(client, make_user, grant):
     listing = (await client.get(f"{API}/roles", headers=headers)).json()
     assert {item["name"] for item in listing["roles"]} == {"Админ", "ДСВР", "Админ группы", "Модератор"}
     assert {item["key"]: item["scope"] for item in listing["catalog"]} == PERMISSIONS
+    assert {item["slug"] for item in listing["groups"]} == {"music", "dance", "cheer"}  # the scope choices of the assign form
 
     edited = await client.patch(
         f"{API}/roles/{role['id']}", json={"name": "Старший модератор", "permissions": ["users.moderate", "bands.manage"]}, headers=headers
@@ -60,6 +61,17 @@ async def test_create_list_edit_and_delete_a_role(client, make_user, grant):
     deleted = await client.delete(f"{API}/roles/{role['id']}", headers=headers)
     assert deleted.status_code == 200 and deleted.json() == {"removed_assignments": 1}
     assert role["id"] not in {item["id"] for item in (await client.get(f"{API}/roles", headers=headers)).json()["roles"]}
+
+
+async def test_role_changes_show_up_in_the_action_journal(client, make_user, grant):
+    admin = await _admin(make_user, grant)
+    headers = tg(admin.telegram_id)
+    await client.post(f"{API}/roles", json={"name": "Модератор", "permissions": []}, headers=headers)
+
+    journal = await client.get(f"{API}/actions?category=role", headers=headers)
+
+    assert journal.status_code == 200
+    assert [item["action"] for item in journal.json()["items"]] == ["role.create"]
 
 
 async def test_bad_input_comes_back_with_a_code(client, session, make_user, grant):

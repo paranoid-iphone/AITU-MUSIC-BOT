@@ -41,7 +41,7 @@ from app.services.permissions import has_permission_anywhere, permitted_group_id
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
 
 HistoryAction = Literal["created", "updated", "cancelled", "preempted", "auto_assigned", "restored"]
-ActionCategory = Literal["user", "admin", "dsvr", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"]
+ActionCategory = Literal["user", "admin", "dsvr", "role", "group", "band", "booking", "move_request", "event", "planning", "schedule", "settings"]
 
 
 def _guard(user_dependency, permissions: tuple[str, ...]):
@@ -236,9 +236,11 @@ async def _assignment_payload(session: AsyncSession, assignment) -> dict:
 
 @router.get("/roles")
 async def list_roles(admin: User = Depends(roles_reader), session: AsyncSession = Depends(get_session)) -> dict:
+    groups = (await session.execute(select(Group).order_by(Group.id))).scalars().all()
     return {
         "roles": await role_service.list_roles(session, admin.telegram_id),
         "catalog": [{"key": key, "scope": scope} for key, scope in PERMISSIONS.items()],
+        "groups": [_group_payload(group) for group in groups],
     }
 
 

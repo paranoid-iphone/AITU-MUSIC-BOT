@@ -236,6 +236,11 @@ body.has-selbar main { padding-bottom: 76px; }
   font: inherit;
   font-size: 15px;
 }
+.form .perms { margin: 12px 0 0; padding: 0; border: 0; }
+.form .perms legend { padding: 0; color: var(--hint); font-size: 13px; }
+.form .perms label.check { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; color: var(--text); font-size: 15px; }
+.form .perms label.check input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; padding: 0; }
+.form .perms .meta { display: block; font-size: 12px; }
 .form .limits { margin-top: 12px; color: var(--hint); font-size: 13px; }
 .form .form-error:not(:empty) { margin-top: 12px; padding: 10px 12px; border-left: 4px solid #d65a4a; border-radius: 8px; background: var(--surface); font-size: 14px; }
 
