@@ -212,16 +212,17 @@ async def can_view_user(session: AsyncSession, viewer: User, target: User) -> bo
 
 
 async def can_manage_schedule(session: AsyncSession, user: User, booking: Booking) -> bool:
-    """Who may edit or cancel a booking: admins, DSVR, the band's group admins, its creator and band owners."""
+    """Who may edit or cancel a booking: holders of `bookings.manage` (club-wide, or for the band's group), its creator
+    and band owners."""
     if not is_approved(user):
         return False
-    if is_global_admin(user) or is_dsvr(user):
+    if await has_permission(session, user, "bookings.manage"):
         return True
     if booking.created_by_id == user.id:
         return True
     if booking.band_id is None:
         return False
     band = booking.band
-    if band is not None and await is_group_admin(session, user, band.group_id):
+    if band is not None and await has_permission(session, user, "bookings.manage", band.group_id):
         return True
     return await is_band_owner(session, user, booking.band_id)

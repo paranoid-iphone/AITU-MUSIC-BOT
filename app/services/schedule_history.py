@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Band, BandMember, Booking, ScheduleChange, User
 from app.services.errors import ForbiddenError, NotFoundError
 from app.services.outbox import queue_notification, queue_schedule_changed
-from app.services.permissions import administered_group_ids, is_dsvr, is_global_admin
+from app.services.permissions import permitted_group_ids
 from app.services.search import contains
 from app.services.users import get_user_by_telegram_id
 
@@ -181,9 +181,9 @@ async def list_changes(
                 contains(User.telegram_username, needle),
             )
         )
-    if not (is_global_admin(user) or is_dsvr(user)):
+    group_ids = await permitted_group_ids(session, user, "schedule.history")
+    if group_ids is not None:
         conditions = []
-        group_ids = await administered_group_ids(session, user)
         if group_ids:
             conditions.append(ScheduleChange.group_id.in_(group_ids))
         if band_id is not None:

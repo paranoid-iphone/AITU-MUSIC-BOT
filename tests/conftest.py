@@ -108,6 +108,25 @@ async def grant(session):
 
 
 @pytest_asyncio.fixture
+async def role_holder(session, make_user, grant):
+    """role_holder("Модератор", ["users.moderate"], "dance"): a user holding a new custom role, for the club or one group.
+
+    The role is made by a throwaway admin through the service; the assignment is a plain row, so no notification is sent."""
+
+    async def factory(name: str, permission_keys: list[str], group_slug: str | None = None):
+        from app.services import roles as role_service
+
+        creator = await make_user()
+        await grant(creator, "Админ")
+        await role_service.create_role(session, creator.telegram_id, name, permission_keys)
+        holder = await make_user()
+        await grant(holder, name, group_slug)
+        return holder
+
+    return factory
+
+
+@pytest_asyncio.fixture
 async def make_band(session):
     async def factory(owner, name: str = "Band", group_id: int | None = None):
         from app.services import bands

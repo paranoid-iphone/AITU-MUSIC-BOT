@@ -7,11 +7,11 @@ from sqlalchemy.orm import selectinload
 from app.core.timezone import now_local
 from app.db.models import AvailableDay, Band, BandMember, Booking, BookingStatus, ClubSetting
 from app.services.outbox import commit_and_publish
-from app.services.permissions import can_manage_schedule, is_dsvr, is_global_admin
+from app.services.permissions import can_manage_schedule, has_permission, holds_admin_role, require_permission
 from app.services.schedule_history import person_name, record_change, snapshot
 from app.services.weeks import is_date_open_for_booking
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
-from app.services.users import get_user_by_telegram_id, require_admin, require_approved
+from app.services.users import get_user_by_telegram_id, require_approved
 
 
 async def seed_default_schedule(session: AsyncSession) -> None:
@@ -419,7 +419,7 @@ async def create_staff_booking(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    require_admin(user)
+    await require_permission(session, user, "bookings.priority")
     duration = _duration_minutes(start_time, end_time)
     if duration <= 0 or duration % 30 != 0:
         raise ConflictError("Booking duration must be a positive 30-minute step")
@@ -456,8 +456,8 @@ async def create_staff_booking(
 PRIORITY_HORIZON_DAYS = 30
 
 
-def _require_priority_rights(user) -> None:
-    if not (is_dsvr(user) or is_global_admin(user)):
+async def _require_priority_rights(session: AsyncSession, user) -> None:
+    if not await has_permission(session, user, "bookings.priority"):
         raise ForbiddenError("Only DSVR or admins can take over time")
 
 
@@ -506,7 +506,7 @@ async def preview_priority_booking(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    _require_priority_rights(user)
+    await _require_priority_rights(session, user)
     await _validate_priority_slot(session, booking_date, start_time, end_time)
     return [_preempted_row(item) for item in await _overlapping_confirmed(session, booking_date, start_time, end_time)]
 
@@ -525,8 +525,8 @@ async def create_priority_booking(
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
         raise NotFoundError("User not found")
-    _require_priority_rights(user)
-    by_admin = not is_dsvr(user)
+    await _require_priority_rights(session, user)
+    by_admin = await holds_admin_role(session, user)
     await _lock_bookings(session)
     await _validate_priority_slot(session, booking_date, start_time, end_time)
     affected = await _overlapping_confirmed(session, booking_date, start_time, end_time)
@@ -666,10 +666,9 @@ async def update_booking(
     new_start = start_time or booking.start_time
     new_end = end_time or booking.end_time
     if booking_date is not None or start_time is not None or end_time is not None:
-        await _ensure_booking_time_available(
-            session, new_date, new_start, new_end, booking.id, privileged=is_global_admin(user) or is_dsvr(user)
-        )
-        if booking.band_id is not None and not (is_global_admin(user) or is_dsvr(user)):
+        privileged = await has_permission(session, user, "bookings.priority")
+        await _ensure_booking_time_available(session, new_date, new_start, new_end, booking.id, privileged=privileged)
+        if booking.band_id is not None and not privileged:
             new_duration = _duration_minutes(new_start, new_end)
             weekly_limit = await get_weekly_booking_limit_minutes(session)
             used = await get_band_booked_minutes_in_window(session, booking.band_id, now_local(), booking.id)

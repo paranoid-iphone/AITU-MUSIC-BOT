@@ -26,7 +26,7 @@ from app.services.bookings import (
 )
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.outbox import commit_and_publish, queue_notification, queue_schedule_changed
-from app.services.permissions import can_manage_band, is_global_admin
+from app.services.permissions import can_manage_band, require_permission
 from app.services.schedule_history import record_change
 from app.services.users import get_user_by_telegram_id, require_approved
 from app.services.weeks import allocation_deadline, collecting_week, get_week, next_week_start, week_start_of
@@ -257,8 +257,7 @@ async def run_weekly_allocation(
         actor = await get_user_by_telegram_id(session, actor_telegram_id)
         if actor is None:
             raise NotFoundError("User not found")
-        if not is_global_admin(actor):
-            raise ForbiddenError("Admin access required")
+        await require_permission(session, actor, "settings.manage")
 
     now = now_local()
     week = week_start or next_week_start(now.date())
