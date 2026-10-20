@@ -17,11 +17,6 @@ REJECTED_TEXT = (
     "Повторно подать заявку можно после: {retry_after}.\n"
     "Когда срок пройдет, отправьте /start."
 )
-PROMOTED_TEXT = "Вам выдали права админа в AITU Music Club Bot."
-DEMOTED_TEXT = "С вас сняли права админа в AITU Music Club Bot."
-GROUP_ADMIN_TEXT = "Вас назначили админом группы. Откройте /start, чтобы увидеть админ-меню."
-DSVR_ON_TEXT = "Вам выдана роль ДСВР в AITU Music Club Bot."
-DSVR_OFF_TEXT = "С вас сняли роль ДСВР в AITU Music Club Bot."
 
 
 async def group_id(session, slug: str) -> int:
@@ -146,12 +141,10 @@ async def test_group_admin_cannot_touch_staff_other_groups_or_themselves(client,
     for target in (main_admin, pending_other, group_admin):
         assert (await client.post(f"{API}/users/{target.telegram_id}/ban", json={}, headers=headers)).status_code == 403
     target = await make_user(group_slug="music")
-    body = {"target": str(target.telegram_id), "enabled": True}
-    assert (await client.get(f"{API}/staff", headers=headers)).status_code == 403
-    assert (await client.post(f"{API}/staff/admin", json=body, headers=headers)).status_code == 403
-    assert (await client.post(f"{API}/staff/dsvr", json=body, headers=headers)).status_code == 403
     music = await group_id(session, "music")
-    assert (await client.post(f"{API}/groups/{music}/admins", json=body, headers=headers)).status_code == 403
+    assert (await client.get(f"{API}/roles", headers=headers)).status_code == 403
+    body = {"target": str(target.telegram_id), "role_id": 1, "group_id": music}
+    assert (await client.post(f"{API}/role-assignments", json=body, headers=headers)).status_code == 403
 
 
 async def test_group_admin_cannot_restore_a_banned_user_but_main_admin_can(client, session, make_user):
@@ -184,8 +177,6 @@ async def test_initial_admin_and_self_are_protected(client, session, make_user, 
 
     assert (await client.post(f"{API}/users/{pending_music.telegram_id}/ban", json={}, headers=headers)).status_code == 403
     assert (await client.post(f"{API}/users/{main_admin.telegram_id}/ban", json={}, headers=headers)).status_code == 403
-    own = {"target": str(main_admin.telegram_id), "enabled": False}
-    assert (await client.post(f"{API}/staff/admin", json=own, headers=headers)).status_code == 403
 
 
 async def test_stale_init_data_reads_but_cannot_change(client, session, make_user):
@@ -193,68 +184,6 @@ async def test_stale_init_data_reads_but_cannot_change(client, session, make_use
     stale = {"X-Telegram-Init-Data": init_data(main_admin.telegram_id, age=2 * 60 * 60)}
     assert (await client.get(f"{API}/users", headers=stale)).status_code == 200
     assert (await client.post(f"{API}/users/{pending_music.telegram_id}/approve", headers=stale)).status_code == 401
-
-
-async def test_staff_lists_and_role_changes(client, session, make_user, published):
-    main_admin, _, _, _ = await staff(make_user, session)
-    headers = tg(main_admin.telegram_id)
-    candidate = await make_user(telegram_username="candidate", group_slug="music")
-    music = await group_id(session, "music")
-
-    promoted = await client.post(f"{API}/staff/admin", json={"target": "@candidate", "enabled": True}, headers=headers)
-    assert promoted.status_code == 200, promoted.text
-    assert promoted.json()["role"] == "admin"
-    assert notifications(published)[-1] == {"type": "notify", "telegram_id": candidate.telegram_id, "text": PROMOTED_TEXT}
-    demoted = await client.post(f"{API}/staff/admin", json={"target": "@candidate", "enabled": False}, headers=headers)
-    assert demoted.json()["role"] == "user"
-    assert notifications(published)[-1]["text"] == DEMOTED_TEXT
-
-    on = await client.post(f"{API}/staff/dsvr", json={"target": str(candidate.telegram_id), "enabled": True}, headers=headers)
-    assert on.json()["role"] == "dsvr"
-    assert notifications(published)[-1] == {"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_ON_TEXT}
-    listed = (await client.get(f"{API}/staff", headers=headers)).json()
-    assert candidate.telegram_id in {item["telegram_id"] for item in listed["dsvr"]}
-    off = await client.post(f"{API}/staff/dsvr", json={"target": str(candidate.telegram_id), "enabled": False}, headers=headers)
-    assert off.json()["role"] == "user"
-    assert notifications(published)[-1] == {"type": "notify", "telegram_id": candidate.telegram_id, "text": DSVR_OFF_TEXT}
-
-    before = len(notifications(published))
-    added = await client.post(
-        f"{API}/groups/{music}/admins", json={"target": str(candidate.telegram_id), "enabled": True}, headers=headers
-    )
-    assert added.status_code == 200, added.text
-    assert notifications(published)[before:] == [
-        {"type": "notify", "telegram_id": candidate.telegram_id, "text": GROUP_ADMIN_TEXT}
-    ]
-    listed = (await client.get(f"{API}/staff", headers=headers)).json()
-    music_row = next(item for item in listed["group_admins"] if item["group"]["id"] == music)
-    assert candidate.telegram_id in {item["telegram_id"] for item in music_row["admins"]}
-    assert main_admin.telegram_id in {item["telegram_id"] for item in listed["admins"]}
-
-    removed = await client.post(
-        f"{API}/groups/{music}/admins", json={"target": str(candidate.telegram_id), "enabled": False}, headers=headers
-    )
-    assert removed.status_code == 200
-    listed = (await client.get(f"{API}/staff", headers=headers)).json()
-    music_row = next(item for item in listed["group_admins"] if item["group"]["id"] == music)
-    assert candidate.telegram_id not in {item["telegram_id"] for item in music_row["admins"]}
-
-
-async def test_dsvr_role_change_with_notifications_off_queues_nothing(client, session, make_user, published):
-    main_admin, _, _, _ = await staff(make_user, session)
-    quiet = await make_user(notifications_enabled=False)
-    response = await client.post(
-        f"{API}/staff/dsvr", json={"target": str(quiet.telegram_id), "enabled": True}, headers=tg(main_admin.telegram_id)
-    )
-    assert response.status_code == 200 and response.json()["role"] == "dsvr"
-    assert notifications(published) == []
-
-
-@pytest.mark.parametrize("path", ["staff/admin", "staff/dsvr"])
-async def test_unknown_target_is_404_and_readable(client, session, make_user, path):
-    main_admin, _, _, _ = await staff(make_user, session)
-    response = await client.post(f"{API}/{path}", json={"target": "@nobody", "enabled": True}, headers=tg(main_admin.telegram_id))
-    assert response.status_code == 404 and response.json()["detail"] == "User not found"
 
 
 async def test_notifications_respect_the_opt_out(client, session, make_user, published):

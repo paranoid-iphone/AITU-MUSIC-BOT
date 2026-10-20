@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.db import models
-from app.services import permissions, roles
+from app.services import permissions, roles, users
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 
 
@@ -315,3 +315,99 @@ async def test_list_assignments(session, make_user, grant):
     [row] = await roles.list_assignments(session, admin.telegram_id, await _role_id(session, "Админ группы"))
 
     assert row.user_id == user.id and row.group_id == await _group_id(session, "dance")
+
+
+# --- source of truth: initial admins, bans and deletions -----------------------------------------------------------
+
+
+def _initial_admins(monkeypatch, *telegram_ids: int) -> None:
+    monkeypatch.setattr(type(settings), "initial_admin_ids", property(lambda self: set(telegram_ids)))
+
+
+async def _admin_assignments(session, user) -> int:
+    admin_role_id = await _role_id(session, "Админ")
+    return (
+        await session.execute(
+            select(func.count()).select_from(models.RoleAssignment).where(
+                models.RoleAssignment.user_id == user.id, models.RoleAssignment.role_id == admin_role_id
+            )
+        )
+    ).scalar_one()
+
+
+async def test_new_initial_admin_gets_the_admin_role_on_start(session, monkeypatch):
+    _initial_admins(monkeypatch, 777100)
+
+    founder = await users.upsert_telegram_user(session, 777100, "founder", "Founder")
+    again = await users.upsert_telegram_user(session, 777100, "founder", "Founder")
+
+    assert founder.status == "approved" and again.id == founder.id
+    assert await permissions.holds_admin_role(session, founder)
+    assert await _admin_assignments(session, founder) == 1
+
+
+async def test_existing_initial_admin_is_promoted_and_approved(session, make_user, monkeypatch):
+    founder = await make_user(status="pending")
+    _initial_admins(monkeypatch, founder.telegram_id)
+
+    await users.upsert_telegram_user(session, founder.telegram_id, founder.telegram_username, "Founder")
+
+    await session.refresh(founder)
+    assert founder.status == "approved"
+    assert await permissions.holds_admin_role(session, founder)
+
+
+async def test_ensure_initial_admin_is_idempotent(session, make_user):
+    user = await make_user()
+
+    await roles.ensure_initial_admin(session, user)
+    await roles.ensure_initial_admin(session, user)
+    await session.commit()
+
+    assert await _admin_assignments(session, user) == 1
+    assert await permissions.holds_admin_role(session, user)
+
+
+async def test_ensure_initial_admin_restores_a_lost_role(session, make_user, grant, monkeypatch):
+    founder = await make_user()
+    assignment = await grant(founder, "Админ")
+    await session.delete(assignment)
+    await session.commit()
+    assert not await permissions.holds_admin_role(session, founder)
+    _initial_admins(monkeypatch, founder.telegram_id)
+
+    await roles.ensure_initial_admin(session, founder)
+    await session.commit()
+
+    assert await permissions.holds_admin_role(session, founder)
+
+
+@pytest.mark.parametrize("action", ["ban", "delete"])
+async def test_ban_and_deletion_take_every_role_away(session, make_user, grant, action):
+    admin = await _admin(make_user, grant)
+    target = await make_user(group_slug="music")
+    await grant(target, "ДСВР")
+    await grant(target, "Админ группы", "music")
+
+    if action == "ban":
+        await users.ban_user(session, admin.telegram_id, str(target.telegram_id), "x")
+    else:
+        await users.soft_delete_user(session, admin.telegram_id, str(target.telegram_id), "x")
+
+    held = (await session.execute(select(models.RoleAssignment).where(models.RoleAssignment.user_id == target.id))).scalars()
+    assert list(held) == []
+    assert not await permissions.has_permission(session, target, "bookings.priority")
+    assert not await permissions.has_any_role(session, target)
+
+
+async def test_a_deleted_member_who_registers_again_starts_without_roles(session, make_user, grant):
+    admin = await _admin(make_user, grant)
+    target = await make_user()
+    await grant(target, "ДСВР")
+    await users.soft_delete_user(session, admin.telegram_id, str(target.telegram_id), "x")
+    await grant(target, "ДСВР")  # a stray assignment must not survive the next registration
+
+    returned = await users.upsert_telegram_user(session, target.telegram_id, "back", "Back Again")
+
+    assert returned.status == "pending"
+    assert not await permissions.has_any_role(session, returned)

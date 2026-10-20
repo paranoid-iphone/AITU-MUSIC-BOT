@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.core.timezone import now_local
 from app.db import models
-from app.services import bands, bookings, users
+from app.services import bands, bookings
 from app.services.errors import ConflictError, ForbiddenError
 
 
@@ -96,21 +96,3 @@ async def test_priority_rejects_past_and_out_of_hours(session, make_user):
         await bookings.create_priority_booking(session, dsvr.telegram_id, _day(), time(3), time(4), "night")
     with pytest.raises(ConflictError):
         await bookings.create_priority_booking(session, dsvr.telegram_id, _day(), time(12), time(12, 20), "odd")
-
-
-async def test_dsvr_role_assignment_rules(session, make_user):
-    admin = await make_user(role="admin")
-    candidate = await make_user()
-    pending = await make_user(status="pending")
-    other_admin = await make_user(role="admin")
-
-    promoted = await users.set_dsvr_role(session, admin.telegram_id, str(candidate.telegram_id), True)
-    assert promoted.role == "dsvr"
-    demoted = await users.set_dsvr_role(session, admin.telegram_id, str(candidate.telegram_id), False)
-    assert demoted.role == "user"
-    with pytest.raises(ConflictError):
-        await users.set_dsvr_role(session, admin.telegram_id, str(pending.telegram_id), True)
-    with pytest.raises(ConflictError):
-        await users.set_dsvr_role(session, admin.telegram_id, str(other_admin.telegram_id), True)
-    with pytest.raises(ForbiddenError):
-        await users.set_dsvr_role(session, candidate.telegram_id, str(candidate.telegram_id), True)

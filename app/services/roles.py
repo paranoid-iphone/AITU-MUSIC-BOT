@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,6 +33,26 @@ async def seed_default_roles(session: AsyncSession) -> None:
     for name, permissions in DEFAULT_ROLES.items():
         session.add(Role(name=name, permissions=[RolePermission(permission=key) for key in permissions]))
     await session.flush()
+
+
+async def ensure_initial_admin(session: AsyncSession, user: User) -> None:
+    """Gives a user from `INITIAL_ADMIN_TELEGRAM_IDS` the club-wide admin role if they lack it. No commit; the caller
+    decides who is an initial admin and sets the status."""
+    role = await ensure_admin_role(session)
+    await session.flush()  # a new user needs an id
+    held = await session.execute(
+        select(RoleAssignment.id).where(
+            RoleAssignment.user_id == user.id, RoleAssignment.role_id == role.id, RoleAssignment.group_id.is_(None)
+        )
+    )
+    if held.first() is None:
+        session.add(RoleAssignment(user_id=user.id, role_id=role.id, group_id=None))
+        await session.flush()
+
+
+async def revoke_all(session: AsyncSession, user: User) -> None:
+    """Takes every role away from a user (ban, deletion). No commit, no journal entry: the caller records why."""
+    await session.execute(delete(RoleAssignment).where(RoleAssignment.user_id == user.id))
 
 
 async def _actor(session: AsyncSession, telegram_id: int) -> User:

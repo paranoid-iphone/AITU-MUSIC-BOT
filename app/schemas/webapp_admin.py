@@ -8,11 +8,6 @@ class WebAppModerate(BaseModel):
     reason: str | None = Field(default=None, max_length=255)
 
 
-class WebAppRoleChange(BaseModel):
-    target: str = Field(min_length=1, max_length=100)
-    enabled: bool = True
-
-
 class WebAppRoleCreate(BaseModel):
     # The name's length is checked by the service, so a bad one comes back with its error code.
     name: str = Field(max_length=500)

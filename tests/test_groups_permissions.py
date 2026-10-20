@@ -2,18 +2,18 @@ import pytest
 from sqlalchemy import select
 
 from app.db import models
-from app.services import bands, bookings, groups, users
+from app.services import bands, bookings, groups, roles, users
 from app.services.errors import ConflictError, ForbiddenError
+from app.services.permissions import holds_admin_role
 
 
 async def _group_id(session, slug: str) -> int:
     return (await session.execute(select(models.Group.id).where(models.Group.slug == slug))).scalar_one()
 
 
-async def test_group_admin_can_approve_only_own_group(session, make_user):
-    main_admin = await make_user(role="admin")
+async def test_group_admin_can_approve_only_own_group(session, make_user, grant):
     dance_admin = await make_user(group_slug="dance")
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, "dance"), str(dance_admin.telegram_id))
+    await grant(dance_admin, "Админ группы", "dance")
 
     dancer = await make_user(status="pending", group_slug="dance")
     musician = await make_user(status="pending", group_slug="music")
@@ -24,10 +24,9 @@ async def test_group_admin_can_approve_only_own_group(session, make_user):
         await users.approve_user(session, dance_admin.telegram_id, str(musician.telegram_id))
 
 
-async def test_group_admin_lists_only_own_group_users(session, make_user):
-    main_admin = await make_user(role="admin")
+async def test_group_admin_lists_only_own_group_users(session, make_user, grant):
     cheer_admin = await make_user(group_slug="cheer")
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, "cheer"), str(cheer_admin.telegram_id))
+    await grant(cheer_admin, "Админ группы", "cheer")
     cheerleader = await make_user(status="pending", group_slug="cheer")
     await make_user(status="pending", group_slug="music")
 
@@ -41,19 +40,12 @@ async def test_regular_user_cannot_list_users(session, make_user):
         await users.list_users_by_status(session, plain.telegram_id)
 
 
-async def test_only_main_admin_can_assign_group_admins(session, make_user):
-    group_admin = await make_user()
-    target = await make_user()
-    with pytest.raises(ForbiddenError):
-        await groups.add_group_admin(session, group_admin.telegram_id, await _group_id(session, "music"), str(target.telegram_id))
-
-
-async def test_reviewers_are_main_admins_plus_group_admins(session, make_user):
+async def test_reviewers_are_main_admins_plus_group_admins(session, make_user, grant):
     main_admin = await make_user(role="admin")
     dance_admin = await make_user(group_slug="dance")
     music_admin = await make_user(group_slug="music")
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, "dance"), str(dance_admin.telegram_id))
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, "music"), str(music_admin.telegram_id))
+    await grant(dance_admin, "Админ группы", "dance")
+    await grant(music_admin, "Админ группы", "music")
 
     ids = await groups.registration_reviewer_ids(session, await _group_id(session, "dance"))
     assert set(ids) == {main_admin.telegram_id, dance_admin.telegram_id}
@@ -92,10 +84,9 @@ async def test_stranger_cannot_change_responsible(session, make_user, make_band)
         await bands.update_band_responsible(session, band.id, stranger.telegram_id, detail.members[0].id)
 
 
-async def test_group_admin_manages_bands_of_own_group_only(session, make_user, make_band):
-    main_admin = await make_user(role="admin")
+async def test_group_admin_manages_bands_of_own_group_only(session, make_user, make_band, grant):
     dance_admin = await make_user(group_slug="dance")
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, "dance"), str(dance_admin.telegram_id))
+    await grant(dance_admin, "Админ группы", "dance")
     dance_band = await make_band(await make_user(group_slug="dance"), "Dance", group_id=await _group_id(session, "dance"))
     music_band = await make_band(await make_user(group_slug="music"), "Music", group_id=await _group_id(session, "music"))
 
@@ -113,8 +104,9 @@ async def test_banned_admin_loses_access_and_role(session, make_user):
     await users.ban_user(session, main_admin.telegram_id, str(other_admin.telegram_id), "test")
     await session.refresh(other_admin)
     assert other_admin.role == "user"
+    assert not await holds_admin_role(session, other_admin)
     with pytest.raises(ForbiddenError):
-        await users.list_admins(session, other_admin.telegram_id)
+        await roles.list_roles(session, other_admin.telegram_id)
 
 
 async def test_admin_cannot_ban_self(session, make_user):
@@ -123,17 +115,16 @@ async def test_admin_cannot_ban_self(session, make_user):
         await users.ban_user(session, admin.telegram_id, str(admin.telegram_id), "oops")
 
 
-async def _make_group_admin(session, make_user, main_admin, slug: str):
+async def _make_group_admin(make_user, grant, slug: str):
     group_admin = await make_user(group_slug=slug)
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, slug), str(group_admin.telegram_id))
+    await grant(group_admin, "Админ группы", slug)
     return group_admin
 
 
 @pytest.mark.parametrize("target_role", ["admin", "dsvr"])
 @pytest.mark.parametrize("action", ["approve", "reject", "ban", "delete"])
-async def test_group_admin_cannot_moderate_staff(session, make_user, target_role, action):
-    main_admin = await make_user(role="admin")
-    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+async def test_group_admin_cannot_moderate_staff(session, make_user, grant, target_role, action):
+    group_admin = await _make_group_admin(make_user, grant, "music")
     target = await make_user(role=target_role, group_slug="music")
 
     calls = {
@@ -149,18 +140,17 @@ async def test_group_admin_cannot_moderate_staff(session, make_user, target_role
     assert target.status == "approved"
 
 
-async def test_group_admin_still_moderates_regular_members_of_own_group(session, make_user):
-    main_admin = await make_user(role="admin")
-    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+async def test_group_admin_still_moderates_regular_members_of_own_group(session, make_user, grant):
+    group_admin = await _make_group_admin(make_user, grant, "music")
     member = await make_user(group_slug="music")
 
     banned = await users.ban_user(session, group_admin.telegram_id, str(member.telegram_id), "spam")
     assert banned.status == "banned"
 
 
-async def test_group_admin_cannot_restore_banned_user(session, make_user):
+async def test_group_admin_cannot_restore_banned_user(session, make_user, grant):
     main_admin = await make_user(role="admin")
-    group_admin = await _make_group_admin(session, make_user, main_admin, "music")
+    group_admin = await _make_group_admin(make_user, grant, "music")
     member = await make_user(group_slug="music")
     await users.ban_user(session, main_admin.telegram_id, str(member.telegram_id), "rules")
 
@@ -226,4 +216,4 @@ async def test_dsvr_can_manage_any_booking_but_not_admin_actions(session, make_u
     moved = await bookings.update_booking(session, dsvr.telegram_id, booking.id, song_title="Changed by DSVR")
     assert moved.song_title == "Changed by DSVR"
     with pytest.raises(ForbiddenError):
-        await users.list_admins(session, dsvr.telegram_id)
+        await roles.list_roles(session, dsvr.telegram_id)

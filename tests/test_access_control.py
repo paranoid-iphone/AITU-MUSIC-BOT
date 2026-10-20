@@ -10,7 +10,7 @@ from app.core.timezone import now_local
 from app.db import models
 from app.db.session import get_session
 from app.main import app
-from app.services import bands, bookings, groups, users
+from app.services import bands, bookings, users
 from app.services.errors import ForbiddenError, NotFoundError
 
 AUTH = {"X-Internal-Token": settings.internal_api_token}
@@ -32,9 +32,9 @@ async def _group_id(session, slug: str) -> int:
     return (await session.execute(select(models.Group.id).where(models.Group.slug == slug))).scalar_one()
 
 
-async def _make_group_admin(session, make_user, main_admin, slug: str):
+async def _make_group_admin(make_user, grant, slug: str):
     group_admin = await make_user(group_slug=slug)
-    await groups.add_group_admin(session, main_admin.telegram_id, await _group_id(session, slug), str(group_admin.telegram_id))
+    await grant(group_admin, "Админ группы", slug)
     return group_admin
 
 
@@ -82,9 +82,9 @@ async def test_unapproved_member_cannot_read_band(session, make_user, make_band)
         await bands.get_band_for_requester(session, band.id, member.telegram_id)
 
 
-async def test_admins_read_bands_in_their_scope_only(session, make_user, make_band):
+async def test_admins_read_bands_in_their_scope_only(session, make_user, make_band, grant):
     main_admin = await make_user(role="admin")
-    dance_admin = await _make_group_admin(session, make_user, main_admin, "dance")
+    dance_admin = await _make_group_admin(make_user, grant, "dance")
     _, _, dance_band = await _band_with_member(session, make_user, make_band, "dance")
     _, _, music_band = await _band_with_member(session, make_user, make_band, "music")
 
@@ -97,10 +97,10 @@ async def test_admins_read_bands_in_their_scope_only(session, make_user, make_ba
 # --- invite code visibility -------------------------------------------------------------------------------------
 
 
-async def test_invite_code_visible_to_owner_responsible_and_admins_only(session, make_user, make_band):
+async def test_invite_code_visible_to_owner_responsible_and_admins_only(session, make_user, make_band, grant):
     main_admin = await make_user(role="admin")
-    music_admin = await _make_group_admin(session, make_user, main_admin, "music")
-    dance_admin = await _make_group_admin(session, make_user, main_admin, "dance")
+    music_admin = await _make_group_admin(make_user, grant, "music")
+    dance_admin = await _make_group_admin(make_user, grant, "dance")
     owner, member, band = await _band_with_member(session, make_user, make_band)
     responsible = await make_user()
     await bands.join_band(session, responsible.telegram_id, band.invite_code, "бас")
@@ -169,9 +169,9 @@ async def test_user_cannot_read_other_users(session, make_user):
         await users.get_user_for_requester(session, other.telegram_id, me.telegram_id)
 
 
-async def test_admins_read_users_in_their_scope_only(session, make_user):
+async def test_admins_read_users_in_their_scope_only(session, make_user, grant):
     main_admin = await make_user(role="admin")
-    dance_admin = await _make_group_admin(session, make_user, main_admin, "dance")
+    dance_admin = await _make_group_admin(make_user, grant, "dance")
     dancer = await make_user(group_slug="dance")
     musician = await make_user(group_slug="music")
 

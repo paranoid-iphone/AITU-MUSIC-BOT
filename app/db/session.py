@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.db import models
+from app.db.models import User, UserStatus
 from app.db.migrate import upgrade_to_head
 
 engine = create_async_engine(settings.database_url, echo=settings.sql_echo)
@@ -46,13 +47,13 @@ async def seed_reference_data() -> None:
                 text("INSERT INTO groups (slug, title) VALUES (:slug, :title) ON CONFLICT (slug) DO NOTHING"),
                 {"slug": slug, "title": title},
             )
-        for admin_id in settings.initial_admin_ids:
-            await conn.execute(
-                text("UPDATE users SET role = 'admin', status = 'approved' WHERE telegram_id = :telegram_id"),
-                {"telegram_id": admin_id},
-            )
-    from app.services.roles import ensure_admin_role
+    from app.services.roles import ensure_admin_role, ensure_initial_admin
 
     async with AsyncSessionLocal() as session:
         await ensure_admin_role(session)
+        if settings.initial_admin_ids:
+            known = await session.execute(select(User).where(User.telegram_id.in_(settings.initial_admin_ids)))
+            for user in known.scalars():
+                user.status = UserStatus.APPROVED.value
+                await ensure_initial_admin(session, user)
         await session.commit()

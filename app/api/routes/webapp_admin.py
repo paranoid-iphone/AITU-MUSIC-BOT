@@ -1,6 +1,6 @@
 """Mini App admin API: registration requests, users and roles. Authenticated by signed `initData`, not the internal token.
 
-Permission rules live in `services/users.py` and `services/groups.py`; these routes only check who may open the
+Permission rules live in `services/users.py` and `services/roles.py`; these routes only check who may open the
 screen at all and translate the services' results into JSON.
 """
 from datetime import date, datetime, timezone
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.webapp_auth import current_webapp_user, fresh_webapp_user
 from app.core.config import settings
-from app.db.models import Group, User, UserRole, UserStatus
+from app.db.models import Group, User, UserStatus
 from app.db.session import get_session
 from app.schemas.webapp_admin import (
     WebAppDayUpdate,
@@ -22,14 +22,12 @@ from app.schemas.webapp_admin import (
     WebAppPersonalUpdate,
     WebAppRegistrationNotifyUpdate,
     WebAppRoleAssign,
-    WebAppRoleChange,
     WebAppRoleCreate,
     WebAppRoleUpdate,
     WebAppWindowUpdate,
 )
 from app.services import admin as admin_service
 from app.services import audit
-from app.services import groups as group_service
 from app.services import outbox
 from app.services import roles as role_service
 from app.services import users as user_service
@@ -70,17 +68,6 @@ settings_reader, settings_writer = reader_with("settings.manage"), writer_with("
 history_reader = reader_with("schedule.history")
 audit_reader = reader_with("audit.view")
 roles_reader, roles_writer = reader_with("roles.manage"), writer_with("roles.manage")
-
-
-# The role screens of the old model; they go away with `users.role` and `group_admins`.
-async def legacy_admin_reader(user: User = Depends(current_webapp_user)) -> User:
-    user_service.require_admin(user)
-    return user
-
-
-async def legacy_admin_writer(user: User = Depends(fresh_webapp_user)) -> User:
-    user_service.require_admin(user)
-    return user
 
 
 def _group_payload(group: Group | None) -> dict | None:
@@ -165,57 +152,6 @@ async def delete(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     target = await user_service.soft_delete_user(session, admin.telegram_id, str(telegram_id), payload.reason)
-    return await person(session, target)
-
-
-@router.get("/staff")
-async def staff(admin: User = Depends(legacy_admin_reader), session: AsyncSession = Depends(get_session)) -> dict:
-    admins = await user_service.list_admins(session, admin.telegram_id)
-    dsvr_rows = await session.execute(
-        select(User)
-        .where(User.role == UserRole.DSVR.value, User.status == UserStatus.APPROVED.value)
-        .order_by(User.created_at.desc())
-    )
-    group_admins = []
-    for group in await group_service.list_groups(session):
-        members = await group_service.list_group_admins(session, admin.telegram_id, group.id)
-        group_admins.append({"group": _group_payload(group), "admins": await _people(session, members)})
-    return {
-        "admins": await _people(session, admins),
-        "dsvr": await _people(session, list(dsvr_rows.scalars())),
-        "group_admins": group_admins,
-    }
-
-
-@router.post("/staff/admin")
-async def set_admin(
-    payload: WebAppRoleChange, admin: User = Depends(legacy_admin_writer), session: AsyncSession = Depends(get_session)
-) -> dict:
-    change = user_service.promote_to_admin if payload.enabled else user_service.demote_admin
-    target = await change(session, admin.telegram_id, payload.target)
-    await outbox.commit_and_publish(session)
-    return await person(session, target)
-
-
-@router.post("/staff/dsvr")
-async def set_dsvr(
-    payload: WebAppRoleChange, admin: User = Depends(legacy_admin_writer), session: AsyncSession = Depends(get_session)
-) -> dict:
-    target = await user_service.set_dsvr_role(session, admin.telegram_id, payload.target, payload.enabled)
-    await outbox.commit_and_publish(session)
-    return await person(session, target)
-
-
-@router.post("/groups/{group_id}/admins")
-async def set_group_admin(
-    group_id: int,
-    payload: WebAppRoleChange,
-    admin: User = Depends(legacy_admin_writer),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    change = group_service.add_group_admin if payload.enabled else group_service.remove_group_admin
-    target = await change(session, admin.telegram_id, group_id, payload.target)
-    await outbox.commit_and_publish(session)
     return await person(session, target)
 
 

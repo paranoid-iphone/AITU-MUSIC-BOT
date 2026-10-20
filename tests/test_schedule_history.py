@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.core.timezone import now_local
 from app.db import models
-from app.services import bands, bookings, groups, schedule_history
+from app.services import bands, bookings, schedule_history
 from app.services.errors import ConflictError, ForbiddenError
 
 
@@ -93,11 +93,11 @@ async def test_cancelled_booking_cannot_be_edited_or_cancelled_twice(session, ma
         await bookings.delete_booking(session, owner.telegram_id, booking.id)
 
 
-async def test_history_visibility(session, make_user, make_band):
+async def test_history_visibility(session, make_user, make_band, grant):
     main_admin = await make_user(role="admin")
     dance_admin = await make_user(group_slug="dance")
     dance_id = (await session.execute(select(models.Group.id).where(models.Group.slug == "dance"))).scalar_one()
-    await groups.add_group_admin(session, main_admin.telegram_id, dance_id, str(dance_admin.telegram_id))
+    await grant(dance_admin, "Админ группы", "dance")
 
     dance_owner = await make_user(group_slug="dance")
     music_owner = await make_user(group_slug="music")

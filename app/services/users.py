@@ -78,8 +78,9 @@ async def upsert_telegram_user(
             .where(func.lower(User.telegram_username) == telegram_username.lower(), User.telegram_id != telegram_id)
             .values(telegram_username=None)
         )
+    from app.services.roles import ensure_initial_admin, revoke_all
+
     is_initial_admin = telegram_id in settings.initial_admin_ids
-    role = UserRole.ADMIN.value if is_initial_admin else UserRole.USER.value
     status = UserStatus.APPROVED.value if is_initial_admin else UserStatus.PENDING.value
     if user is None:
         user = User(
@@ -87,7 +88,7 @@ async def upsert_telegram_user(
             telegram_username=telegram_username,
             telegram_full_name=telegram_full_name,
             language=settings.default_language,
-            role=role,
+            role=UserRole.USER.value,
             status=status,
         )
         session.add(user)
@@ -99,6 +100,7 @@ async def upsert_telegram_user(
         if user.status == UserStatus.DELETED.value and not is_initial_admin:
             user.status = UserStatus.PENDING.value
             user.role = UserRole.USER.value
+            await revoke_all(session, user)
             user.first_name = None
             user.last_name = None
             user.study_group = None
@@ -108,9 +110,10 @@ async def upsert_telegram_user(
             user.registration_retry_after = None
             user.approved_by_id = None
             user.approved_at = None
-        if user.telegram_id in settings.initial_admin_ids:
-            user.role = UserRole.ADMIN.value
+        if is_initial_admin:
             user.status = UserStatus.APPROVED.value
+    if is_initial_admin:
+        await ensure_initial_admin(session, user)
     await outbox.commit_and_publish(session)
     await session.refresh(user)
     return await annotate_access(session, user)
@@ -151,11 +154,6 @@ async def update_profile(
     await outbox.commit_and_publish(session)
     await session.refresh(user)
     return user
-
-
-def require_admin(user: User) -> None:
-    if user.role != UserRole.ADMIN.value or user.status != UserStatus.APPROVED.value:
-        raise ForbiddenError("Admin access required")
 
 
 async def _guard_banned_or_deleted(session: AsyncSession, admin: User, target: User) -> None:
@@ -283,109 +281,6 @@ async def approve_user(session: AsyncSession, admin_telegram_id: int, target_ide
     return target
 
 
-async def promote_to_admin(session: AsyncSession, admin_telegram_id: int, target_identifier: str) -> User:
-    from app.services.audit import log_action
-
-    admin = await get_user_by_telegram_id(session, admin_telegram_id)
-    target = await get_user_by_identifier(session, target_identifier)
-    if admin is None or target is None:
-        raise NotFoundError("User not found")
-    require_admin(admin)
-    if target.status == UserStatus.BANNED.value:
-        raise ForbiddenError("User is banned")
-
-    target.role = UserRole.ADMIN.value
-    target.status = UserStatus.APPROVED.value
-    target.moderation_reason = None
-    target.registration_retry_after = None
-    target.approved_by_id = admin.id
-    target.approved_at = utcnow()
-    await log_action(
-        session,
-        admin.id,
-        "admin.add",
-        "user",
-        target.telegram_id,
-        f"Added admin: @{target.telegram_username or target.telegram_id}",
-    )
-    _notify(session, target, "Вам выдали права админа в AITU Music Club Bot.")
-    await session.commit()
-    await session.refresh(target)
-    return target
-
-
-async def demote_admin(session: AsyncSession, admin_telegram_id: int, target_identifier: str) -> User:
-    from app.services.audit import log_action
-
-    admin = await get_user_by_telegram_id(session, admin_telegram_id)
-    target = await get_user_by_identifier(session, target_identifier)
-    if admin is None or target is None:
-        raise NotFoundError("User not found")
-    require_admin(admin)
-    if target.telegram_id in settings.initial_admin_ids:
-        raise ForbiddenError("Initial admin cannot be demoted")
-    if target.telegram_id == admin.telegram_id:
-        raise ForbiddenError("You cannot remove your own admin role")
-    target.role = UserRole.USER.value
-    if target.status != UserStatus.APPROVED.value:
-        target.status = UserStatus.APPROVED.value
-    await log_action(
-        session,
-        admin.id,
-        "admin.remove",
-        "user",
-        target.telegram_id,
-        f"Removed admin: @{target.telegram_username or target.telegram_id}",
-    )
-    _notify(session, target, "С вас сняли права админа в AITU Music Club Bot.")
-    await session.commit()
-    await session.refresh(target)
-    return target
-
-
-async def set_dsvr_role(session: AsyncSession, admin_telegram_id: int, target_identifier: str, enabled: bool) -> User:
-    from app.services.audit import log_action
-
-    admin = await get_user_by_telegram_id(session, admin_telegram_id)
-    target = await get_user_by_identifier(session, target_identifier)
-    if admin is None or target is None:
-        raise NotFoundError("User not found")
-    require_admin(admin)
-    if target.role == UserRole.ADMIN.value:
-        raise ConflictError("Admins already have full access; remove admin role first")
-    if enabled:
-        if target.status != UserStatus.APPROVED.value:
-            raise ConflictError("User must be approved before becoming DSVR")
-        target.role = UserRole.DSVR.value
-    elif target.role == UserRole.DSVR.value:
-        target.role = UserRole.USER.value
-    await log_action(
-        session,
-        admin.id,
-        "dsvr.add" if enabled else "dsvr.remove",
-        "user",
-        target.telegram_id,
-        f"{'Назначил' if enabled else 'Снял'} ДСВР: @{target.telegram_username or target.telegram_id}",
-    )
-    _notify(session, target, "Вам выдана роль ДСВР в AITU Music Club Bot." if enabled else "С вас сняли роль ДСВР в AITU Music Club Bot.")
-    await session.commit()
-    await session.refresh(target)
-    return target
-
-
-async def list_admins(session: AsyncSession, admin_telegram_id: int) -> list[User]:
-    admin = await get_user_by_telegram_id(session, admin_telegram_id)
-    if admin is None:
-        raise NotFoundError("Admin not found")
-    require_admin(admin)
-    result = await session.execute(
-        select(User)
-        .where(User.role == UserRole.ADMIN.value, User.status == UserStatus.APPROVED.value)
-        .order_by(User.created_at.desc())
-    )
-    return list(result.scalars())
-
-
 async def reject_user(session: AsyncSession, admin_telegram_id: int, target_identifier: str, reason: str | None) -> User:
     from app.services.audit import log_action
 
@@ -468,7 +363,10 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
         raise NotFoundError("User not found")
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
+    from app.services.roles import revoke_all
+
     await _release_holdings(session, target, admin, "Пользователь заблокирован")
+    await revoke_all(session, target)
     target.status = UserStatus.BANNED.value
     target.role = UserRole.USER.value
     target.moderation_reason = reason
@@ -496,7 +394,10 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     await _require_moderation_rights(session, admin, target)
     _guard_moderation_target(admin, target)
     await _guard_banned_or_deleted(session, admin, target)
+    from app.services.roles import revoke_all
+
     await _release_holdings(session, target, admin, "Пользователь удалён")
+    await revoke_all(session, target)
     target.status = UserStatus.DELETED.value
     target.role = UserRole.USER.value
     target.first_name = None
