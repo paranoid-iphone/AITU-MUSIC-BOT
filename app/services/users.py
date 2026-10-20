@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.timezone import format_moment, now_local, utcnow
-from app.db.models import User, UserRole, UserStatus
+from app.db.models import User, UserStatus
 from app.services import outbox
 from app.services.errors import ConflictError, ForbiddenError, NotFoundError
 from app.services.permissions import (
@@ -84,7 +84,6 @@ async def upsert_telegram_user(
             telegram_username=telegram_username,
             telegram_full_name=telegram_full_name,
             language=settings.default_language,
-            role=UserRole.USER.value,
             status=status,
         )
         session.add(user)
@@ -95,7 +94,6 @@ async def upsert_telegram_user(
         user.telegram_full_name = telegram_full_name
         if user.status == UserStatus.DELETED.value and not is_initial_admin:
             user.status = UserStatus.PENDING.value
-            user.role = UserRole.USER.value
             await revoke_all(session, user)
             user.first_name = None
             user.last_name = None
@@ -364,7 +362,6 @@ async def ban_user(session: AsyncSession, admin_telegram_id: int, target_identif
     await _release_holdings(session, target, admin, "Пользователь заблокирован")
     await revoke_all(session, target)
     target.status = UserStatus.BANNED.value
-    target.role = UserRole.USER.value
     target.moderation_reason = reason
     target.registration_retry_after = None
     await log_action(
@@ -395,7 +392,6 @@ async def soft_delete_user(session: AsyncSession, admin_telegram_id: int, target
     await _release_holdings(session, target, admin, "Пользователь удалён")
     await revoke_all(session, target)
     target.status = UserStatus.DELETED.value
-    target.role = UserRole.USER.value
     target.first_name = None
     target.last_name = None
     target.study_group = None

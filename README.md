@@ -39,15 +39,42 @@ If the server was down on Sunday evening, the missed allocation runs automatical
 |------|--------|
 | user | book for own bands or personally, edit own bookings, see own band history |
 | band leader / **responsible person** | submit weekly requests (weekly planning mode); the responsible person is notified about every change of the band's schedule and is shown in the schedule table |
-| group admin (music / dance / cheer) | approve registrations and manage bands of **their own group** |
-| **DSVR** | take the room at any time up to 30 days ahead: overlapping bookings are cancelled and their people notified; can edit any booking |
-| admin | everything, including groups, group admins, DSVR role, limits, working hours, allocation preview/run (weekly planning mode) |
+| staff (admin, DSVR, group admin or any role you create) | whatever the permissions of their roles allow, see below |
 
-New users pick their group (music / dance / cheer) during registration; the request goes to that group's admins and
-to the main admins. Registration requests, user moderation (approve / reject / ban / delete), the admin, DSVR and
-group-admin roles, settings and the schedule history are managed in the Mini App's **Админ** tab
-(*Заявки / Пользователи / Роли / Настройки / История*); the bot's admin menu only opens it. A user whose DSVR role is
-granted or removed gets a bot message. Group admins see only their own group and have no *Роли* tab.
+### Staff roles and permissions
+
+Staff roles are made in the Mini App (**Админ → Роли**): a role has a name and a set of ticked permissions, and it is
+given to a person for the whole club or for one group (music / dance / cheer). Several roles can be held at once.
+
+| Permission | Allows | Scope |
+|------------|--------|-------|
+| `users.moderate` | approve / reject registrations, ban, delete, see profiles | group |
+| `bands.manage` | manage any band | group |
+| `bookings.manage` | edit and cancel other people's bookings | group |
+| `bookings.priority` | take the room with priority (overlapping bookings are cancelled and their people notified), ignore booking limits, staff bookings | whole club |
+| `schedule.history` | the schedule history | group |
+| `audit.view` | the action journal | whole club |
+| `settings.manage` | days, working hours, limits, personal rehearsals, notification mode, running the allocation | whole club |
+| `events.manage` | concerts and applications | whole club |
+| `roles.manage` | create, edit and delete roles, give and take them away | whole club |
+
+A *group* permission works for one group when the role is given to a group, and everywhere when it is given to the whole
+club. A *whole club* permission only works in an assignment without a group (the editor says so). The same permission
+list drives the Mini App tabs and the bot menus.
+
+Three roles exist from the start and behave as admin, DSVR and group admin did before: **Админ** (system role, holds
+every permission, including ones added later, cannot be edited or deleted), **ДСВР** (`bookings.priority`,
+`bookings.manage`, `schedule.history`) and **Админ группы** (`users.moderate`, `bands.manage`, `bookings.manage`,
+`schedule.history`). The last two are ordinary roles: edit or delete them as you like. Rules that stay: only a holder of
+*Админ* gives or takes that role, the last holder and the ids from `INITIAL_ADMIN_TELEGRAM_IDS` keep it, and a person
+with any role is moderated (ban, delete, restore) only by a holder of *Админ*. `roles.manage` lets its holder create a
+role with any permission, so give it to people you would trust as admins.
+
+New users pick their group (music / dance / cheer) during registration; the request goes to the holders of
+`users.moderate` for that group and for the whole club. Registration requests, user moderation (approve / reject / ban /
+delete), roles, settings and the schedule history are managed in the Mini App's **Админ** tab
+(*Заявки / Пользователи / Роли / Настройки / История*, each shown to whoever holds the matching permission); the bot's
+admin menu only opens it. A user who is given or loses a role gets a bot message.
 
 **How admins hear about a new registration request** is a setting of the main admin (*Админ → Настройки → Уведомления о
 заявках*): buttons «Одобрить / Отклонить» in the bot chat (default), a single button that opens *Админ → Заявки*, or no

@@ -94,22 +94,26 @@ def upgrade() -> None:
                 bind.execute(permissions.insert().values(role_id=found, permission=permission))
         role_ids[name] = found
 
-    # Move today's staff over; the legacy columns stay as they are.
-    for legacy_role, role_name in (("admin", ADMIN), ("dsvr", "ДСВР")):
+    # Move today's staff over; the legacy columns stay as they are. A database adopted from create_all with the
+    # current models has no legacy columns, and nobody to move.
+    inspector = sa.inspect(bind)
+    if "role" in {column["name"] for column in inspector.get_columns("users")}:
+        for legacy_role, role_name in (("admin", ADMIN), ("dsvr", "ДСВР")):
+            bind.execute(
+                sa.text(
+                    "INSERT INTO role_assignments (user_id, role_id, group_id, created_at) "
+                    "SELECT id, :role_id, NULL, CURRENT_TIMESTAMP FROM users WHERE role = :legacy"
+                ),
+                {"role_id": role_ids[role_name], "legacy": legacy_role},
+            )
+    if "group_admins" in inspector.get_table_names():
         bind.execute(
             sa.text(
                 "INSERT INTO role_assignments (user_id, role_id, group_id, created_at) "
-                "SELECT id, :role_id, NULL, CURRENT_TIMESTAMP FROM users WHERE role = :legacy"
+                "SELECT user_id, :role_id, group_id, CURRENT_TIMESTAMP FROM group_admins"
             ),
-            {"role_id": role_ids[role_name], "legacy": legacy_role},
+            {"role_id": role_ids["Админ группы"]},
         )
-    bind.execute(
-        sa.text(
-            "INSERT INTO role_assignments (user_id, role_id, group_id, created_at) "
-            "SELECT user_id, :role_id, group_id, CURRENT_TIMESTAMP FROM group_admins"
-        ),
-        {"role_id": role_ids["Админ группы"]},
-    )
 
 
 def downgrade() -> None:

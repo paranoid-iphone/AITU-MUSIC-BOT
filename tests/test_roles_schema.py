@@ -85,3 +85,29 @@ def test_downgrade_removes_the_role_tables(tmp_path):
         engine.dispose()
     assert not role_tables & tables
     assert "group_admins" in tables
+
+
+def test_legacy_role_column_and_group_admins_are_dropped(tmp_path):
+    from sqlalchemy import inspect
+
+    async_url, sync_url = _urls(tmp_path)
+    config = alembic_config(async_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(sync_url)
+    try:
+        assert "role" not in {column["name"] for column in inspect(engine).get_columns("users")}
+        assert "group_admins" not in inspect(engine).get_table_names()
+
+        command.downgrade(config, "0004_roles")
+        assert "group_admins" in inspect(engine).get_table_names()
+        role = next(column for column in inspect(engine).get_columns("users") if column["name"] == "role")
+        assert not role["nullable"]
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO users (telegram_id, language, status, notifications_enabled, created_at, updated_at) "
+                "VALUES (1, 'ru', 'approved', 1, '2026-10-01 00:00:00', '2026-10-01 00:00:00')"
+            )
+            assert conn.exec_driver_sql("SELECT role FROM users").scalar_one() == "user"
+    finally:
+        engine.dispose()

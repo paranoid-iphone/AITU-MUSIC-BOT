@@ -54,11 +54,11 @@ Two processes share one codebase and talk over HTTP + Redis:
   only in the Mini App: the bot's Репетиции/Коллективы menus and the `start=join_<code>` deep link just offer `web_app`
   buttons (`keyboards.mini_app_*`; a web_app button cannot carry `start_param`, so the target goes in `?screen=` / `?join=`,
   which `app.js` reads). Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
-  Registration requests, user moderation and admin/DSVR/group-admin roles also live only in the Mini App ("Админ" tab,
+  Registration requests, user moderation and the roles constructor also live only in the Mini App ("Админ" tab,
   `app/api/routes/webapp_admin.py` → `/webapp/api/admin/*`, `?screen=admin&tab=requests|users|roles`); the bot's admin
   menu has `web_app` buttons for them. `webapp_admin.py` also serves `settings*` (days, window, limits, personal, `registration-notify`), `history` and `actions`.
-  The user-facing notifications for approve / reject / role changes (admin, DSVR,
-  group admin) are queued by the services (`services/users.py`, `services/groups.py`), so every caller must publish with
+  The user-facing notifications for approve / reject / role changes (giving or taking a role)
+  are queued by the services (`services/users.py`, `services/roles.py`), so every caller must publish with
   `outbox.commit_and_publish`. Taking the room (DSVR priority, staff booking), editing or cancelling any booking, the days /
   room hours / limits / personal-rehearsal settings and the schedule history are Mini App only too (grid modes and the
   "Настройки" / "История" admin tabs); the bot keeps just the concerts, the admin band list, the action journal and
@@ -144,8 +144,24 @@ columns, never changes existing ones, and records them as the history action `re
 
 ### Permissions
 
-Role checks are centralized in `services/permissions.py` (user, band leader/responsible person, group admin scoped to
-their own group, DSVR, admin). Users in `INITIAL_ADMIN_TELEGRAM_IDS` become admins on `/start` and cannot be demoted.
+Staff access is permission-based. Tables `roles`, `role_permissions`, `role_assignments` (`group_id` NULL = whole club);
+the catalog (`PERMISSIONS`: key → `club` | `group` scope) and the starting roles live in `services/permission_catalog.py`,
+the role service (create / update / delete / assign / revoke, journal `role.*`, notifications) in `services/roles.py`.
+Checks go through `services/permissions.py`: `has_permission(session, user, perm, group_id)`, `require_permission`
+(`ForbiddenError("Admin access required")`), `permitted_group_ids` (`None` = every group) for lists, `holders_of` for
+notification recipients, and `holds_admin_role` / `has_any_role` for the rules about the system role. Only approved users
+hold anything; a `club`-scope permission counts only in an assignment without a group. Nothing is cached, so a role change
+applies on the next request. Admin routes pick their guard with `reader_with` / `writer_with` (`webapp_admin.py`); the
+Mini App reads `/me.permissions` through `can(perm, groupId)` and the bot gets `UserRead.is_admin` / `permissions` from
+`annotate_access`.
+
+The role «Админ» (`is_system`, the only reference to a role in code) has no `role_permissions` rows and holds the whole
+catalog, so a permission added later works for admins at once; «ДСВР» and «Админ группы» are ordinary roles created by
+migration `0004_roles`. To add a permission: put it in `PERMISSIONS`, add the `webapp.admin.perm.<key>` label in the three
+locales, guard the code with it. Only a holder of «Админ» assigns or revokes that role, the last holder and users in
+`INITIAL_ADMIN_TELEGRAM_IDS` (given the role on `/start` by `roles.ensure_initial_admin`) keep it, and `ban_user` /
+`soft_delete_user` drop all assignments (`roles.revoke_all`). Tests give roles with the `grant` / `make_user(role=...)` /
+`make_group_admin` fixtures.
 
 ## Gotchas
 

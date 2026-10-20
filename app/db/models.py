@@ -12,12 +12,6 @@ class Base(DeclarativeBase):
     pass
 
 
-class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
-    DSVR = "dsvr"
-
-
 GROUP_SLUGS = (("music", "Мьюзик"), ("dance", "Денс"), ("cheer", "Чирлидерши"))
 
 
@@ -45,18 +39,6 @@ class Group(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(30), unique=True)
     title: Mapped[str] = mapped_column(String(80))
-
-
-class GroupAdmin(Base):
-    __tablename__ = "group_admins"
-    __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_admin"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-
-    group: Mapped[Group] = relationship()
-    user: Mapped["User"] = relationship()
 
 
 class Role(Base):
@@ -134,7 +116,6 @@ class User(Base):
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     study_group: Mapped[str | None] = mapped_column(String(50), nullable=True)
     language: Mapped[str] = mapped_column(String(2), default="ru")
-    role: Mapped[str] = mapped_column(String(20), default=UserRole.USER.value)
     status: Mapped[str] = mapped_column(String(20), default=UserStatus.PENDING.value)
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
