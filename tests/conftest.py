@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 from app.db import models
 from app.services import bookings as booking_service
-from app.services import outbox
+from app.services import outbox, roles
 
 _telegram_ids = itertools.count(1000)
 
@@ -55,6 +55,7 @@ async def session(monkeypatch) -> AsyncSession:
             db.add(models.ClubSetting(key=key, value=value))
         for day in range(7):
             db.add(models.AvailableDay(day_of_week=day, is_enabled=True))
+        await roles.seed_default_roles(db)
         await db.commit()
         yield db
     await engine.dispose()
@@ -83,6 +84,25 @@ async def make_user(session):
         session.add(user)
         await session.commit()
         return user
+
+    return factory
+
+
+@pytest_asyncio.fixture
+async def grant(session):
+    """grant(user, "ДСВР") / grant(user, "Админ группы", "music"): give a user a role for the club or for one group."""
+
+    async def factory(user, role_name: str, group_slug: str | None = None):
+        from sqlalchemy import select
+
+        role_id = (await session.execute(select(models.Role.id).where(models.Role.name == role_name))).scalar_one()
+        group_id = None
+        if group_slug is not None:
+            group_id = (await session.execute(select(models.Group.id).where(models.Group.slug == group_slug))).scalar_one()
+        assignment = models.RoleAssignment(user_id=user.id, role_id=role_id, group_id=group_id)
+        session.add(assignment)
+        await session.commit()
+        return assignment
 
     return factory
 
