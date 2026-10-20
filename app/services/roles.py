@@ -90,6 +90,17 @@ def _notify(session: AsyncSession, target: User, text: str) -> None:
         outbox.queue_notification(session, target.telegram_id, text)
 
 
+async def user_assignments(session: AsyncSession, user: User) -> list[RoleAssignment]:
+    """The roles a user holds, with the role and the group loaded. No permission check: for cards and /me."""
+    result = await session.execute(
+        select(RoleAssignment)
+        .where(RoleAssignment.user_id == user.id)
+        .options(selectinload(RoleAssignment.role), selectinload(RoleAssignment.group))
+        .order_by(RoleAssignment.id)
+    )
+    return list(result.scalars())
+
+
 async def list_roles(session: AsyncSession, actor_telegram_id: int) -> list[dict]:
     await _actor(session, actor_telegram_id)
     roles = await session.execute(select(Role).options(selectinload(Role.permissions)).order_by(Role.id))
@@ -137,7 +148,12 @@ async def update_role(
         role.name = name
     if permissions is not None:
         keys = _clean_permissions(permissions)
-        role.permissions = [RolePermission(permission=key) for key in keys]
+        # Only the difference is written: re-inserting a key that stays would hit the unique constraint, because the
+        # unit of work inserts before it deletes.
+        for item in [item for item in role.permissions if item.permission not in keys]:
+            role.permissions.remove(item)
+        kept = {item.permission for item in role.permissions}
+        role.permissions.extend(RolePermission(permission=key) for key in keys if key not in kept)
     await session.flush()
     kept = ", ".join(item.permission for item in role.permissions) or "-"
     await log_action(session, actor.id, "role.update", "role", role.id, f"Изменил роль «{role.name}»: {kept}")

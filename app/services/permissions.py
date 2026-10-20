@@ -80,6 +80,22 @@ async def permitted_group_ids(session: AsyncSession, user: User, perm: str) -> s
     return group_ids
 
 
+async def permission_summary(session: AsyncSession, user: User) -> dict[str, dict]:
+    """What the clients need to show or hide things: per permission, `all` (held for the whole club) or the group ids
+    it is held for."""
+    held: dict[str, dict] = {}
+    for grant in await user_grants(session, user):
+        item = held.setdefault(grant.permission, {"all": False, "group_ids": set()})
+        if grant.group_id is None:
+            item["all"] = True
+        else:
+            item["group_ids"].add(grant.group_id)
+    return {
+        permission: {"all": item["all"], "group_ids": [] if item["all"] else sorted(item["group_ids"])}
+        for permission, item in held.items()
+    }
+
+
 async def has_permission_anywhere(session: AsyncSession, user: User, perm: str) -> bool:
     group_ids = await permitted_group_ids(session, user, perm)
     return group_ids is None or bool(group_ids)

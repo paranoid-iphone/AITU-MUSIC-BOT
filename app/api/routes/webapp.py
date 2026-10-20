@@ -38,7 +38,8 @@ from app.services import bookings as booking_service
 from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
 from app.services.errors import NotFoundError
-from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin
+from app.services import roles as role_service
+from app.services.permissions import administered_group_ids, can_manage_band, is_dsvr, is_global_admin, permission_summary
 from app.services.schedule_history import person_name
 
 router = APIRouter(prefix="/webapp/api", tags=["webapp"])
@@ -458,6 +459,8 @@ async def me(
             "is_admin": False,
             "is_dsvr": False,
             "administered_groups": [],
+            "roles": [],
+            "permissions": {},
         }
     group = await session.get(Group, user.group_id) if user.group_id else None
     administered = []
@@ -479,6 +482,14 @@ async def me(
         "is_admin": is_global_admin(user),
         "is_dsvr": is_dsvr(user),
         "administered_groups": administered,
+        "roles": [
+            {
+                "name": item.role.name,
+                "group": {"id": item.group.id, "slug": item.group.slug, "title": item.group.title} if item.group else None,
+            }
+            for item in await role_service.user_assignments(session, user)
+        ],
+        "permissions": await permission_summary(session, user),
     }
 
 

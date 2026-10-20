@@ -21,16 +21,21 @@ from app.schemas.webapp_admin import (
     WebAppModerate,
     WebAppPersonalUpdate,
     WebAppRegistrationNotifyUpdate,
+    WebAppRoleAssign,
     WebAppRoleChange,
+    WebAppRoleCreate,
+    WebAppRoleUpdate,
     WebAppWindowUpdate,
 )
 from app.services import admin as admin_service
 from app.services import audit
 from app.services import groups as group_service
 from app.services import outbox
+from app.services import roles as role_service
 from app.services import users as user_service
 from app.services.errors import ForbiddenError
 from app.services import schedule_history
+from app.services.permission_catalog import PERMISSIONS
 from app.services.permissions import has_permission_anywhere, permitted_group_ids
 
 router = APIRouter(prefix="/webapp/api/admin", tags=["webapp-admin"])
@@ -64,6 +69,7 @@ users_reader, users_writer = reader_with("users.moderate"), writer_with("users.m
 settings_reader, settings_writer = reader_with("settings.manage"), writer_with("settings.manage")
 history_reader = reader_with("schedule.history")
 audit_reader = reader_with("audit.view")
+roles_reader, roles_writer = reader_with("roles.manage"), writer_with("roles.manage")
 
 
 # The role screens of the old model; they go away with `users.role` and `group_admins`.
@@ -83,7 +89,12 @@ def _group_payload(group: Group | None) -> dict | None:
 
 async def person(session: AsyncSession, user: User) -> dict:
     group = await session.get(Group, user.group_id) if user.group_id else None
+    held = await role_service.user_assignments(session, user)
     return {
+        "roles": [
+            {"assignment_id": item.id, "role_id": item.role_id, "name": item.role.name, "group": _group_payload(item.group)}
+            for item in held
+        ],
         "telegram_id": user.telegram_id,
         "telegram_username": user.telegram_username,
         "first_name": user.first_name,
@@ -206,6 +217,76 @@ async def set_group_admin(
     target = await change(session, admin.telegram_id, group_id, payload.target)
     await outbox.commit_and_publish(session)
     return await person(session, target)
+
+
+async def _role_payload(session: AsyncSession, admin: User, role_id: int) -> dict:
+    return next(item for item in await role_service.list_roles(session, admin.telegram_id) if item["id"] == role_id)
+
+
+async def _assignment_payload(session: AsyncSession, assignment) -> dict:
+    holder = await session.get(User, assignment.user_id)
+    group = await session.get(Group, assignment.group_id) if assignment.group_id else None
+    return {
+        "id": assignment.id,
+        "role_id": assignment.role_id,
+        "person": await person(session, holder),
+        "group": _group_payload(group),
+    }
+
+
+@router.get("/roles")
+async def list_roles(admin: User = Depends(roles_reader), session: AsyncSession = Depends(get_session)) -> dict:
+    return {
+        "roles": await role_service.list_roles(session, admin.telegram_id),
+        "catalog": [{"key": key, "scope": scope} for key, scope in PERMISSIONS.items()],
+    }
+
+
+@router.post("/roles")
+async def create_role(
+    payload: WebAppRoleCreate, admin: User = Depends(roles_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    role = await role_service.create_role(session, admin.telegram_id, payload.name, payload.permissions)
+    return await _role_payload(session, admin, role.id)
+
+
+@router.patch("/roles/{role_id}")
+async def update_role(
+    role_id: int,
+    payload: WebAppRoleUpdate,
+    admin: User = Depends(roles_writer),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await role_service.update_role(session, admin.telegram_id, role_id, payload.name, payload.permissions)
+    return await _role_payload(session, admin, role_id)
+
+
+@router.delete("/roles/{role_id}")
+async def delete_role(role_id: int, admin: User = Depends(roles_writer), session: AsyncSession = Depends(get_session)) -> dict:
+    return {"removed_assignments": await role_service.delete_role(session, admin.telegram_id, role_id)}
+
+
+@router.get("/roles/{role_id}/assignments")
+async def role_assignments(
+    role_id: int, admin: User = Depends(roles_reader), session: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    held = await role_service.list_assignments(session, admin.telegram_id, role_id)
+    return [await _assignment_payload(session, item) for item in held]
+
+
+@router.post("/role-assignments")
+async def assign_role(
+    payload: WebAppRoleAssign, admin: User = Depends(roles_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    assignment = await role_service.assign_role(session, admin.telegram_id, payload.target, payload.role_id, payload.group_id)
+    return await _assignment_payload(session, assignment)
+
+
+@router.delete("/role-assignments/{assignment_id}")
+async def revoke_assignment(
+    assignment_id: int, admin: User = Depends(roles_writer), session: AsyncSession = Depends(get_session)
+) -> dict:
+    return await person(session, await role_service.revoke_assignment(session, admin.telegram_id, assignment_id))
 
 
 @router.get("/settings")

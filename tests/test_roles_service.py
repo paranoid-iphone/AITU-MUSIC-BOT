@@ -104,6 +104,18 @@ async def test_update_role_renames_and_replaces_permissions(session, make_user, 
         await roles.update_role(session, admin.telegram_id, other.id, "МОДЕРАТОР", None)
 
 
+async def test_update_role_keeps_the_permissions_that_stay(session, make_user, grant):
+    """Editing a role in the Mini App resends the whole list: the keys that stay must not be inserted twice."""
+    admin = await _admin(make_user, grant)
+    role = await roles.create_role(session, admin.telegram_id, "Модератор", ["users.moderate", "bands.manage"])
+
+    updated = await roles.update_role(session, admin.telegram_id, role.id, None, ["users.moderate", "bookings.manage", "users.moderate"])
+
+    assert sorted(item.permission for item in updated.permissions) == ["bookings.manage", "users.moderate"]
+    stored = (await session.execute(select(models.RolePermission.permission).where(models.RolePermission.role_id == role.id))).scalars()
+    assert sorted(stored) == ["bookings.manage", "users.moderate"]
+
+
 async def test_system_role_cannot_be_changed_or_deleted(session, make_user, grant):
     admin = await _admin(make_user, grant)
     admin_role = await _role_id(session, "Админ")
