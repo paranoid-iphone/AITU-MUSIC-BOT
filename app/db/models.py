@@ -59,6 +59,45 @@ class GroupAdmin(Base):
     user: Mapped["User"] = relationship()
 
 
+class Role(Base):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    permissions: Mapped[list["RolePermission"]] = relationship(back_populates="role", cascade="all, delete-orphan")
+    assignments: Mapped[list["RoleAssignment"]] = relationship(back_populates="role", cascade="all, delete-orphan")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_id", "permission", name="uq_role_permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
+    permission: Mapped[str] = mapped_column(String(60))
+
+    role: Mapped[Role] = relationship(back_populates="permissions")
+
+
+class RoleAssignment(Base):
+    """A role held by a user: for the whole club (`group_id` is NULL) or for one group."""
+
+    __tablename__ = "role_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    role: Mapped[Role] = relationship(back_populates="assignments")
+    user: Mapped["User"] = relationship()
+    group: Mapped[Group | None] = relationship()
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
