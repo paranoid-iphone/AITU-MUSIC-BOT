@@ -178,6 +178,8 @@ rotated (3 × 10 MB per service). Only `secrets/` is mounted into the backend. T
 git pull && docker compose up -d --build
 ```
 
+A free always-on host for this setup (Oracle Cloud Always Free, ARM): [docs/deploy-oracle.md](docs/deploy-oracle.md).
+
 For development use the overlay that mounts the working tree and runs the backend with `--reload`:
 
 ```bash
