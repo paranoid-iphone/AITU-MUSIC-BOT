@@ -1,0 +1,13 @@
+# Copy to the project root as Caddyfile and put the server's host name on the first line: with no domain of your own,
+# <public ip with dashes>.sslip.io resolves to the ip, e.g. 203-0-113-7.sslip.io. Caddy gets the certificate itself.
+# Only the Mini App and the health check are public; the rest of the API stays inside the compose network.
+YOUR-IP-WITH-DASHES.sslip.io {
+	encode gzip
+	@public path /webapp/* /health
+	handle @public {
+		reverse_proxy backend:8000
+	}
+	handle {
+		respond 404
+	}
+}

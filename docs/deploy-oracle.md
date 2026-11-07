@@ -90,6 +90,30 @@ Check: `curl -s localhost:8001/health`, then send `/start` to the bot and open t
   the reclaim; check the current rule in the Always Free documentation. A stopped machine is started again from the console.
 - **Disk:** `docker system prune -f` removes old images after updates; logs are already rotated (3 × 10 MB per service).
 
+## The small free machine (E2.1.Micro)
+
+When the ARM machine cannot be created, the always-available `VM.Standard.E2.1.Micro` (x86, 1 GB RAM, 1/8 OCPU) runs the
+stack too, with three changes. It is tight: about 450 MB of RAM in use plus some swap.
+
+1. **Swap.** Before the first build: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile
+   && sudo swapon /swapfile && echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab`.
+2. **The override.** `cp ops/oracle-micro/docker-compose.override.yml .` — it keeps Postgres small and replaces ngrok with
+   Caddy. Through the free ngrok tunnel every request took about a second and the Mini App makes several in a row on
+   open (5–6 s in all); served directly it is about 0.1 s per request.
+3. **Caddy and the address.** `cp ops/oracle-micro/Caddyfile .` and put the host name on its first line; without a domain
+   of your own use `<public ip with dashes>.sslip.io`. Set `WEBAPP_BASE_URL=https://<that host>` in `.env`. Open TCP 80
+   and 443: in the VCN security list (Networking → Virtual cloud networks → the VCN → Security Lists → add ingress rules
+   from `0.0.0.0/0`) and in the VM's own firewall, which Oracle's Ubuntu images ship with:
+
+   ```bash
+   sudo iptables -I INPUT 5 -p tcp -m state --state NEW -m tcp --dport 80 -j ACCEPT
+   sudo iptables -I INPUT 5 -p tcp -m state --state NEW -m tcp --dport 443 -j ACCEPT
+   # the same two lines (as "-A INPUT ...") go after the port 22 rule in /etc/iptables/rules.v4, so they survive a reboot
+   ```
+
+Caddy publishes only `/webapp/*` and `/health`; the rest of the API answers 404 from outside. Check with
+`curl -s https://<host>/health` and the bot log line "Mini App menu button set to https://<host>/...".
+
 ## Troubleshooting
 
 - **`Out of host capacity` when creating the ARM machine:** this is a capacity shortage in the region, not a problem

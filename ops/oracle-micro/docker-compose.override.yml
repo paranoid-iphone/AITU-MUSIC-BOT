@@ -1,0 +1,32 @@
+# For the 1 GB Oracle VM.Standard.E2.1.Micro: copy to the project root as docker-compose.override.yml (on the server only,
+# a root override is picked up by every `docker compose` command). Keeps Postgres small and serves the Mini App directly
+# through Caddy instead of the ngrok tunnel. See docs/deploy-oracle.md, "The small free machine".
+services:
+  db:
+    command: postgres -c shared_buffers=64MB -c max_connections=30 -c work_mem=2MB -c maintenance_work_mem=32MB
+  ngrok:
+    profiles: ["ngrok"]
+  bot:
+    depends_on:
+      ngrok:
+        condition: service_started
+        required: false
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  caddy_data:
+  caddy_config:
