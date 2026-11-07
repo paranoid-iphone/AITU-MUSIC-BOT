@@ -21,6 +21,10 @@ INDEX = "ix_schedule_changes_booking_date"
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # This revision id is 33 characters, Alembic's default version_num is VARCHAR(32): widen it on Postgres, in the
+    # same transaction, before Alembic writes the new id (SQLite does not enforce the length).
+    if bind.dialect.name == "postgresql":
+        op.alter_column("alembic_version", "version_num", type_=sa.String(64), existing_nullable=False)
     inspector = sa.inspect(bind)
     # A database adopted from the old create_all startup may already have the column.
     if "booking_date" not in {column["name"] for column in inspector.get_columns("schedule_changes")}:
