@@ -146,7 +146,7 @@ Every booking mutation (create/edit/cancel/DSVR takeover/auto-assign) must go th
 it is recorded with before/after values; bookings are soft-cancelled, never deleted. `services/sheets_sync.py` is a
 one-way background worker (started in `on_startup`, triggered by `request_sync()`) that rewrites the **Расписание** and **Концерты**
 sheets (each only when its digest changed) and adds new rows on top of **История**; the **Сетка** timetable is formulas over **Расписание**, written once per process and when the
-room hours change, and every function in them takes one argument because the separator depends on the spreadsheet locale; `services/events.py` calls `request_sync()` after every committed
+room hours change (the status line in its row 2, «Обновлено ботом», is rewritten by `sync_once` last, every 5 min and after each rebuild, and is not part of the summary), and every function in them takes one argument because the separator depends on the spreadsheet locale; `services/events.py` calls `request_sync()` after every committed
 concert / application change; it is a no-op without `GOOGLE_SHEETS_ID`. `python -m app.tools.restore_from_sheets`
 (`app/tools/`, dry-run unless `--apply`, `--csv` for an export) adds the future bookings the DB lacks from the sheet's ID
 columns, never changes existing ones, and records them as the history action `restored`.
