@@ -122,6 +122,7 @@ async def update_profile(
     language: str | None = None,
     notifications_enabled: bool | None = None,
     group_id: int | None = None,
+    rehearsal_reminders_enabled: bool | None = None,
 ) -> User:
     user = await get_user_by_telegram_id(session, telegram_id)
     if user is None:
@@ -141,6 +142,8 @@ async def update_profile(
         user.language = language
     if notifications_enabled is not None:
         user.notifications_enabled = notifications_enabled
+    if rehearsal_reminders_enabled is not None:
+        user.rehearsal_reminders_enabled = rehearsal_reminders_enabled
     if group_id is not None:
         if user.status == UserStatus.APPROVED.value and user.group_id not in (None, group_id):
             raise ForbiddenError("Group can be changed only by an admin")

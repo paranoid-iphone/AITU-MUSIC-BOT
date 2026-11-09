@@ -17,7 +17,7 @@ from app.db.session import AsyncSessionLocal
 from app.services import planning as planning_service
 from app.services import move_requests as move_request_service
 from app.services import waitlist as waitlist_service
-from app.services import outbox, repeat_offers, sheets_sync
+from app.services import outbox, reminders, repeat_offers, sheets_sync
 from app.services.errors import AppError, describe_error
 from app.services.weeks import allocation_time, next_week_start
 from app.core.timezone import now_local
@@ -61,6 +61,17 @@ async def run_repeat_offers() -> None:
                 logger.info("Queued %s repeat offer(s)", offered)
         except Exception:
             logger.exception("Repeat offers failed")
+
+
+async def run_rehearsal_reminders() -> None:
+    """Remind members of rehearsals: the evening before and shortly before the start."""
+    async with AsyncSessionLocal() as session:
+        try:
+            reminded = await reminders.send_reminders(session)
+            if reminded:
+                logger.info("Queued rehearsal reminders for %s booking(s)", reminded)
+        except Exception:
+            logger.exception("Rehearsal reminders failed")
 
 
 async def run_expire_move_requests() -> None:
@@ -110,6 +121,7 @@ async def on_startup() -> None:
     async with AsyncSessionLocal() as session:
         await seed_default_schedule(session)
     scheduler.add_job(run_repeat_offers, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="repeat_offers")
+    scheduler.add_job(run_rehearsal_reminders, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="rehearsal_reminders")
     scheduler.add_job(run_expire_move_requests, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="expire_move_requests")
     scheduler.add_job(run_cleanup_waitlist, "interval", minutes=REPEAT_OFFER_JOB_MINUTES, id="cleanup_waitlist")
     scheduler.add_job(run_outbox_retry, "interval", seconds=OUTBOX_JOB_SECONDS, id="outbox_retry")

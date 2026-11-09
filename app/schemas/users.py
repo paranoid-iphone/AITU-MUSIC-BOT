@@ -15,6 +15,7 @@ class UserSettingsUpdate(BaseModel):
     study_group: str | None = Field(default=None, min_length=1, max_length=50)
     language: str | None = Field(default=None, pattern="^(ru|kz|en)$")
     notifications_enabled: bool | None = None
+    rehearsal_reminders_enabled: bool | None = None
     group_id: int | None = None
 
 
@@ -29,6 +30,7 @@ class UserRead(BaseModel):
     language: str
     status: str
     notifications_enabled: bool
+    rehearsal_reminders_enabled: bool = True
     group_id: int | None = None
     is_admin: bool = False
     permissions: list[str] = []

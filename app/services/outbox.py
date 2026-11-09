@@ -57,6 +57,11 @@ def queue_repeat_offer(session: AsyncSession, telegram_id: int, booking_id: int,
     )
 
 
+def queue_rehearsal_reminder(session: AsyncSession, telegram_id: int, text: str, button: str) -> None:
+    """A reminder of an upcoming rehearsal; the button turns the person's reminders off (`reminders:off`)."""
+    _queue(session, {"type": "rehearsal_reminder", "telegram_id": telegram_id, "text": text, "button": button})
+
+
 def queue_move_request(
     session: AsyncSession, telegram_id: int, request_id: int, text: str, accept: str, decline: str
 ) -> None:

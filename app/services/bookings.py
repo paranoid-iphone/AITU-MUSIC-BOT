@@ -698,6 +698,7 @@ async def update_booking(
     old_slot = (date.fromisoformat(before["date"]), time.fromisoformat(before["start"]), time.fromisoformat(before["end"]))
     if old_slot != (booking.booking_date, booking.start_time, booking.end_time):
         await _offer_freed(session, [old_slot])
+        booking.reminded_evening_at = booking.reminded_soon_at = None  # remind about the new time (services/reminders.py)
     if commit:
         await commit_and_publish(session)
         await session.refresh(booking)

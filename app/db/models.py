@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Time, UniqueConstraint, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.timezone import utcnow
@@ -118,6 +118,7 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(2), default="ru")
     status: Mapped[str] = mapped_column(String(20), default=UserStatus.PENDING.value)
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    rehearsal_reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
     moderation_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -201,6 +202,9 @@ class Booking(Base):
     cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     repeat_offered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Club-local moments the rehearsal reminders went out (services/reminders.py); cleared when the booking is moved.
+    reminded_evening_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reminded_soon_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     band: Mapped[Band | None] = relationship(back_populates="bookings")

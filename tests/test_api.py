@@ -82,3 +82,16 @@ async def test_tunnel_traffic_only_reaches_the_mini_app(client):
     tunnel = {"X-Forwarded-Host": "example.ngrok-free.app"}
     assert (await client.get("/planning/week", headers={**AUTH, **tunnel})).status_code == 404
     assert (await client.get("/health", headers=tunnel)).status_code == 200
+
+
+async def test_rehearsal_reminders_can_be_turned_off_and_on_in_the_settings(client, make_user):
+    user = await make_user()
+    url = f"/users/{user.telegram_id}/settings"
+
+    off = await client.patch(url, json={"rehearsal_reminders_enabled": False}, headers=AUTH)
+    assert off.status_code == 200
+    assert off.json()["rehearsal_reminders_enabled"] is False
+    assert off.json()["notifications_enabled"] is True  # the other switch is left alone
+
+    on = await client.patch(url, json={"rehearsal_reminders_enabled": True}, headers=AUTH)
+    assert on.json()["rehearsal_reminders_enabled"] is True
