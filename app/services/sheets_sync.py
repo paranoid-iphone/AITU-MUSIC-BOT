@@ -195,7 +195,8 @@ class GspreadBackend:
     def append_history(self, rows: list[list]) -> None:
         try:
             worksheet = self._worksheet(HISTORY_SHEET, len(HISTORY_HEADER))
-            if not worksheet.get_values("A1:A1"):
+            first_cell = worksheet.get_values("A1:A1")  # gspread 6 returns [[]] for an empty sheet, not []
+            if not (first_cell and first_cell[0] and first_cell[0][0]):
                 worksheet.update(values=[HISTORY_HEADER], range_name="A1", value_input_option="RAW")
             worksheet.append_rows(rows, value_input_option="RAW")
         except Exception:

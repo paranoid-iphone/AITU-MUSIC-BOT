@@ -40,7 +40,7 @@ class StubWorksheet:
 
     def get_values(self, *args, **kwargs):
         self._get_values(*args, **kwargs)
-        return [["Время"]] if self.has_header else []
+        return [["Время"]] if self.has_header else [[]]  # gspread 6 pads an empty range to [[]], not []
 
     def resize(self, *args, **kwargs):
         self._resize(*args, **kwargs)
