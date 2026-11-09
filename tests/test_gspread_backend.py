@@ -46,7 +46,15 @@ class StubWorksheet:
     def update(self, *args, **kwargs):
         self._update(*args, **kwargs)
         self.has_header = True  # like a real sheet: once written, cell A1 is no longer empty
-        self.rows[: len(kwargs["values"])] = kwargs["values"]  # every caller writes from A1
+        cell = re.fullmatch(r"([A-Z])(\d+)", kwargs["range_name"])
+        if cell and kwargs["range_name"] != "A1":  # one cell somewhere else: the status line
+            row, column = int(cell.group(2)) - 1, ord(cell.group(1)) - ord("A")
+            while len(self.rows) <= row:
+                self.rows.append([])
+            self.rows[row] += [""] * (column + 1 - len(self.rows[row]))
+            self.rows[row][column] = kwargs["values"][0][0]
+            return
+        self.rows[: len(kwargs["values"])] = kwargs["values"]  # the others write from A1
 
     def insert_rows(self, values, **kwargs):
         self._insert_rows(values, **kwargs)
@@ -645,5 +653,34 @@ def test_a_grid_failure_drops_the_connection_so_it_reconnects(backend):
 
     with pytest.raises(ConnectionError):
         backend.replace_grid(sheets_sync.build_grid_rows(*ROOM_08_21))
+
+    assert backend._spreadsheet is None
+
+
+def test_the_status_line_changes_only_its_own_cell(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    grid = _grid(backend)
+    before = [list(row) for row in grid.rows]
+
+    backend.update_status("Обновлено ботом: 09.11 14:36")
+
+    update = backend.calls[-1]
+    assert update[0] == "update"
+    assert update[2] == {"values": [["Обновлено ботом: 09.11 14:36"]], "range_name": "B2", "value_input_option": "RAW"}
+    assert grid.rows[1][1] == "Обновлено ботом: 09.11 14:36"
+    assert grid.rows[:1] == before[:1] and grid.rows[2:] == before[2:]
+    assert grid.rows[1][2:] == before[1][2:] and grid.rows[1][0] == before[1][0]
+
+
+def test_a_status_line_failure_drops_the_connection_so_it_reconnects(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    grid = _grid(backend)
+
+    def boom(*args, **kwargs):
+        raise ConnectionError("network")
+
+    grid.update = boom
+    with pytest.raises(ConnectionError):
+        backend.update_status("Обновлено ботом: 09.11 14:36")
 
     assert backend._spreadsheet is None

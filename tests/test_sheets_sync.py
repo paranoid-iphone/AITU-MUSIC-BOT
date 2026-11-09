@@ -1,5 +1,5 @@
 import asyncio
-from datetime import time, timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 from sqlalchemy import select, update
@@ -17,7 +17,9 @@ class FakeBackend:
         self.history: list[list[list]] = []
         self.events: list[list[list]] = []
         self.grids: list[list[list]] = []
+        self.statuses: list[str] = []
         self.fail = False
+        self.fail_status = False
         self.attempts = 0
 
     def replace_schedule(self, rows):
@@ -41,15 +43,22 @@ class FakeBackend:
             raise ConnectionError("google is down")
         self.grids.append(rows)
 
+    def update_status(self, text):
+        if self.fail_status:
+            raise ConnectionError("google is down")
+        self.statuses.append(text)
+
 
 @pytest.fixture(autouse=True)
 def _reset_state():
     sheets_sync._state.schedule_digest = None
     sheets_sync._state.events_digest = None
     sheets_sync._state.grid_digest = None
+    sheets_sync._state.status_at = None
     sheets_sync._state.wakeup = None  # an asyncio.Event belongs to the loop of the test that created it
     yield
     sheets_sync._state.schedule_digest = None
+    sheets_sync._state.status_at = None
     sheets_sync._state.wakeup = None
 
 
@@ -482,3 +491,82 @@ async def test_every_concert_change_asks_for_a_sync(session, make_user, make_ban
         await events.delete_application(session, owner_id, application.id)
 
     assert calls == [change]
+
+
+class _Clock:
+    """Club time for sync_once, moved by hand: no sleeping in tests."""
+
+    def __init__(self, monkeypatch, start: datetime):
+        self.now = start
+        monkeypatch.setattr(sheets_sync, "now_local", lambda: self.now)
+
+    def advance(self, **delta):
+        self.now += timedelta(**delta)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    return _Clock(monkeypatch, now_local().replace(hour=14, minute=36, second=0, microsecond=0))
+
+
+async def test_the_first_pass_writes_the_status_line_in_club_time(session, clock):
+    backend = FakeBackend()
+    clock.now = clock.now.replace(day=9, month=11)  # fixed text, whatever the day the suite runs
+    await sheets_sync.sync_once(session, backend)
+
+    assert backend.statuses == ["Обновлено ботом: 09.11 14:36"]
+
+
+async def test_the_status_line_is_left_alone_for_five_minutes(session, clock):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    clock.advance(minutes=4, seconds=59)
+    await sheets_sync.sync_once(session, backend)
+
+    assert len(backend.statuses) == 1
+
+
+async def test_after_five_minutes_the_status_line_is_refreshed_with_nothing_else_changed(session, clock):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    clock.advance(minutes=5)
+    summary = await sheets_sync.sync_once(session, backend)
+
+    assert [text[-5:] for text in backend.statuses] == ["14:36", "14:41"]
+    assert summary == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False, "grid_rewritten": False}
+    assert len(backend.schedules) == len(backend.grids) == 1
+
+
+async def test_a_rebuilt_grid_gets_its_status_line_in_the_same_pass(session, clock):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    await _set_room_hours(session, 600, 660)
+    clock.advance(minutes=1)
+    summary = await sheets_sync.sync_once(session, backend)
+
+    assert summary["grid_rewritten"] is True
+    assert [text[-5:] for text in backend.statuses] == ["14:36", "14:37"]
+
+
+async def test_a_failing_status_line_holds_nothing_back_and_is_retried(session, clock):
+    backend = FakeBackend()
+    backend.fail_status = True
+    with pytest.raises(ConnectionError):
+        await sheets_sync.sync_once(session, backend)
+    assert len(backend.schedules) == len(backend.events) == len(backend.grids) == 1
+
+    backend.fail_status = False
+    clock.advance(minutes=1)
+    summary = await sheets_sync.sync_once(session, backend)
+
+    assert [text[-5:] for text in backend.statuses] == ["14:37"]
+    assert summary == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False, "grid_rewritten": False}
+
+
+async def test_a_pass_that_only_refreshed_the_status_line_logs_nothing(session, clock, caplog):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+    clock.advance(minutes=5)
+    summary = await sheets_sync.sync_once(session, backend)
+
+    assert not any(summary.values())  # the worker logs only when this has something in it

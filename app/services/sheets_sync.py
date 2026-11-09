@@ -9,6 +9,8 @@ If the server goes down, the sheet still holds the current and next week's sched
   one row per member (a concert without applications gets one row), rewritten whenever it changed.
 - Sheet "Сетка": this week and the next as a timetable. Its formulas read "Расписание" and find the week from today's date,
   so it keeps working with the bot down; the bot only writes it once per process and when the room hours change.
+  Its second row says "Обновлено ботом: ДД.ММ ЧЧ:ММ" (club time), rewritten every STATUS_SECONDS and after each rebuild,
+  so a stale time means the bot is down.
 
 Writes are debounced (DEBOUNCE_SECONDS: a burst of changes becomes one write). History goes out in batches of
 HISTORY_BATCH rows, oldest first, so a long backlog takes several rounds. If Google is unreachable the worker waits
@@ -21,7 +23,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Sequence
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -83,6 +85,9 @@ GRID_DAYS = 7
 SLOT_MINUTES = 30
 GRID_SOURCE_LAST_ROW = 1000  # the list is sorted by date, so two weeks always sit well above this row
 GRID_TIME_HEADER = "Время"
+GRID_STATUS_CELL = "B2"  # under the warning, over the first week: the reserved second row
+STATUS_PREFIX = "Обновлено ботом: "
+STATUS_SECONDS = 300  # the status line is refreshed this often, bookings or not
 GRID_TIME_WIDTH = 60
 GRID_DAY_WIDTH = 175
 GRID_WARNING_COLOUR = {"red": 1.0, "green": 0.95, "blue": 0.76}
@@ -106,6 +111,8 @@ class SheetsBackend(Protocol):
     def replace_events(self, rows: list[list]) -> None: ...
 
     def replace_grid(self, rows: list[list[str]]) -> None: ...
+
+    def update_status(self, text: str) -> None: ...
 
 
 def is_enabled() -> bool:
@@ -511,6 +518,15 @@ class GspreadBackend:
             self._spreadsheet = None
             raise
 
+    def update_status(self, text: str) -> None:
+        """Write the status line under the warning of the grid; the cell is the only one touched."""
+        try:
+            worksheet = self._worksheet(GRID_SHEET, 1 + GRID_DAYS)
+            worksheet.update(values=[[text]], range_name=GRID_STATUS_CELL, value_input_option="RAW")
+        except Exception:
+            self._spreadsheet = None
+            raise
+
     def read_schedule(self) -> list[list[str]]:
         try:
             return self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER)).get_all_values()
@@ -533,6 +549,7 @@ class GspreadBackend:
 
 
 class _State:
+    status_at: datetime | None = None  # club time of the last successful status line write
     schedule_digest: str | None = None
     events_digest: str | None = None
     grid_digest: str | None = None
@@ -602,6 +619,13 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
         await asyncio.to_thread(backend.replace_grid, grid_rows)
         _state.grid_digest = grid_digest
         summary["grid_rewritten"] = True
+        _state.status_at = None  # the rebuild wiped the status row: write it again in this pass
+
+    # Last of all, so a failing status line costs nothing else. It is no change to the data: the summary stays untouched.
+    moment = now_local()
+    if _state.status_at is None or moment - _state.status_at >= timedelta(seconds=STATUS_SECONDS):
+        await asyncio.to_thread(backend.update_status, f"{STATUS_PREFIX}{moment:%d.%m %H:%M}")
+        _state.status_at = moment
     return summary
 
 

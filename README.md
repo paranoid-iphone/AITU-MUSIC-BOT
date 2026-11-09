@@ -106,7 +106,8 @@ One-way (bot → sheet) so the schedule survives a server outage:
 
 - sheet **Сетка** – this week and the next as a timetable, one row per half hour of the room hours, coloured by the kind of
   booking. Its formulas read **Расписание** and work out the week from today's date, so it stays current with the bot down.
-  It is protected from editing, and edits made in the other sheets do not reach the bot yet;
+  It is protected from editing, and edits made in the other sheets do not reach the bot yet. Its second row reads
+  «Обновлено ботом: ДД.ММ ЧЧ:ММ» (club time), refreshed every 5 minutes: a time that stands still means the bot is down;
 - sheet **Расписание** – bookings from the start of this week up to 30 days ahead, rewritten after each change; it carries
   the booking, band and author ids so the bookings can be restored;
 - sheet **История** – every schedule change added once, newest on top;
