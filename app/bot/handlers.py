@@ -105,6 +105,26 @@ MERTAI_PRAISES = [
 ]
 
 
+SHAMSHY_PRAISES = [
+    (
+        "Шамшы - человек, который держал расписание AITU Music Club, когда никакого бота ещё не было: "
+        "таблицы, ячейки и каждая репетиция, поставленная вручную. Респект и уважение."
+    ),
+    (
+        "Сегодня чествуем Шамшы: хранителя таблиц, повелителя ячеек и того, кто годами раскладывал "
+        "репетиции так, чтобы всем хватило комнаты. Бот просто продолжает его дело."
+    ),
+    (
+        "До кнопочек и Mini App был Шамшы. Вручную. Каждую неделю. Каждую репу. "
+        "Если вы когда-то репетировали в клубе, скажите ему спасибо."
+    ),
+    (
+        "Шамшы - легенда расписаний AITU Music Club: человек, который превращал хаос заявок в аккуратную таблицу "
+        "задолго до того, как это стало модно автоматизировать."
+    ),
+]
+
+
 # The admin sections a non-admin may open from the staff menu, by the permission that unlocks each.
 ADMIN_SECTION_PERMISSIONS = {"bands": "bands.manage", "events": "events.manage"}
 
@@ -1498,6 +1518,11 @@ async def leha(message: Message) -> None:
 @router.message(Command("mertai"))
 async def mertai(message: Message) -> None:
     await message.answer(random.choice(MERTAI_PRAISES))
+
+
+@router.message(Command("shamshy"))
+async def shamshy(message: Message) -> None:
+    await message.answer(random.choice(SHAMSHY_PRAISES))
 
 
 @router.message(Command("help"))
