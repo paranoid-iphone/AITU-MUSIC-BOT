@@ -4,7 +4,7 @@ If the server goes down, the sheet still holds the current and next week's sched
 
 - Sheet "Расписание": rewritten whenever the schedule changes (this week up to 30 days ahead, confirmed bookings).
   The ID columns (booking, band, author) let `app.tools.restore_from_sheets` put the bookings back.
-- Sheet "История": every schedule change is appended exactly once (marked with `sheets_synced_at`).
+- Sheet "История": every schedule change is added exactly once (marked with `sheets_synced_at`), newest on top.
 - Sheet "Концерты": the concerts of the last EVENTS_PAST_DAYS days and later with the members of every band application,
   one row per member (a concert without applications gets one row), rewritten whenever it changed.
 
@@ -48,6 +48,15 @@ SCHEDULE_COLUMN_WIDTHS = [95, 45, 65, 65, 320, 110, 180, 185, 100, 180, 120]
 HEADER_BACKGROUND = {"red": 0.20, "green": 0.26, "blue": 0.36}
 WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
 DAY_STRIPE = {"red": 0.91, "green": 0.95, "blue": 1.0}
+# Pixel widths of the visible "История" columns, in HISTORY_HEADER order; the ID columns after them are hidden.
+HISTORY_COLUMN_WIDTHS = [150, 180, 210, 320, 170, 170, 240]
+# History row colours: the actions of ScheduleChange that share one.
+HISTORY_ACTION_COLOURS = [
+    (("created",), {"red": 0.85, "green": 0.94, "blue": 0.83}),
+    (("updated",), {"red": 1.0, "green": 0.95, "blue": 0.76}),
+    (("cancelled", "preempted"), {"red": 0.98, "green": 0.84, "blue": 0.82}),
+    (("auto_assigned", "restored"), {"red": 0.82, "green": 0.91, "blue": 0.98}),
+]
 EVENTS_HEADER = [
     "Концерт", "Дата", "Место", "Номер", "Песня", "Фамилия", "Имя", "Учебная группа", "Роль", "Telegram", "ID концерта", "ID заявки",
 ]
@@ -149,13 +158,11 @@ def build_history_rows(changes: list[ScheduleChange]) -> list[list]:
     return rows
 
 
-def schedule_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dict]:
-    """Google batchUpdate requests that make the "Расписание" sheet readable. The rows themselves are not touched.
+def _table_layout_requests(sheet_id: int, existing_rules: int, column_widths: list[int], total_columns: int) -> list[dict]:
+    """The look both data sheets share: a frozen, coloured header, column widths, and hidden columns after the visible ones.
 
     `existing_rules` conditional format rules of the sheet are removed first, so a restart does not stack copies.
-    Days are told apart by colour, never by separator rows: `restore_from_sheets` reads this sheet row by row.
     """
-    first_id = SCHEDULE_HEADER.index("ID брони")
     width_requests = [
         {
             "updateDimensionProperties": {
@@ -164,7 +171,7 @@ def schedule_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dic
                 "fields": "pixelSize",
             }
         }
-        for index, width in enumerate(SCHEDULE_COLUMN_WIDTHS)
+        for index, width in enumerate(column_widths)
     ]
     return [
         *[{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_rules)],
@@ -184,28 +191,55 @@ def schedule_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dic
         *width_requests,
         {
             "updateDimensionProperties": {
-                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": first_id, "endIndex": len(SCHEDULE_HEADER)},
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": len(column_widths), "endIndex": total_columns},
                 "properties": {"hiddenByUser": True},
                 "fields": "hiddenByUser",
             }
         },
-        {
-            "addConditionalFormatRule": {
-                "index": 0,
-                "rule": {
-                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": first_id}],
-                    "booleanRule": {
-                        "condition": {
-                            "type": "CUSTOM_FORMULA",
-                            # No argument separators: their character depends on the spreadsheet locale.
-                            "values": [{"userEnteredValue": '=($A2<>"")*ISEVEN(COUNTUNIQUE($A$2:$A2))'}],
-                        },
-                        "format": {"backgroundColor": DAY_STRIPE},
-                    },
-                },
-            }
-        },
     ]
+
+
+def _formula_rule_request(sheet_id: int, first_row: int, columns: int, formula: str, background: dict) -> dict:
+    return {
+        "addConditionalFormatRule": {
+            "index": 0,
+            "rule": {
+                "ranges": [{"sheetId": sheet_id, "startRowIndex": first_row, "startColumnIndex": 0, "endColumnIndex": columns}],
+                "booleanRule": {
+                    "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": formula}]},
+                    "format": {"backgroundColor": background},
+                },
+            },
+        }
+    }
+
+
+def schedule_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dict]:
+    """Google batchUpdate requests that make the "Расписание" sheet readable. The rows themselves are not touched.
+
+    Days are told apart by colour, never by separator rows: `restore_from_sheets` reads this sheet row by row.
+    """
+    columns = len(SCHEDULE_COLUMN_WIDTHS)
+    return [
+        *_table_layout_requests(sheet_id, existing_rules, SCHEDULE_COLUMN_WIDTHS, len(SCHEDULE_HEADER)),
+        # No argument separators: their character depends on the spreadsheet locale.
+        _formula_rule_request(sheet_id, 1, columns, '=($A2<>"")*ISEVEN(COUNTUNIQUE($A$2:$A2))', DAY_STRIPE),
+    ]
+
+
+def history_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dict]:
+    """Google batchUpdate requests that make the "История" sheet readable.
+
+    The colour rules start at the header (which matches no action): new rows are inserted right under it, and a range
+    starting there could slide down with them. The formulas add conditions up because an OR() would need a separator.
+    """
+    action_column = chr(ord("A") + HISTORY_HEADER.index("Действие"))
+    columns = len(HISTORY_COLUMN_WIDTHS)
+    rules = []
+    for actions, background in HISTORY_ACTION_COLOURS:
+        conditions = "+".join(f'(${action_column}1="{ACTION_TITLES[action]}")' for action in actions)
+        rules.append(_formula_rule_request(sheet_id, 0, columns, f"={conditions}", background))
+    return [*_table_layout_requests(sheet_id, existing_rules, HISTORY_COLUMN_WIDTHS, len(HISTORY_HEADER)), *rules]
 
 
 class GspreadBackend:
@@ -214,6 +248,7 @@ class GspreadBackend:
     def __init__(self) -> None:
         self._spreadsheet = None
         self._schedule_layout_done = False
+        self._history_layout_done = False
 
     def _open(self):
         if self._spreadsheet is None:
@@ -248,23 +283,36 @@ class GspreadBackend:
         self._replace(SCHEDULE_SHEET, rows)
         self._apply_schedule_layout()
 
+    def _send_layout(self, title: str, columns: int, build_requests) -> None:
+        worksheet = self._worksheet(title, columns)
+        spreadsheet = self._open()
+        metadata = spreadsheet.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats)"})
+        existing = next(
+            (len(sheet.get("conditionalFormats", [])) for sheet in metadata["sheets"] if sheet["properties"]["sheetId"] == worksheet.id),
+            0,
+        )
+        spreadsheet.batch_update({"requests": build_requests(worksheet.id, existing)})
+
     def _apply_schedule_layout(self) -> None:
         if self._schedule_layout_done:
             return
         try:
-            worksheet = self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER))
-            spreadsheet = self._open()
-            metadata = spreadsheet.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats)"})
-            existing = next(
-                (len(sheet.get("conditionalFormats", [])) for sheet in metadata["sheets"] if sheet["properties"]["sheetId"] == worksheet.id),
-                0,
-            )
-            spreadsheet.batch_update({"requests": schedule_layout_requests(worksheet.id, existing)})
-            spreadsheet.update_timezone(settings.timezone)
+            self._send_layout(SCHEDULE_SHEET, len(SCHEDULE_HEADER), schedule_layout_requests)
+            self._open().update_timezone(settings.timezone)
         except Exception:  # the rows are already written: a backup without its looks is still a backup
             logger.exception("Could not format the schedule sheet; will retry on the next write")
             return
         self._schedule_layout_done = True
+
+    def _apply_history_layout(self) -> None:
+        if self._history_layout_done:
+            return
+        try:
+            self._send_layout(HISTORY_SHEET, len(HISTORY_HEADER), history_layout_requests)
+        except Exception:  # the rows are already written, and sync_once must still mark them as synced
+            logger.exception("Could not format the history sheet; will retry on the next write")
+            return
+        self._history_layout_done = True
 
     def replace_events(self, rows: list[list]) -> None:
         self._replace(EVENTS_SHEET, rows)
@@ -282,10 +330,12 @@ class GspreadBackend:
             first_cell = worksheet.get_values("A1:A1")  # gspread 6 returns [[]] for an empty sheet, not []
             if not (first_cell and first_cell[0] and first_cell[0][0]):
                 worksheet.update(values=[HISTORY_HEADER], range_name="A1", value_input_option="RAW")
-            worksheet.append_rows(rows, value_input_option="RAW")
+            # A batch comes oldest first, so reversed it leaves the newest entry right under the header.
+            worksheet.insert_rows(list(reversed(rows)), row=2, value_input_option="RAW")
         except Exception:
             self._spreadsheet = None
             raise
+        self._apply_history_layout()
 
 
 class _State:

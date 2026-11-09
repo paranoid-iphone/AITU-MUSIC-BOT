@@ -32,16 +32,23 @@ class StubWorksheet:
         self.calls = calls
         self.has_header = has_header
         self.row_count = row_count
+        self.rows: list[list] = []  # cell values, top to bottom, as Google would keep them
         self._resize = _checked(gspread.Worksheet.resize, calls)
         self._update = _checked(gspread.Worksheet.update, calls)
         self.batch_clear = _checked(gspread.Worksheet.batch_clear, calls)
-        self.append_rows = _checked(gspread.Worksheet.append_rows, calls)
+        self._insert_rows = _checked(gspread.Worksheet.insert_rows, calls)
         self._get_values = _checked(gspread.Worksheet.get_values, calls)
         self.get_all_values = _checked(gspread.Worksheet.get_all_values, calls)
 
     def update(self, *args, **kwargs):
         self._update(*args, **kwargs)
         self.has_header = True  # like a real sheet: once written, cell A1 is no longer empty
+        self.rows[: len(kwargs["values"])] = kwargs["values"]  # every caller writes from A1
+
+    def insert_rows(self, values, **kwargs):
+        self._insert_rows(values, **kwargs)
+        position = kwargs.get("row", 1) - 1
+        self.rows[position:position] = values
 
     def get_values(self, *args, **kwargs):
         self._get_values(*args, **kwargs)
@@ -141,14 +148,136 @@ def test_schedule_sheet_grows_when_the_rows_do_not_fit(backend):
     assert worksheet.row_count == 6
 
 
-def test_history_header_is_written_once_then_rows_are_appended(backend):
+def test_history_header_is_written_once_and_stays_first(backend):
     backend.append_history([["2026-10-16 17:00:00", "Петров Иван"]])
     backend.append_history([["2026-10-16 17:05:00", "Петров Иван"]])
 
     updates = [call for call in backend.calls if call[0] == "update"]
     assert len(updates) == 1 and updates[0][2]["values"] == [sheets_sync.HISTORY_HEADER]
-    appends = [call for call in backend.calls if call[0] == "append_rows"]
-    assert len(appends) == 2 and appends[0][2] == {"value_input_option": "RAW"}
+    assert backend.spreadsheet.sheets[sheets_sync.HISTORY_SHEET].rows[0] == sheets_sync.HISTORY_HEADER
+
+
+def test_the_newest_history_entry_is_on_top_across_batches(backend):
+    backend.append_history([["10:00", "первая"], ["10:01", "вторая"]])  # a batch goes oldest first
+    backend.append_history([["10:02", "третья"]])
+
+    assert backend.spreadsheet.sheets[sheets_sync.HISTORY_SHEET].rows == [
+        sheets_sync.HISTORY_HEADER,
+        ["10:02", "третья"],
+        ["10:01", "вторая"],
+        ["10:00", "первая"],
+    ]
+
+
+def test_new_history_rows_do_not_take_the_look_of_the_header(backend):
+    backend.append_history([["10:00", "первая"]])
+
+    insert = next(call for call in backend.calls if call[0] == "insert_rows")
+    assert insert[2]["value_input_option"] == "RAW"
+    assert not insert[2].get("inherit_from_before")
+
+
+def _history_rules(backend) -> list[dict]:
+    sheet = backend.spreadsheet.sheets[sheets_sync.HISTORY_SHEET]
+    return backend.spreadsheet.rules.get(sheet.id, [])
+
+
+def _rule_formula(rule) -> str:
+    return rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+
+
+GREEN, YELLOW, RED, BLUE = "green", "yellow", "red", "blue"
+
+
+@pytest.mark.parametrize(
+    "action, colour",
+    [
+        ("создал(а) бронь", GREEN),
+        ("изменил(а) бронь", YELLOW),
+        ("отменил(а) бронь", RED),
+        ("вытеснил(а) бронь (ДСВР)", RED),
+        ("авто-распределение", BLUE),
+        ("восстановил(а) бронь из Sheets", BLUE),
+    ],
+)
+def test_each_history_action_has_its_colour(backend, action, colour):
+    backend.append_history([["10:00", "Петров Иван", action]])
+
+    matching = [rule for rule in _history_rules(backend) if f'$C1="{action}"' in _rule_formula(rule)]
+    assert len(matching) == 1
+    background = matching[0]["booleanRule"]["format"]["backgroundColor"]
+    dominant = {GREEN: background["green"] > background["blue"] and background["green"] > background["red"],
+                YELLOW: background["red"] > background["blue"] and background["green"] > background["blue"],
+                RED: background["red"] > background["green"] and background["red"] > background["blue"],
+                BLUE: background["blue"] > background["red"] and background["blue"] >= background["green"]}
+    assert dominant[colour]
+
+
+def test_history_colours_cover_the_whole_sheet_from_the_header(backend):
+    """A range starting under the header could slide down as rows are inserted at its top edge."""
+    backend.append_history([["10:00", "Петров Иван"]])
+
+    for rule in _history_rules(backend):
+        assert rule["ranges"][0]["startRowIndex"] == 0
+        assert "endRowIndex" not in rule["ranges"][0]
+
+
+def test_the_history_colour_formulas_work_in_any_spreadsheet_locale(backend):
+    backend.append_history([["10:00", "Петров Иван"]])
+
+    formulas = [_rule_formula(rule) for rule in _history_rules(backend)]
+    assert formulas and not any("," in formula or ";" in formula for formula in formulas)
+
+
+def test_the_id_columns_of_the_history_are_hidden_from_people(backend):
+    backend.append_history([["10:00", "Петров Иван"]])
+
+    # H, I: "ID брони", "ID записи"
+    assert _hidden_columns(backend) == [(7, 9)]
+
+
+def test_the_history_header_is_frozen(backend):
+    backend.append_history([["10:00", "Петров Иван"]])
+
+    sheet = backend.spreadsheet.sheets[sheets_sync.HISTORY_SHEET]
+    frozen = [
+        request["updateSheetProperties"]["properties"]
+        for request in backend.spreadsheet.requests
+        if "updateSheetProperties" in request
+    ]
+    assert frozen == [{"sheetId": sheet.id, "gridProperties": {"frozenRowCount": 1}}]
+
+
+def test_the_history_layout_is_applied_once_however_many_batches_go_out(backend):
+    backend.append_history([["10:00", "Петров Иван"]])
+    backend.append_history([["10:01", "Петров Иван"]])
+
+    assert len(_hidden_columns(backend)) == 1
+
+
+def test_a_layout_failure_does_not_lose_history_and_is_retried(backend):
+    backend.spreadsheet.layout_failure = ConnectionError("batchUpdate refused")
+
+    backend.append_history([["10:00", "первая"]])  # must not raise
+
+    worksheet = backend.spreadsheet.sheets[sheets_sync.HISTORY_SHEET]
+    assert worksheet.rows == [sheets_sync.HISTORY_HEADER, ["10:00", "первая"]]
+    assert _hidden_columns(backend) == []
+
+    backend.spreadsheet.layout_failure = None
+    backend.append_history([["10:01", "вторая"]])
+    assert _hidden_columns(backend) == [(7, 9)]
+
+
+def test_restarting_the_backend_does_not_pile_up_history_colour_rules(backend):
+    backend.append_history([["10:00", "Петров Иван"]])
+    after_first_start = len(_history_rules(backend))
+    assert after_first_start > 0
+
+    restarted = sheets_sync.GspreadBackend()  # a new process finds the rules of the previous one
+    restarted.append_history([["10:01", "Петров Иван"]])
+
+    assert len(_history_rules(backend)) == after_first_start
 
 
 def test_connection_is_dropped_after_a_failure_so_it_reconnects(backend, monkeypatch):

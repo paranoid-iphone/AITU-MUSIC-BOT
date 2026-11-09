@@ -106,7 +106,7 @@ One-way (bot → sheet) so the schedule survives a server outage:
 
 - sheet **Расписание** – bookings from the start of this week up to 30 days ahead, rewritten after each change; it carries
   the booking, band and author ids so the bookings can be restored;
-- sheet **История** – every schedule change appended once;
+- sheet **История** – every schedule change added once, newest on top;
 - sheet **Концерты** – the concerts of the last 60 days and later with the members of every band application (one row per
   member, a concert without applications gets one row), rewritten after every concert or application change. It is the same
   list as the Excel export, always current: *File → Download → .xlsx* gives the file.

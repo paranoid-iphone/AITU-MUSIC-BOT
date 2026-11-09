@@ -145,7 +145,7 @@ members' event history are `services/events.py` behind the internal `/events` ro
 Every booking mutation (create/edit/cancel/DSVR takeover/auto-assign) must go through `services/schedule_history.py` so
 it is recorded with before/after values; bookings are soft-cancelled, never deleted. `services/sheets_sync.py` is a
 one-way background worker (started in `on_startup`, triggered by `request_sync()`) that rewrites the **Расписание** and **Концерты**
-sheets (each only when its digest changed) and appends to **История**; `services/events.py` calls `request_sync()` after every committed
+sheets (each only when its digest changed) and adds new rows on top of **История**; `services/events.py` calls `request_sync()` after every committed
 concert / application change; it is a no-op without `GOOGLE_SHEETS_ID`. `python -m app.tools.restore_from_sheets`
 (`app/tools/`, dry-run unless `--apply`, `--csv` for an export) adds the future bookings the DB lacks from the sheet's ID
 columns, never changes existing ones, and records them as the history action `restored`.
