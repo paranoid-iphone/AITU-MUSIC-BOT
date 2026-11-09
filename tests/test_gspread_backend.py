@@ -1,6 +1,7 @@
 """GspreadBackend against a stub Google client: the stub's methods are bound to the real gspread signatures,
 so a call the library would reject (wrong keyword, missing argument) fails here too."""
 import inspect
+import itertools
 
 import gspread
 import pytest
@@ -22,8 +23,12 @@ def _checked(real_method, record):
     return call
 
 
+_sheet_ids = itertools.count(100)
+
+
 class StubWorksheet:
     def __init__(self, calls, has_header=True, row_count=1000):
+        self.id = next(_sheet_ids)
         self.calls = calls
         self.has_header = has_header
         self.row_count = row_count
@@ -51,7 +56,35 @@ class StubSpreadsheet:
     def __init__(self, calls, existing=()):
         self.calls = calls
         self.sheets = {title: StubWorksheet(calls) for title in existing}
+        self.requests: list[dict] = []  # every batchUpdate request, in order
+        self.rules: dict[int, list] = {}  # conditional format rules per sheet id, as Google would keep them
+        self.layout_failure: Exception | None = None
         self._add = _checked(gspread.Spreadsheet.add_worksheet, calls)
+        self._batch_update = _checked(gspread.Spreadsheet.batch_update, calls)
+        self._metadata = _checked(gspread.Spreadsheet.fetch_sheet_metadata, calls)
+        self.update_timezone = _checked(gspread.Spreadsheet.update_timezone, calls)
+
+    def batch_update(self, body):
+        self._batch_update(body)
+        if self.layout_failure is not None:
+            raise self.layout_failure
+        for request in body["requests"]:
+            self.requests.append(request)
+            if "deleteConditionalFormatRule" in request:
+                target = request["deleteConditionalFormatRule"]
+                self.rules[target["sheetId"]].pop(target["index"])
+            elif "addConditionalFormatRule" in request:
+                rule = request["addConditionalFormatRule"]["rule"]
+                self.rules.setdefault(rule["ranges"][0]["sheetId"], []).append(rule)
+
+    def fetch_sheet_metadata(self, params=None):
+        self._metadata(params)
+        return {
+            "sheets": [
+                {"properties": {"sheetId": sheet.id, "title": title}, "conditionalFormats": list(self.rules.get(sheet.id, []))}
+                for title, sheet in self.sheets.items()
+            ]
+        }
 
     def worksheet(self, title):
         if title not in self.sheets:
@@ -89,7 +122,7 @@ def test_schedule_sheet_is_created_written_and_trailing_rows_cleared(backend):
     backend.replace_schedule(rows)
 
     names = [name for name, _, _ in backend.calls]
-    assert names == ["open_by_key", "add_worksheet", "update", "batch_clear"]
+    assert names[:4] == ["open_by_key", "add_worksheet", "update", "batch_clear"]
     update = next(call for call in backend.calls if call[0] == "update")
     assert update[2] == {"values": rows, "range_name": "A1", "value_input_option": "RAW"}
     clear = next(call for call in backend.calls if call[0] == "batch_clear")
@@ -147,3 +180,73 @@ def test_reading_drops_the_connection_after_a_failure(backend):
     with pytest.raises(ConnectionError):
         backend.read_schedule()
     assert backend._spreadsheet is None
+
+
+def _hidden_columns(backend) -> list[tuple[int, int]]:
+    found = []
+    for request in backend.spreadsheet.requests:
+        update = request.get("updateDimensionProperties")
+        if update and update["properties"].get("hiddenByUser"):
+            found.append((update["range"]["startIndex"], update["range"]["endIndex"]))
+    return found
+
+
+def test_the_id_columns_of_the_schedule_are_hidden_from_people(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+
+    # L, M, N: "ID брони", "ID номера", "ID автора"
+    assert _hidden_columns(backend) == [(11, 14)]
+
+
+def test_the_layout_is_applied_once_however_many_times_the_schedule_is_written(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+
+    assert len(_hidden_columns(backend)) == 1
+
+
+def test_a_layout_failure_does_not_stop_the_backup_and_is_retried(backend):
+    rows = [sheets_sync.SCHEDULE_HEADER, ["2026-10-21", "Ср"]]
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])  # opens the sheet
+    backend._schedule_layout_done = False
+    backend.spreadsheet.requests.clear()
+    backend.spreadsheet.layout_failure = ConnectionError("batchUpdate refused")
+
+    backend.replace_schedule(rows)  # must not raise
+
+    update = [call for call in backend.calls if call[0] == "update"][-1]
+    assert update[2]["values"] == rows
+    assert _hidden_columns(backend) == []
+
+    backend.spreadsheet.layout_failure = None
+    backend.replace_schedule(rows)
+    assert _hidden_columns(backend) == [(11, 14)]
+
+
+def test_restarting_the_backend_does_not_pile_up_colour_rules(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    sheet = backend.spreadsheet.sheets[sheets_sync.SCHEDULE_SHEET]
+    after_first_start = len(backend.spreadsheet.rules[sheet.id])
+    assert after_first_start > 0
+
+    restarted = sheets_sync.GspreadBackend()  # a new process finds the rules of the previous one
+    restarted.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+
+    assert len(backend.spreadsheet.rules[sheet.id]) == after_first_start
+
+
+def test_the_spreadsheet_uses_the_club_timezone(backend, monkeypatch):
+    monkeypatch.setattr(settings, "timezone", "Asia/Almaty")
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+
+    assert ("update_timezone", ("Asia/Almaty",), {}) in backend.calls
+
+
+def test_the_day_stripe_formula_works_in_any_spreadsheet_locale(backend):
+    """A Russian-locale spreadsheet rejected a comma between arguments with 400, and the separator depends on the locale."""
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    sheet = backend.spreadsheet.sheets[sheets_sync.SCHEDULE_SHEET]
+
+    [rule] = backend.spreadsheet.rules[sheet.id]
+    formula = rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+    assert "," not in formula and ";" not in formula

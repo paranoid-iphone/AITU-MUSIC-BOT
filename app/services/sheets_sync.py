@@ -43,6 +43,11 @@ SCHEDULE_HEADER = [
     "Цель", "Песня / название", "Источник", "ID брони", "ID номера", "ID автора",
 ]
 HISTORY_HEADER = ["Время", "Кто", "Действие", "Номер", "Было", "Стало", "Причина", "ID брони", "ID записи"]
+# Pixel widths of the visible "Расписание" columns, in SCHEDULE_HEADER order; the ID columns after them are hidden.
+SCHEDULE_COLUMN_WIDTHS = [95, 45, 65, 65, 320, 110, 180, 185, 100, 180, 120]
+HEADER_BACKGROUND = {"red": 0.20, "green": 0.26, "blue": 0.36}
+WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
+DAY_STRIPE = {"red": 0.91, "green": 0.95, "blue": 1.0}
 EVENTS_HEADER = [
     "Концерт", "Дата", "Место", "Номер", "Песня", "Фамилия", "Имя", "Учебная группа", "Роль", "Telegram", "ID концерта", "ID заявки",
 ]
@@ -144,11 +149,71 @@ def build_history_rows(changes: list[ScheduleChange]) -> list[list]:
     return rows
 
 
+def schedule_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dict]:
+    """Google batchUpdate requests that make the "Расписание" sheet readable. The rows themselves are not touched.
+
+    `existing_rules` conditional format rules of the sheet are removed first, so a restart does not stack copies.
+    Days are told apart by colour, never by separator rows: `restore_from_sheets` reads this sheet row by row.
+    """
+    first_id = SCHEDULE_HEADER.index("ID брони")
+    width_requests = [
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": index, "endIndex": index + 1},
+                "properties": {"pixelSize": width},
+                "fields": "pixelSize",
+            }
+        }
+        for index, width in enumerate(SCHEDULE_COLUMN_WIDTHS)
+    ]
+    return [
+        *[{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_rules)],
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                "cell": {"userEnteredFormat": {"backgroundColor": HEADER_BACKGROUND, "textFormat": {"bold": True, "foregroundColor": WHITE}}},
+                "fields": "userEnteredFormat(backgroundColor,textFormat)",
+            }
+        },
+        *width_requests,
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": first_id, "endIndex": len(SCHEDULE_HEADER)},
+                "properties": {"hiddenByUser": True},
+                "fields": "hiddenByUser",
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "index": 0,
+                "rule": {
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": first_id}],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            # No argument separators: their character depends on the spreadsheet locale.
+                            "values": [{"userEnteredValue": '=($A2<>"")*ISEVEN(COUNTUNIQUE($A$2:$A2))'}],
+                        },
+                        "format": {"backgroundColor": DAY_STRIPE},
+                    },
+                },
+            }
+        },
+    ]
+
+
 class GspreadBackend:
     """Real Google Sheets writer. All methods are blocking: call them through asyncio.to_thread."""
 
     def __init__(self) -> None:
         self._spreadsheet = None
+        self._schedule_layout_done = False
 
     def _open(self):
         if self._spreadsheet is None:
@@ -181,6 +246,25 @@ class GspreadBackend:
 
     def replace_schedule(self, rows: list[list]) -> None:
         self._replace(SCHEDULE_SHEET, rows)
+        self._apply_schedule_layout()
+
+    def _apply_schedule_layout(self) -> None:
+        if self._schedule_layout_done:
+            return
+        try:
+            worksheet = self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER))
+            spreadsheet = self._open()
+            metadata = spreadsheet.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats)"})
+            existing = next(
+                (len(sheet.get("conditionalFormats", [])) for sheet in metadata["sheets"] if sheet["properties"]["sheetId"] == worksheet.id),
+                0,
+            )
+            spreadsheet.batch_update({"requests": schedule_layout_requests(worksheet.id, existing)})
+            spreadsheet.update_timezone(settings.timezone)
+        except Exception:  # the rows are already written: a backup without its looks is still a backup
+            logger.exception("Could not format the schedule sheet; will retry on the next write")
+            return
+        self._schedule_layout_done = True
 
     def replace_events(self, rows: list[list]) -> None:
         self._replace(EVENTS_SHEET, rows)
