@@ -39,12 +39,16 @@ def _overlaps(start_time: time, end_time: time, booked_start: time, booked_end: 
     return start_time < booked_end and end_time > booked_start
 
 
+PERSONAL_LABEL_PREFIX = "Личная репетиция | "
+STAFF_LABEL = "Стафф / кабинет"
+
+
 def booking_owner_label(booking: Booking) -> str:
     if booking.band is not None:
         return booking.band.name
     if booking.purpose == "personal":
-        return f"Личная репетиция | {person_name(booking.created_by)}"
-    return "Стафф / кабинет"
+        return f"{PERSONAL_LABEL_PREFIX}{person_name(booking.created_by)}"
+    return STAFF_LABEL
 
 
 def booking_owner_info(booking: Booking) -> dict:

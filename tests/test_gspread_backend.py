@@ -2,6 +2,8 @@
 so a call the library would reject (wrong keyword, missing argument) fails here too."""
 import inspect
 import itertools
+import re
+from types import SimpleNamespace
 
 import gspread
 import pytest
@@ -9,6 +11,7 @@ from google.oauth2 import service_account
 
 from app.core.config import settings
 from app.services import sheets_sync
+from app.services.bookings import booking_owner_label
 
 
 def _checked(real_method, record):
@@ -65,6 +68,7 @@ class StubSpreadsheet:
         self.sheets = {title: StubWorksheet(calls) for title in existing}
         self.requests: list[dict] = []  # every batchUpdate request, in order
         self.rules: dict[int, list] = {}  # conditional format rules per sheet id, as Google would keep them
+        self.protections: dict[int, list] = {}  # protected ranges per sheet id
         self.layout_failure: Exception | None = None
         self._add = _checked(gspread.Spreadsheet.add_worksheet, calls)
         self._batch_update = _checked(gspread.Spreadsheet.batch_update, calls)
@@ -81,14 +85,27 @@ class StubSpreadsheet:
                 target = request["deleteConditionalFormatRule"]
                 self.rules[target["sheetId"]].pop(target["index"])
             elif "addConditionalFormatRule" in request:
-                rule = request["addConditionalFormatRule"]["rule"]
-                self.rules.setdefault(rule["ranges"][0]["sheetId"], []).append(rule)
+                added = request["addConditionalFormatRule"]
+                self.rules.setdefault(added["rule"]["ranges"][0]["sheetId"], []).insert(added["index"], added["rule"])
+            elif "addProtectedRange" in request:
+                protected = request["addProtectedRange"]["protectedRange"]
+                protection_id = next(_sheet_ids)
+                self.protections.setdefault(protected["range"]["sheetId"], []).append({**protected, "protectedRangeId": protection_id})
+            elif "deleteProtectedRange" in request:
+                gone = request["deleteProtectedRange"]["protectedRangeId"]
+                self.protections = {
+                    sheet: [item for item in items if item["protectedRangeId"] != gone] for sheet, items in self.protections.items()
+                }
 
     def fetch_sheet_metadata(self, params=None):
         self._metadata(params)
         return {
             "sheets": [
-                {"properties": {"sheetId": sheet.id, "title": title}, "conditionalFormats": list(self.rules.get(sheet.id, []))}
+                {
+                    "properties": {"sheetId": sheet.id, "title": title},
+                    "conditionalFormats": list(self.rules.get(sheet.id, [])),
+                    "protectedRanges": list(self.protections.get(sheet.id, [])),
+                }
                 for title, sheet in self.sheets.items()
             ]
         }
@@ -379,3 +396,254 @@ def test_the_day_stripe_formula_works_in_any_spreadsheet_locale(backend):
     [rule] = backend.spreadsheet.rules[sheet.id]
     formula = rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
     assert "," not in formula and ";" not in formula
+
+
+WEEK_DAYS = 7
+ROOM_08_21 = (480, 1260)
+
+
+def _grid(backend, window=ROOM_08_21):
+    backend.replace_grid(sheets_sync.build_grid_rows(*window))
+    return backend.spreadsheet.sheets[sheets_sync.GRID_SHEET]
+
+
+def _week_header_rows(grid) -> list[int]:
+    """Zero-based indexes of the rows that open a week block."""
+    return [index for index, row in enumerate(grid.rows) if row and row[0] == "Время"]
+
+
+def _slots(grid, header_row: int) -> list[str]:
+    labels = []
+    for row in grid.rows[header_row + 1 :]:
+        if not row or not row[0]:
+            break
+        labels.append(row[0])
+    return labels
+
+
+def test_the_grid_shows_two_weeks_of_seven_days_one_under_the_other(backend):
+    grid = _grid(backend)
+
+    headers = _week_header_rows(grid)
+    assert len(headers) == 2
+    assert headers[0] < headers[1]
+    assert all(len(grid.rows[row]) == 1 + WEEK_DAYS for row in headers)
+
+
+def test_the_grid_has_a_row_per_half_hour_of_the_room_hours(backend):
+    grid = _grid(backend)
+
+    first_week, second_week = _week_header_rows(grid)
+    slots = _slots(grid, first_week)
+    assert slots[:3] == ["'08:00", "'08:30", "'09:00"]  # the apostrophe keeps "08:00" text, as it is on the schedule sheet
+    assert slots[-1] == "'20:30"
+    assert len(slots) == 26
+    assert _slots(grid, second_week) == slots
+
+
+def test_the_grid_follows_changed_room_hours(backend):
+    grid = _grid(backend, window=(600, 720))
+
+    assert _slots(grid, _week_header_rows(grid)[0]) == ["'10:00", "'10:30", "'11:00", "'11:30"]
+
+
+def test_the_weeks_of_the_grid_are_worked_out_by_the_sheet_itself(backend):
+    """On Monday the grid has to move on even with the bot down, so no date comes from the bot."""
+    grid = _grid(backend)
+
+    first_week, second_week = _week_header_rows(grid)
+    first_header = first_week + 1  # as a row number of the sheet
+    assert grid.rows[first_week][1] == "=TODAY()-WEEKDAY(TODAY()-1)+1"  # Monday: WEEKDAY of the day before is 1 on a Monday
+    assert grid.rows[first_week][2:] == [f"={column}{first_header}+1" for column in "BCDEFG"]
+    assert grid.rows[second_week][1] == f"=B{first_header}+7"
+    assert grid.rows[second_week][2:] == [f"={column}{second_week + 1}+1" for column in "BCDEFG"]
+
+
+def test_a_grid_cell_shows_the_booking_that_covers_its_day_and_half_hour(backend):
+    grid = _grid(backend)
+
+    assert grid.rows[3][1] == (
+        """=IFERROR(INDIRECT("'Расписание'!E"&SUMPRODUCT("""
+        """(IFERROR('Расписание'!$A$2:$A$1000+0)=B$3)"""
+        """*('Расписание'!$C$2:$C$1000<=$A4)"""
+        """*('Расписание'!$D$2:$D$1000>$A4)"""
+        """*ROW('Расписание'!$A$2:$A$1000))))"""
+    )
+
+
+def test_every_grid_cell_looks_at_its_own_day_and_half_hour(backend):
+    grid = _grid(backend)
+
+    second_week = _week_header_rows(grid)[1]
+    last_row = second_week + 26  # a zero-based index: the header plus 26 half hours
+    formula = grid.rows[last_row][7]
+    assert f"=H${second_week + 1})" in formula
+    assert f"<=$A{last_row + 1})" in formula
+    assert f">$A{last_row + 1})" in formula
+
+
+def test_the_grid_formulas_work_in_any_spreadsheet_locale(backend):
+    """The separator between arguments depends on the spreadsheet locale, so no formula may have one."""
+    grid = _grid(backend)
+
+    formulas = [cell for row in grid.rows for cell in row if cell.startswith("=")]
+    assert len(formulas) == 2 * (7 + 7 * 26)
+    for formula in formulas:
+        outside_strings = re.sub(r'"[^"]*"', "", formula)
+        assert "," not in outside_strings and ";" not in outside_strings
+
+
+def test_the_grid_is_entered_as_formulas(backend):
+    _grid(backend)
+
+    update = next(call for call in backend.calls if call[0] == "update")
+    assert update[2]["value_input_option"] == "USER_ENTERED"
+
+
+def _matches(condition: dict, value: str) -> bool:
+    kind = condition["type"]
+    expected = condition["values"][0]["userEnteredValue"]
+    if kind == "TEXT_EQ":
+        return value == expected
+    if kind == "TEXT_STARTS_WITH":
+        return value.startswith(expected)
+    assert kind == "CUSTOM_FORMULA" and re.fullmatch(r'=[A-Z]+\d+<>""', expected), expected
+    return value != ""
+
+
+def _colour_of(backend, grid, value: str):
+    """The colour Google would paint a slot holding this value: the first matching rule wins."""
+    for rule in backend.spreadsheet.rules[grid.id]:
+        if _matches(rule["booleanRule"]["condition"], value):
+            return rule["booleanRule"]["format"]["backgroundColor"]
+    return None
+
+
+def _booking(**fields):
+    return SimpleNamespace(**{"band": None, "purpose": "self", "created_by": SimpleNamespace(last_name="Ли", first_name="Ан"), **fields})
+
+
+def test_slots_are_coloured_by_the_kind_of_booking(backend):
+    grid = _grid(backend)
+
+    band = _colour_of(backend, grid, booking_owner_label(_booking(band=SimpleNamespace(name="Rockers"))))
+    personal = _colour_of(backend, grid, booking_owner_label(_booking(purpose="personal")))
+    staff = _colour_of(backend, grid, booking_owner_label(_booking(purpose="staff")))
+
+    assert None not in (band, personal, staff)
+    assert len({str(band), str(personal), str(staff)}) == 3
+
+
+def test_a_free_slot_stays_white(backend):
+    grid = _grid(backend)
+
+    assert _colour_of(backend, grid, "") is None
+
+
+def test_the_colours_cover_exactly_the_slots_of_both_weeks(backend):
+    grid = _grid(backend)
+
+    first_week, second_week = _week_header_rows(grid)
+    ranges = {
+        (item["startRowIndex"], item["endRowIndex"], item["startColumnIndex"], item["endColumnIndex"])
+        for rule in backend.spreadsheet.rules[grid.id]
+        for item in rule["ranges"]
+    }
+    assert ranges == {(first_week + 1, first_week + 27, 1, 8), (second_week + 1, second_week + 27, 1, 8)}
+
+
+def test_the_band_colour_looks_at_the_first_cell_of_its_range(backend):
+    """A relative reference counts from the top left cell of the range, so another anchor would colour the wrong slots."""
+    grid = _grid(backend)
+
+    anchors = {}
+    for rule in backend.spreadsheet.rules[grid.id]:
+        condition = rule["booleanRule"]["condition"]
+        if condition["type"] == "CUSTOM_FORMULA":
+            anchors[rule["ranges"][0]["startRowIndex"]] = condition["values"][0]["userEnteredValue"]
+    assert anchors == {row: f'=B{row + 1}<>""' for row in anchors}
+    assert len(anchors) == 2
+
+
+def test_nobody_edits_the_grid_by_accident(backend):
+    grid = _grid(backend)
+
+    [protection] = backend.spreadsheet.protections[grid.id]
+    assert protection["range"] == {"sheetId": grid.id}
+    assert protection["warningOnly"] is False
+
+
+def test_the_warning_about_edits_opens_the_grid(backend):
+    grid = _grid(backend)
+
+    assert "не попадают в бота" in grid.rows[0][1]
+    merge = next(request["mergeCells"] for request in backend.spreadsheet.requests if "mergeCells" in request)
+    # Column A stays out of the merge: Google refuses to merge frozen and unfrozen columns.
+    assert merge["range"] == {"sheetId": grid.id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 1, "endColumnIndex": 8}
+
+
+def test_the_grid_is_the_first_tab_with_the_times_frozen(backend):
+    grid = _grid(backend)
+
+    updates = [request["updateSheetProperties"] for request in backend.spreadsheet.requests if "updateSheetProperties" in request]
+    assert any(item["properties"].get("index") == 0 and item["properties"]["sheetId"] == grid.id for item in updates)
+    assert any(item["properties"].get("gridProperties") == {"frozenColumnCount": 1} for item in updates)
+
+
+def test_the_days_of_the_grid_read_as_dates(backend):
+    grid = _grid(backend)
+
+    first_week, second_week = _week_header_rows(grid)
+    formatted = {
+        request["repeatCell"]["range"]["startRowIndex"]
+        for request in backend.spreadsheet.requests
+        if "repeatCell" in request
+        and request["repeatCell"].get("cell", {}).get("userEnteredFormat", {}).get("numberFormat", {}).get("type") == "DATE"
+    }
+    assert formatted == {first_week, second_week}
+
+
+def test_restarting_the_backend_does_not_pile_up_the_look_of_the_grid(backend):
+    grid = _grid(backend)
+    rules = len(backend.spreadsheet.rules[grid.id])
+
+    restarted = sheets_sync.GspreadBackend()
+    restarted.replace_grid(sheets_sync.build_grid_rows(*ROOM_08_21))
+
+    assert len(backend.spreadsheet.rules[grid.id]) == rules
+    assert len(backend.spreadsheet.protections[grid.id]) == 1
+
+
+def test_new_room_hours_leave_no_old_look_behind(backend):
+    """The second week moves when the room hours change, and its old header must not stay painted."""
+    grid = _grid(backend, window=(600, 720))
+
+    first_format = next(request["repeatCell"] for request in backend.spreadsheet.requests if "repeatCell" in request)
+    assert first_format == {"range": {"sheetId": grid.id}, "cell": {}, "fields": "userEnteredFormat"}
+
+
+def test_shorter_room_hours_leave_no_old_cells_behind(backend):
+    grid = _grid(backend, window=(600, 720))
+
+    assert all(len(row) == 8 for row in grid.rows)  # an empty row would leave the old cells of that row in place
+    clears = [call for call in backend.calls if call[0] == "batch_clear"]
+    assert clears == [("batch_clear", ([f"A{len(grid.rows) + 1}:Z5000"],), {})]
+
+
+def test_the_grid_sheet_grows_when_the_rows_do_not_fit(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    backend.spreadsheet.sheets[sheets_sync.GRID_SHEET] = StubWorksheet(backend.calls, row_count=10)
+
+    grid = _grid(backend)
+
+    assert grid.row_count == len(grid.rows)
+
+
+def test_a_grid_failure_drops_the_connection_so_it_reconnects(backend):
+    backend.replace_schedule([sheets_sync.SCHEDULE_HEADER])
+    backend.spreadsheet.layout_failure = ConnectionError("google is down")
+
+    with pytest.raises(ConnectionError):
+        backend.replace_grid(sheets_sync.build_grid_rows(*ROOM_08_21))
+
+    assert backend._spreadsheet is None

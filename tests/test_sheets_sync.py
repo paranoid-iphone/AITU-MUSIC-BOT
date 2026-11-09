@@ -2,7 +2,7 @@ import asyncio
 from datetime import time, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
@@ -16,6 +16,7 @@ class FakeBackend:
         self.schedules: list[list[list]] = []
         self.history: list[list[list]] = []
         self.events: list[list[list]] = []
+        self.grids: list[list[list]] = []
         self.fail = False
         self.attempts = 0
 
@@ -35,11 +36,17 @@ class FakeBackend:
             raise ConnectionError("google is down")
         self.events.append(rows)
 
+    def replace_grid(self, rows):
+        if self.fail:
+            raise ConnectionError("google is down")
+        self.grids.append(rows)
+
 
 @pytest.fixture(autouse=True)
 def _reset_state():
     sheets_sync._state.schedule_digest = None
     sheets_sync._state.events_digest = None
+    sheets_sync._state.grid_digest = None
     sheets_sync._state.wakeup = None  # an asyncio.Event belongs to the loop of the test that created it
     yield
     sheets_sync._state.schedule_digest = None
@@ -134,8 +141,8 @@ async def test_history_is_appended_once_and_marked(session, make_user, make_band
     first = await sheets_sync.sync_once(session, backend)
     second = await sheets_sync.sync_once(session, backend)
 
-    assert first == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True}
-    assert second == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False}
+    assert first == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True, "grid_rewritten": True}
+    assert second == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False, "grid_rewritten": False}
     assert len(backend.history) == 1 and len(backend.schedules) == 1
     stamp, who, action, band, before, after, reason, booking_id, change_id = backend.history[0][0]
     assert (who, action, band, before) == ("Петров Иван", "создал(а) бронь", "Rockers", "")
@@ -154,7 +161,7 @@ async def test_changes_made_later_are_synced_incrementally(session, make_user, m
     await bookings.update_booking(session, leader.telegram_id, booking.id, song_title="Renamed")
     result = await sheets_sync.sync_once(session, backend)
 
-    assert result == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": False}
+    assert result == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": False, "grid_rewritten": False}
     assert backend.schedules[-1][1][9] == "Renamed"
     assert backend.history[-1][0][2] == "изменил(а) бронь"
 
@@ -183,7 +190,7 @@ async def test_google_outage_keeps_history_unsynced_and_retries(session, make_us
 
     backend.fail = False
     recovered = await sheets_sync.sync_once(session, backend)
-    assert recovered == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True}
+    assert recovered == {"schedule_rewritten": True, "history_rows": 1, "events_rewritten": True, "grid_rewritten": True}
 
 
 async def test_old_weeks_are_not_in_the_schedule_sheet(session, make_user, make_band):
@@ -389,7 +396,66 @@ async def test_a_failing_concerts_sheet_does_not_hold_the_history_back(session, 
 
     backend.replace_events = original
     recovered = await sheets_sync.sync_once(session, backend)
-    assert recovered == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": True}
+    assert recovered == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": True, "grid_rewritten": True}
+
+
+async def _set_room_hours(session, start: int, end: int):
+    for key, value in (("booking_window_start_minutes", start), ("booking_window_end_minutes", end)):
+        await session.execute(update(models.ClubSetting).where(models.ClubSetting.key == key).values(value=str(value)))
+    await session.commit()
+
+
+def _slot_labels(grid: list[list]) -> list[str]:
+    return [row[0] for row in grid if row[0].startswith("'")]
+
+
+async def test_the_grid_is_built_for_the_room_hours_of_the_club(session):
+    await _set_room_hours(session, 600, 660)
+    backend = FakeBackend()
+
+    await sheets_sync.sync_once(session, backend)
+
+    assert _slot_labels(backend.grids[0]) == ["'10:00", "'10:30", "'10:00", "'10:30"]
+
+
+async def test_the_grid_is_written_once_while_the_room_hours_stay(session, make_user, make_band):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+
+    await _book(session, make_user, make_band)  # a new booking reaches the grid through the schedule sheet
+    await sheets_sync.sync_once(session, backend)
+
+    assert len(backend.grids) == 1
+    assert len(backend.schedules) == 2
+
+
+async def test_new_room_hours_rebuild_the_grid(session):
+    backend = FakeBackend()
+    await sheets_sync.sync_once(session, backend)
+
+    await _set_room_hours(session, 600, 660)
+    summary = await sheets_sync.sync_once(session, backend)
+
+    assert summary["grid_rewritten"] is True
+    assert len(backend.grids) == 2
+
+
+async def test_a_failing_grid_holds_nothing_back_and_is_retried(session, make_user, make_band):
+    await _book(session, make_user, make_band)
+    backend = FakeBackend()
+    original = backend.replace_grid
+
+    def broken(rows):
+        raise ConnectionError("sheet is gone")
+
+    backend.replace_grid = broken
+    with pytest.raises(ConnectionError):
+        await sheets_sync.sync_once(session, backend)
+    assert (len(backend.schedules), len(backend.history), len(backend.events)) == (1, 1, 1)
+
+    backend.replace_grid = original
+    recovered = await sheets_sync.sync_once(session, backend)
+    assert recovered == {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False, "grid_rewritten": True}
 
 
 @pytest.mark.parametrize("change", ["create", "update", "submit", "update_application", "delete_application"])

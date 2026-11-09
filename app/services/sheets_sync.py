@@ -7,6 +7,8 @@ If the server goes down, the sheet still holds the current and next week's sched
 - Sheet "История": every schedule change is added exactly once (marked with `sheets_synced_at`), newest on top.
 - Sheet "Концерты": the concerts of the last EVENTS_PAST_DAYS days and later with the members of every band application,
   one row per member (a concert without applications gets one row), rewritten whenever it changed.
+- Sheet "Сетка": this week and the next as a timetable. Its formulas read "Расписание" and find the week from today's date,
+  so it keeps working with the bot down; the bot only writes it once per process and when the room hours change.
 
 Writes are debounced (DEBOUNCE_SECONDS: a burst of changes becomes one write). History goes out in batches of
 HISTORY_BATCH rows, oldest first, so a long backlog takes several rounds. If Google is unreachable the worker waits
@@ -18,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from datetime import timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -29,7 +32,14 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.timezone import now_local, utcnow
 from app.db.models import Booking, BookingStatus, Event, EventApplication, EventApplicationMember, ScheduleChange
-from app.services.bookings import _band_info, _booking_load_options, booking_owner_label
+from app.services.bookings import (
+    PERSONAL_LABEL_PREFIX,
+    STAFF_LABEL,
+    _band_info,
+    _booking_load_options,
+    booking_owner_label,
+    get_booking_window_minutes,
+)
 from app.services.schedule_history import ACTION_TITLES, describe_slot, person_name
 from app.services.weeks import week_start_of
 
@@ -63,6 +73,22 @@ EVENTS_HEADER = [
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 PURPOSES = {"concert": "к концерту", "self": "для себя", "personal": "личная", "staff": "стафф / ДСВР"}
 SOURCES = {"manual": "вручную", "auto": "авто-распределение", "dsvr": "ДСВР", "staff": "админ"}
+GRID_SHEET = "Сетка"
+GRID_WARNING = (
+    "Сетка строится из листа «Расписание». Правки в таблице пока не попадают в бота и будут перезаписаны. "
+    "Важное на время сбоя записывайте отдельно и передавайте админу."
+)
+GRID_WEEKS = 2
+GRID_DAYS = 7
+SLOT_MINUTES = 30
+GRID_SOURCE_LAST_ROW = 1000  # the list is sorted by date, so two weeks always sit well above this row
+GRID_TIME_HEADER = "Время"
+GRID_TIME_WIDTH = 60
+GRID_DAY_WIDTH = 175
+GRID_WARNING_COLOUR = {"red": 1.0, "green": 0.95, "blue": 0.76}
+GRID_BAND_COLOUR = {"red": 0.76, "green": 0.87, "blue": 0.97}
+GRID_PERSONAL_COLOUR = {"red": 0.80, "green": 0.92, "blue": 0.78}
+GRID_STAFF_COLOUR = {"red": 0.99, "green": 0.85, "blue": 0.70}
 SCHEDULE_HORIZON_DAYS = 30
 EVENTS_PAST_DAYS = 60
 HISTORY_BATCH = 500
@@ -78,6 +104,8 @@ class SheetsBackend(Protocol):
     def append_history(self, rows: list[list]) -> None: ...
 
     def replace_events(self, rows: list[list]) -> None: ...
+
+    def replace_grid(self, rows: list[list[str]]) -> None: ...
 
 
 def is_enabled() -> bool:
@@ -242,6 +270,158 @@ def history_layout_requests(sheet_id: int, existing_rules: int = 0) -> list[dict
     return [*_table_layout_requests(sheet_id, existing_rules, HISTORY_COLUMN_WIDTHS, len(HISTORY_HEADER)), *rules]
 
 
+def build_grid_rows(window_start: int, window_end: int) -> list[list[str]]:
+    """The "Сетка" sheet as cells to enter: two weeks, one under the other, with a row per half hour of the room hours."""
+    slots = [f"'{minute // 60:02d}:{minute % 60:02d}" for minute in range(window_start, window_end - SLOT_MINUTES + 1, SLOT_MINUTES)]
+    # Every row is full width: an empty cell in the update clears what an older layout left there, a missing one would not.
+    blank = [""] * (1 + GRID_DAYS)
+    rows: list[list[str]] = [["", GRID_WARNING, *[""] * (GRID_DAYS - 1)], list(blank)]
+    first_monday = ""
+    for week in range(GRID_WEEKS):
+        header_row = len(rows) + 1
+        # WEEKDAY() of the day before is 1 on a Monday: the sheet finds the week itself, even with the bot down.
+        monday = "=TODAY()-WEEKDAY(TODAY()-1)+1" if week == 0 else f"={first_monday}+{7 * week}"
+        first_monday = first_monday or f"B{header_row}"
+        rows.append([GRID_TIME_HEADER, monday, *[f"={_grid_column(day)}{header_row}+1" for day in range(GRID_DAYS - 1)]])
+        for slot in slots:
+            row = len(rows) + 1
+            rows.append([slot, *[_grid_cell_formula(_grid_column(day), header_row, row) for day in range(GRID_DAYS)]])
+        if week < GRID_WEEKS - 1:
+            rows.append(list(blank))
+    return rows
+
+
+def _grid_column(day: int) -> str:
+    return chr(ord("B") + day)
+
+
+def _grid_cell_formula(column: str, header_row: int, row: int) -> str:
+    """The name of the booking covering this day and half hour, or nothing.
+
+    Every function here takes a single argument, because the argument separator depends on the spreadsheet locale.
+    SUMPRODUCT gives the row of the booking; for a free slot that is 0, and the reference to row 0 is an error IFERROR hides.
+    """
+
+    def source(name: str) -> str:
+        letter = chr(ord("A") + SCHEDULE_HEADER.index(name))
+        return f"'{SCHEDULE_SHEET}'!${letter}$2:${letter}${GRID_SOURCE_LAST_ROW}"
+
+    owner = chr(ord("A") + SCHEDULE_HEADER.index("Номер"))
+    return (
+        f"""=IFERROR(INDIRECT("'{SCHEDULE_SHEET}'!{owner}"&SUMPRODUCT("""
+        f"""(IFERROR({source("Дата")}+0)={column}${header_row})"""
+        f"""*({source("Начало")}<=$A{row})"""
+        f"""*({source("Конец")}>$A{row})"""
+        f"""*ROW({source("Дата")}))))"""
+    )
+
+
+def _slot_rule(sheet_id: int, first_row: int, slots: int, kind: str, value: str, background: dict) -> dict:
+    return {
+        "addConditionalFormatRule": {
+            "index": 0,
+            "rule": {
+                "ranges": [
+                    {
+                        "sheetId": sheet_id,
+                        "startRowIndex": first_row,
+                        "endRowIndex": first_row + slots,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 1 + GRID_DAYS,
+                    }
+                ],
+                "booleanRule": {"condition": {"type": kind, "values": [{"userEnteredValue": value}]}, "format": {"backgroundColor": background}},
+            },
+        }
+    }
+
+
+def grid_layout_requests(
+    sheet_id: int, rows: list[list[str]], existing_rules: int = 0, existing_protections: Sequence[int] = ()
+) -> list[dict]:
+    """Google batchUpdate requests for the look of the "Сетка" sheet; what an earlier run set is removed first.
+
+    The kind of a booking is read from its label: a rule is added on top of the previous ones and the first match wins, so
+    the band colour goes first and catches what is neither personal nor staff.
+    """
+    week_rows = [index for index, row in enumerate(rows) if row[0] == GRID_TIME_HEADER]
+    slots = sum(row[0].startswith("'") for row in rows) // GRID_WEEKS
+    columns = 1 + GRID_DAYS
+    day_widths = [GRID_TIME_WIDTH, *[GRID_DAY_WIDTH] * GRID_DAYS]
+    rules = []
+    for week_row in week_rows:
+        first_row = week_row + 1
+        rules += [
+            _slot_rule(sheet_id, first_row, slots, "CUSTOM_FORMULA", f'=B{first_row + 1}<>""', GRID_BAND_COLOUR),
+            _slot_rule(sheet_id, first_row, slots, "TEXT_EQ", STAFF_LABEL, GRID_STAFF_COLOUR),
+            _slot_rule(sheet_id, first_row, slots, "TEXT_STARTS_WITH", PERSONAL_LABEL_PREFIX, GRID_PERSONAL_COLOUR),
+        ]
+    week_headers = [
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": week_row, "endRowIndex": week_row + 1, "startColumnIndex": 0, "endColumnIndex": columns},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": HEADER_BACKGROUND,
+                        "textFormat": {"bold": True, "foregroundColor": WHITE},
+                        "horizontalAlignment": "CENTER",
+                        "numberFormat": {"type": "DATE", "pattern": "ddd dd.mm"},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,numberFormat)",
+            }
+        }
+        for week_row in week_rows
+    ]
+    return [
+        *[{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_rules)],
+        *[{"deleteProtectedRange": {"protectedRangeId": protection}} for protection in existing_protections],
+        # New room hours move the second week, so whatever an older layout painted has to go.
+        {"repeatCell": {"range": {"sheetId": sheet_id}, "cell": {}, "fields": "userEnteredFormat"}},
+        {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "index": 0}, "fields": "index"}},
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenColumnCount": 1}},
+                "fields": "gridProperties.frozenColumnCount",
+            }
+        },
+        *[
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": index, "endIndex": index + 1},
+                    "properties": {"pixelSize": width},
+                    "fields": "pixelSize",
+                }
+            }
+            for index, width in enumerate(day_widths)
+        ],
+        # Column A stays out: Google refuses to merge frozen and unfrozen columns.
+        {
+            "mergeCells": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 1, "endColumnIndex": columns},
+                "mergeType": "MERGE_ALL",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 1, "endColumnIndex": columns},
+                "cell": {"userEnteredFormat": {"backgroundColor": GRID_WARNING_COLOUR, "textFormat": {"bold": True}, "wrapStrategy": "WRAP"}},
+                "fields": "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": week_rows[0], "startColumnIndex": 1, "endColumnIndex": columns},
+                "cell": {"userEnteredFormat": {"textFormat": {"fontSize": 9}, "wrapStrategy": "CLIP"}},
+                "fields": "userEnteredFormat(textFormat,wrapStrategy)",
+            }
+        },
+        *week_headers,
+        *rules,
+        {"addProtectedRange": {"protectedRange": {"range": {"sheetId": sheet_id}, "description": "Сетка строится формулами", "warningOnly": False}}},
+    ]
+
+
 class GspreadBackend:
     """Real Google Sheets writer. All methods are blocking: call them through asyncio.to_thread."""
 
@@ -283,15 +463,14 @@ class GspreadBackend:
         self._replace(SCHEDULE_SHEET, rows)
         self._apply_schedule_layout()
 
+    def _sheet_metadata(self, worksheet) -> dict:
+        metadata = self._open().fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats,protectedRanges(protectedRangeId))"})
+        return next((sheet for sheet in metadata["sheets"] if sheet["properties"]["sheetId"] == worksheet.id), {})
+
     def _send_layout(self, title: str, columns: int, build_requests) -> None:
         worksheet = self._worksheet(title, columns)
-        spreadsheet = self._open()
-        metadata = spreadsheet.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats)"})
-        existing = next(
-            (len(sheet.get("conditionalFormats", [])) for sheet in metadata["sheets"] if sheet["properties"]["sheetId"] == worksheet.id),
-            0,
-        )
-        spreadsheet.batch_update({"requests": build_requests(worksheet.id, existing)})
+        existing = len(self._sheet_metadata(worksheet).get("conditionalFormats", []))
+        self._open().batch_update({"requests": build_requests(worksheet.id, existing)})
 
     def _apply_schedule_layout(self) -> None:
         if self._schedule_layout_done:
@@ -317,6 +496,21 @@ class GspreadBackend:
     def replace_events(self, rows: list[list]) -> None:
         self._replace(EVENTS_SHEET, rows)
 
+    def replace_grid(self, rows: list[list[str]]) -> None:
+        try:
+            worksheet = self._worksheet(GRID_SHEET, 1 + GRID_DAYS)
+            if len(rows) > worksheet.row_count:
+                worksheet.resize(rows=len(rows))
+            worksheet.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
+            worksheet.batch_clear([f"A{len(rows) + 1}:Z5000"])  # shorter room hours leave fewer rows
+            metadata = self._sheet_metadata(worksheet)
+            protections = [item["protectedRangeId"] for item in metadata.get("protectedRanges", [])]
+            requests = grid_layout_requests(worksheet.id, rows, len(metadata.get("conditionalFormats", [])), protections)
+            self._open().batch_update({"requests": requests})
+        except Exception:
+            self._spreadsheet = None
+            raise
+
     def read_schedule(self) -> list[list[str]]:
         try:
             return self._worksheet(SCHEDULE_SHEET, len(SCHEDULE_HEADER)).get_all_values()
@@ -341,6 +535,7 @@ class GspreadBackend:
 class _State:
     schedule_digest: str | None = None
     events_digest: str | None = None
+    grid_digest: str | None = None
     wakeup: asyncio.Event | None = None
 
 
@@ -365,7 +560,7 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
         .options(*_booking_load_options())
     )
     schedule_rows = build_schedule_rows(list(result.scalars().unique()))
-    summary = {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False}
+    summary = {"schedule_rewritten": False, "history_rows": 0, "events_rewritten": False, "grid_rewritten": False}
     digest = _digest(schedule_rows)
     if digest != _state.schedule_digest:
         await asyncio.to_thread(backend.replace_schedule, schedule_rows)
@@ -398,6 +593,15 @@ async def sync_once(session: AsyncSession, backend: SheetsBackend) -> dict:
         await asyncio.to_thread(backend.replace_events, event_rows)
         _state.events_digest = event_digest
         summary["events_rewritten"] = True
+
+    # After the data, so a sheet that refuses the grid costs nothing but the grid. Bookings reach it through its formulas,
+    # so it is written once per process and when the room hours change.
+    grid_rows = build_grid_rows(*await get_booking_window_minutes(session))
+    grid_digest = _digest(grid_rows)
+    if grid_digest != _state.grid_digest:
+        await asyncio.to_thread(backend.replace_grid, grid_rows)
+        _state.grid_digest = grid_digest
+        summary["grid_rewritten"] = True
     return summary
 
 
@@ -440,7 +644,7 @@ async def sync_worker(session_factory: async_sessionmaker[AsyncSession], backend
             _wakeup().clear()
             async with session_factory() as session:
                 summary = await sync_once(session, backend)
-            if summary["schedule_rewritten"] or summary["history_rows"] or summary["events_rewritten"]:
+            if any(summary.values()):
                 logger.info("Google Sheets synced: %s", summary)
         except asyncio.CancelledError:
             raise
