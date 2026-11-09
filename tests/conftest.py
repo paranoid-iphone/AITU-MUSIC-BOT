@@ -25,6 +25,17 @@ def published(monkeypatch) -> list[dict]:
     return events
 
 
+@pytest.fixture(autouse=True)
+def bot_username(monkeypatch) -> str:
+    """The bot's @username as if Telegram had answered getMe, so no test reaches the network."""
+    from app.core import bot_identity
+
+    state = bot_identity._State()
+    state.username = "aitu_test_bot"
+    monkeypatch.setattr(bot_identity, "_state", state)
+    return state.username
+
+
 @pytest_asyncio.fixture
 async def session(monkeypatch) -> AsyncSession:
     # Postgres advisory locks do not exist in SQLite; serialization is not needed in a single-session test.

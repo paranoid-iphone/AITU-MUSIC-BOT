@@ -53,7 +53,9 @@ Two processes share one codebase and talk over HTTP + Redis:
   User-facing strings go through `i18n.py` / `app/locales/{ru,en,kz}.json`. Booking rehearsals and managing bands happen
   only in the Mini App: the bot's Репетиции/Коллективы menus and the `start=join_<code>` deep link just offer `web_app`
   buttons (`keyboards.mini_app_*`; a web_app button cannot carry `start_param`, so the target goes in `?screen=` / `?join=`,
-  which `app.js` reads). Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
+  which `app.js` reads). Band invite links are `t.me/<bot>?start=join_<code>`: the backend learns the bot's username once via
+  `getMe` (`core/bot_identity.py`, a failure hides the links for 60 s) and sends it as `bot_username` in `/me`; tests get a
+  fixed one from the autouse `bot_username` fixture. Callbacks of the removed flows are caught by `legacy_flow_button` in `handlers.py`.
   Registration requests, user moderation and the roles constructor also live only in the Mini App ("Админ" tab,
   `app/api/routes/webapp_admin.py` → `/webapp/api/admin/*`, `?screen=admin&tab=requests|users|roles`); the bot's admin
   menu has `web_app` buttons for them. `webapp_admin.py` also serves `settings*` (days, window, limits, personal, `registration-notify`), `history` and `actions`.

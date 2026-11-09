@@ -89,6 +89,7 @@ async def test_me_for_an_approved_member(client, make_user):
     assert payload["group"]["slug"] == "music"
     assert payload["is_admin"] is False
     assert (payload["roles"], payload["permissions"]) == ([], {})
+    assert payload["bot_username"] == "aitu_test_bot"  # the Mini App builds band invite links from it
 
 
 async def test_me_reports_roles(client, make_user, make_group_admin):

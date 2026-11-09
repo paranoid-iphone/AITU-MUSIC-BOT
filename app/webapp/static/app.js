@@ -1162,12 +1162,24 @@ function fill(key, values) {
   return Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
 }
 
-function copyText(text) {
+function copyText(text, doneKey = "webapp.bands.copied") {
   try {
-    navigator.clipboard.writeText(text).then(() => toast(t("webapp.bands.copied")), () => toast(text));
+    navigator.clipboard.writeText(text).then(() => toast(t(doneKey)), () => toast(text));
   } catch (_) {
     toast(text);
   }
+}
+
+// t.me/<bot>?start=join_<code> opens the bot, whose /start offers the join form (also to people not registered yet).
+function inviteLink(code) {
+  const bot = state.me && state.me.bot_username;
+  return bot && code ? `https://t.me/${encodeURIComponent(bot)}?start=join_${encodeURIComponent(code)}` : null;
+}
+
+function shareInvite(band, link) {
+  const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(fill("webapp.bands.share_text", { name: band.name }))}`;
+  if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
+  else window.open(url, "_blank", "noopener");
 }
 
 function sheetActions(...buttons) {
@@ -1379,6 +1391,15 @@ function bandCard(band) {
       el("strong", { className: "code-value", text: band.invite_code }),
       copy,
     ]));
+    const link = inviteLink(band.invite_code);
+    if (link) {
+      const copyLink = el("button", { className: "btn secondary", type: "button", text: t("webapp.bands.link_copy") });
+      copyLink.addEventListener("click", () => copyText(link, "webapp.bands.link_copied"));
+      const share = el("button", { className: "btn", type: "button", text: t("webapp.bands.link_share") });
+      share.addEventListener("click", () => shareInvite(band, link));
+      children.push(el("div", { className: "meta invite-link", text: link }));
+      children.push(sheetActions(share, copyLink));
+    }
   }
   children.push(el("div", { className: "section-title", text: t("webapp.bands.members") }));
   children.push(...band.members.map((member) => memberRow(band, member)));

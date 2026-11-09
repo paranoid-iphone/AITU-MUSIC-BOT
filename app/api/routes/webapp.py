@@ -13,6 +13,7 @@ from app.api.webapp_auth import (
     webapp_identity,
 )
 from app.bot.i18n import load_locale
+from app.core import bot_identity
 from app.core.config import settings
 from app.core.timezone import now_local
 from app.db.models import Band, Group, User
@@ -481,6 +482,7 @@ async def me(
             for item in await role_service.user_assignments(session, user)
         ],
         "permissions": await permission_summary(session, user),
+        "bot_username": await bot_identity.bot_username(),  # for band invite links
     }
 
 

@@ -51,6 +51,7 @@ from app.bot.keyboards import (
 from app.bot.schedule_image import render_schedule_image
 from app.bot.states import AdminFlow, EventFlow, Onboarding, ProfileFlow
 from app.bot.webapp_url import get_webapp_base_url
+from app.core.bot_identity import invite_link
 from app.core.config import settings
 from app.core.timezone import format_moment
 
@@ -208,7 +209,15 @@ def format_person(user: dict | None) -> str:
     return f"{name} (@{user['telegram_username']})" if user.get("telegram_username") else name
 
 
-def format_band_card(band: dict) -> str:
+async def own_username(callback: CallbackQuery) -> str | None:
+    """The bot's @username (aiogram caches `getMe`), for t.me links such as band invites."""
+    try:
+        return (await callback.bot.me()).username
+    except Exception:
+        return None
+
+
+def format_band_card(band: dict, bot_username: str | None = None) -> str:
     lines = [
         f"Коллектив #{band['id']}",
         f"Название: {band['name']}",
@@ -217,6 +226,9 @@ def format_band_card(band: dict) -> str:
     ]
     if band.get("invite_code"):  # the backend hides the code from plain members
         lines.append(f"Код: {band['invite_code']}")
+        link = invite_link(bot_username, band["invite_code"])
+        if link:
+            lines.append(f"Ссылка: {link}")
     lines += ["", "Участники:"]
     for member in band.get("members", []):
         user = member["user"]
@@ -1270,7 +1282,7 @@ async def inline_admin_bands_list(callback: CallbackQuery) -> None:
 async def inline_admin_band_detail(callback: CallbackQuery) -> None:
     _, band_id_raw, page_raw = callback.data.split(":")
     band = await api.get_band(int(band_id_raw), callback.from_user.id)
-    await edit_screen(callback, format_band_card(band), admin_band_detail_keyboard(band["id"], int(page_raw)))
+    await edit_screen(callback, format_band_card(band, await own_username(callback)), admin_band_detail_keyboard(band["id"], int(page_raw)))
     await answer_callback(callback)
 
 
@@ -1294,10 +1306,10 @@ async def inline_admin_band_member_action(callback: CallbackQuery, state: FSMCon
     member_id = int(member_id_raw)
     if action == "owner":
         band = await api.transfer_band_owner(callback.from_user.id, band_id, member_id)
-        await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
+        await edit_screen(callback, "Лидер обновлен.\n\n" + format_band_card(band, await own_username(callback)), admin_band_detail_keyboard(band_id))
     elif action == "responsible":
         band = await api.update_band_responsible(callback.from_user.id, band_id, member_id)
-        await edit_screen(callback, "Ответственный обновлен.\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
+        await edit_screen(callback, "Ответственный обновлен.\n\n" + format_band_card(band, await own_username(callback)), admin_band_detail_keyboard(band_id))
     elif action == "remove":
         await edit_screen(callback, "Удалить участника из коллектива?", admin_member_remove_confirm_keyboard(band_id, member_id))
     else:
@@ -1318,7 +1330,7 @@ async def inline_admin_band_member_remove_confirm(callback: CallbackQuery) -> No
         await answer_callback(callback)
         return
     band = await api.get_band(band_id, callback.from_user.id)
-    await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band), admin_band_detail_keyboard(band_id))
+    await edit_screen(callback, f"Участник удален: {deleted['user_name']}\n\n" + format_band_card(band, await own_username(callback)), admin_band_detail_keyboard(band_id))
     await answer_callback(callback, "Готово")
 
 
