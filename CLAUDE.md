@@ -197,3 +197,17 @@ locales, guard the code with it. Only a holder of «Админ» assigns or revo
   non-default and at least 32 chars (`core/config.py`). `.env.example` ships `ENVIRONMENT=production` and an empty token.
 - On this Windows/Git-Bash setup the Bash tool mangles backslashes in heredocs (e.g. `\\n` becomes a real newline). For
   patch scripts or edits containing backslashes, use the Write/Edit tools instead of heredocs.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues (`paranoid-iphone/AITU-MUSIC-BOT`, via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root, created when needed. See `docs/agents/domain.md`.
