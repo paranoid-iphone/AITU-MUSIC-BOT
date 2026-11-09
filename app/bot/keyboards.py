@@ -130,7 +130,10 @@ def profile_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Изменить группу", callback_data="profile:study_group"),
                 InlineKeyboardButton(text="Изменить язык", callback_data="profile:language"),
             ],
-            [InlineKeyboardButton(text="Уведомления вкл/выкл", callback_data="profile:notifications")],
+            [
+                InlineKeyboardButton(text="Уведомления вкл/выкл", callback_data="profile:notifications"),
+                InlineKeyboardButton(text="Напоминания вкл/выкл", callback_data="profile:reminders"),
+            ],
             [InlineKeyboardButton(text="Назад", callback_data="menu:back")],
         ]
     )

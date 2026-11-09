@@ -112,13 +112,14 @@ async def test_events_with_buttons_carry_their_callbacks():
         {"type": "repeat_offer", "telegram_id": 1, "booking_id": 5, "text": "t", "button": "b"},
         {"type": "move_request", "telegram_id": 1, "request_id": 6, "text": "t", "accept": "a", "decline": "d"},
         {"type": "waitlist_offer", "telegram_id": 1, "entry_id": 8, "text": "t", "button": "b"},
+        {"type": "rehearsal_reminder", "telegram_id": 1, "text": "t", "button": "b"},
     ]
 
     for event in events:
         await outbox_delivery.deliver(bot, event, FakeRefresher())
 
     callbacks = [[button.callback_data for button in markup.inline_keyboard[0]] for _, _, markup in bot.sent]
-    assert callbacks == [["repeat:5"], ["move:accept:6", "move:decline:6"], ["waitlist:take:8"]]
+    assert callbacks == [["repeat:5"], ["move:accept:6", "move:decline:6"], ["waitlist:take:8"], ["reminders:off"]]
 
 
 async def test_schedule_changed_only_marks_the_menus_dirty():

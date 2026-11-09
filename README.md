@@ -94,6 +94,12 @@ category filter. The bot's *Админ → История* menu has a button tha
 Deleting a booking cancels it, so it stays in the history. The backend stores notifications in the database (`outbox_events`) and pushes them to a Redis list (`bot:outbox`); events that missed Redis
 are re-sent by a background job, the bot delivers them (at least once) and refreshes the schedule menus.
 
+**Rehearsal reminders.** At 20:00 the day before and again two hours before the start, every member of the band and its
+responsible person get "Завтра / Сегодня в 18:00 репетиция «…» (до 20:00)"; a personal rehearsal reminds its author. Staff
+bookings are not reminded, nor is a booking made within those two hours. Each person turns them off with the
+**«🔕 Не напоминать»** button under a reminder or *Профиль → «Напоминания вкл/выкл»* (on by default); switching all
+notifications off silences them too. A reminder whose moment passed while the backend was down is not sent late.
+
 ## Google Sheets backup
 
 One-way (bot → sheet) so the schedule survives a server outage:
@@ -253,7 +259,7 @@ app/
   locales/      ru / en / kz strings for the bot and the Mini App
   services/     business logic: bookings, bands, users, groups, permissions, schedule_history, audit (action journal),
                 admin (club settings), events (concerts), errors (error codes), search, outbox, sheets_sync, move_requests,
-                waitlist, repeat_offers, planning + weeks + allocator (weekly mode; allocator is pure)
+                waitlist, repeat_offers, reminders, planning + weeks + allocator (weekly mode; allocator is pure)
   tools/        one-off commands, e.g. restore_from_sheets
   webapp/       Telegram Mini App: vanilla-JS static files served at /webapp/static
 alembic/        migration revisions (applied on backend start)

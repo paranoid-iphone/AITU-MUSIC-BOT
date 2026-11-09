@@ -41,6 +41,8 @@ def _message(event: dict) -> tuple[str, InlineKeyboardMarkup | None] | None:
         )
     if kind == "waitlist_offer":
         return event["text"], _button_row((event["button"], f"waitlist:take:{event['entry_id']}"))
+    if kind == "rehearsal_reminder":
+        return event["text"], _button_row((event["button"], "reminders:off"))
     return None
 
 

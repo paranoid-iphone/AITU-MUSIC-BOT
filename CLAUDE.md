@@ -89,6 +89,12 @@ that started in the last 2 h with a free slot +7 days it sets `bookings.repeat_o
 (text + button). The bot sends it with a `repeat:<booking_id>` button; `handlers_repeat.py` calls `POST /bookings/{id}/repeat`
 (`repeat_offers.repeat_booking` → `create_booking`, the date is derived server-side).
 
+Rehearsal reminders: the job `run_rehearsal_reminders` (every 5 min) calls `services/reminders.send_reminders`, which queues a
+`rehearsal_reminder` outbox event at `EVENING_AT` (20:00) the day before and `SOON_BEFORE` (2 h) ahead, to the band's members and
+responsible person (the author for a personal booking; staff skipped), marking `bookings.reminded_evening_at` / `reminded_soon_at`.
+Recipients need `notifications_enabled` and `users.rehearsal_reminders_enabled`; `update_booking` clears both marks when the slot
+moves. The bot shows the reminder with a `reminders:off` button (`handlers_reminders.py`) and a `profile:reminders` switch in the profile.
+
 "Ask to move": a member who needs a slot held by someone else's booking proposes a free slot of the same length
 (`services/move_requests.py`, table `move_requests`). The band's responsible person gets a
 `move_request` outbox event (buttons `move:accept|decline:<id>`, handled by `handlers_move.py` → internal

@@ -209,6 +209,22 @@ def format_person(user: dict | None) -> str:
     return f"{name} (@{user['telegram_username']})" if user.get("telegram_username") else name
 
 
+def _on_off(value: bool) -> str:
+    return "включены" if value else "выключены"
+
+
+def profile_text(user: dict) -> str:
+    return (
+        f"Имя: {user['first_name']}\n"
+        f"Фамилия: {user['last_name']}\n"
+        f"Группа: {user['study_group']}\n"
+        f"Язык: {user['language']}\n"
+        f"Telegram: @{user['telegram_username'] or '-'}\n"
+        f"Уведомления: {_on_off(user['notifications_enabled'])}\n"
+        f"Напоминания о репетициях: {_on_off(user.get('rehearsal_reminders_enabled', True))}"
+    )
+
+
 async def own_username(callback: CallbackQuery) -> str | None:
     """The bot's @username (aiogram caches `getMe`), for t.me links such as band invites."""
     try:
@@ -812,15 +828,7 @@ async def inline_profile(callback: CallbackQuery) -> None:
     if not await has_full_access_for_callback(callback):
         return
     user = await api.get_user(callback.from_user.id)
-    text = (
-        f"Имя: {user['first_name']}\n"
-        f"Фамилия: {user['last_name']}\n"
-        f"Группа: {user['study_group']}\n"
-        f"Язык: {user['language']}\n"
-        f"Telegram: @{user['telegram_username'] or '-'}\n"
-        f"Уведомления: {'включены' if user['notifications_enabled'] else 'выключены'}"
-    )
-    await edit_screen(callback, text, profile_inline_keyboard())
+    await edit_screen(callback, profile_text(user), profile_inline_keyboard())
     await answer_callback(callback)
 
 
@@ -1140,6 +1148,15 @@ async def inline_toggle_notifications(callback: CallbackQuery) -> None:
     updated = await api.update_settings(callback.from_user.id, {"notifications_enabled": not user["notifications_enabled"]})
     await edit_schedule_menu(callback, updated, "Настройки обновлены.")
     await answer_callback(callback)
+
+
+@router.callback_query(F.data == "profile:reminders")
+async def inline_toggle_reminders(callback: CallbackQuery) -> None:
+    user = await api.get_user(callback.from_user.id)
+    enabled = not user.get("rehearsal_reminders_enabled", True)
+    updated = await api.update_settings(callback.from_user.id, {"rehearsal_reminders_enabled": enabled})
+    await edit_screen(callback, profile_text(updated), profile_inline_keyboard())
+    await answer_callback(callback, f"Напоминания о репетициях {_on_off(enabled)}")
 
 
 @router.callback_query(F.data == "profile:event_history")
@@ -1608,15 +1625,7 @@ async def profile(message: Message) -> None:
     if not await has_full_access(message):
         return
     user = await api.get_user(message.from_user.id)
-    text = (
-        f"Имя: {user['first_name']}\n"
-        f"Фамилия: {user['last_name']}\n"
-        f"Группа: {user['study_group']}\n"
-        f"Язык: {user['language']}\n"
-        f"Telegram: @{user['telegram_username'] or '-'}\n"
-        f"Уведомления: {'включены' if user['notifications_enabled'] else 'выключены'}"
-    )
-    await message.answer(text, reply_markup=profile_inline_keyboard())
+    await message.answer(profile_text(user), reply_markup=profile_inline_keyboard())
 
 
 @router.message(F.text == "История мероприятий")

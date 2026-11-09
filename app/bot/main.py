@@ -9,6 +9,7 @@ from app.bot.errors import on_error
 from app.bot.handlers import api, refresh_all_schedule_menus, router
 from app.bot.handlers_planning import router as planning_router
 from app.bot.handlers_move import router as move_router
+from app.bot.handlers_reminders import router as reminders_router
 from app.bot.handlers_repeat import router as repeat_router
 from app.bot.handlers_waitlist import router as waitlist_router
 from app.bot.menu_button import setup_menu_button
@@ -62,6 +63,7 @@ async def main() -> None:
     # Feature routers go first: the main router has catch-all fallback handlers.
     dispatcher.include_router(planning_router)
     dispatcher.include_router(repeat_router)
+    dispatcher.include_router(reminders_router)
     dispatcher.include_router(move_router)
     dispatcher.include_router(waitlist_router)
     dispatcher.include_router(router)
